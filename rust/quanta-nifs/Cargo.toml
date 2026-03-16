@@ -1,0 +1,18 @@
+[package]
+name = "quanta_nifs"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "quanta_nifs"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+quanta-core-rs = { path = "../quanta-core-rs" }
+rustler = "0.37"
+wasmtime = "40"
+loro = "1.10"
+async-nats = "0.46"
+bitcode = "0.6"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

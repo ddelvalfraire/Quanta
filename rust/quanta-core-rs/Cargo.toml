@@ -1,0 +1,8 @@
+[package]
+name = "quanta-core-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitcode = "0.6"
+serde = { version = "1", features = ["derive"] }

@@ -1,0 +1,3 @@
+[workspace]
+members = ["quanta-nifs", "quanta-core-rs"]
+resolver = "2"
