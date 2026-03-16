@@ -23,7 +23,6 @@ defmodule QuantaCore.MixProject do
 
   defp deps do
     [
-      {:uniq, "~> 0.6"},
       {:jason, "~> 1.4"},
       {:yaml_elixir, "~> 2.12"}
     ]
