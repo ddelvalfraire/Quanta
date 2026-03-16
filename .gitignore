@@ -11,7 +11,7 @@
 **/mutants.out*/
 
 # NIF compiled artifacts
-priv/native/
+**/priv/native/
 
 # Mix artifacts
 /cover/
