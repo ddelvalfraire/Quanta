@@ -22,6 +22,7 @@ defmodule Quanta.Supervisor do
       Quanta.Wasm.EngineManager,
       Quanta.Wasm.ModuleRegistry,
       Quanta.Actor.ManifestRegistry,
+      Quanta.Nats.CoreSupervisor,
       Quanta.Actor.DynSup,
       {Task.Supervisor, name: Quanta.SideEffect.TaskSupervisor},
       Quanta.Actor.CommandRouter,

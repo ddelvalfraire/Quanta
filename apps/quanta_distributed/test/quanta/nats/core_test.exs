@@ -28,6 +28,17 @@ defmodule Quanta.Nats.CoreTest do
       assert %{host: ~c"bare-host", port: 9999} =
                CoreSupervisor.parse_nats_url("bare-host:9999")
     end
+
+    test "raises on URL with credentials" do
+      assert_raise ArgumentError, ~r/must not contain credentials/, fn ->
+        CoreSupervisor.parse_nats_url("nats://user:pass@host:4222")
+      end
+    end
+
+    test "merges base_opts into result" do
+      result = CoreSupervisor.parse_nats_url("nats://myhost:4222", %{tls: true})
+      assert result == %{host: ~c"myhost", port: 4222, tls: true}
+    end
   end
 
   describe "Core.connection/1" do
@@ -78,6 +89,8 @@ defmodule Quanta.Nats.CoreTest do
       subject = "quanta.test.core.#{System.unique_integer([:positive])}"
 
       {:ok, {conn, sid}} = Core.subscribe(subject, "test-group", self())
+      # Allow SUB to propagate to NATS server before publishing
+      Process.sleep(50)
       Core.publish(subject, "hello")
 
       assert_receive {:msg, %{topic: ^subject, body: "hello"}}, 2_000
@@ -92,21 +105,24 @@ defmodule Quanta.Nats.CoreTest do
     test "request receives a reply" do
       subject = "quanta.test.rr.#{System.unique_integer([:positive])}"
 
-      {:ok, {conn, sid}} = Core.subscribe(subject, "test-group", self())
+      # Start a responder process that subscribes and echoes back
+      {:ok, _responder} =
+        Task.start_link(fn ->
+          {:ok, sub} = Core.subscribe(subject, nil, self())
 
-      # Spawn a responder
-      Task.start(fn ->
-        receive do
-          {:msg, %{reply_to: reply_to, body: body}} ->
-            Core.publish(reply_to, "echo:#{body}")
-        end
-      end)
+          receive do
+            {:msg, %{reply_to: reply_to, body: body}} ->
+              Core.publish(reply_to, "echo:#{body}")
+          end
 
-      # Re-subscribe with the task as handler isn't clean; use self and forward
+          Core.unsubscribe(sub)
+        end)
+
+      # Give the responder time to subscribe
+      Process.sleep(50)
+
       {:ok, reply} = Core.request(subject, "ping", 2_000)
       assert reply.body == "echo:ping"
-
-      Core.unsubscribe({conn, sid})
     end
   end
 
@@ -117,6 +133,7 @@ defmodule Quanta.Nats.CoreTest do
       subject = "quanta.test.unsub.#{System.unique_integer([:positive])}"
 
       {:ok, sub} = Core.subscribe(subject, "test-group", self())
+      Process.sleep(50)
 
       Core.publish(subject, "before")
       assert_receive {:msg, %{body: "before"}}, 2_000

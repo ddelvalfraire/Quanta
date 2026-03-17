@@ -124,15 +124,10 @@ defmodule Quanta.Actor.CommandRouter do
   end
 
   @impl true
-  def init(opts) do
-    nats_connection = Keyword.get(opts, :nats_connection)
+  def init(_opts) do
+    state = %{subscription: nil}
 
-    state = %{
-      nats_connection: nats_connection,
-      subscription: nil
-    }
-
-    if nats_connection do
+    if Process.whereis(Quanta.Nats.Core.connection(0)) do
       {:ok, state, {:continue, :subscribe}}
     else
       Logger.info("CommandRouter started in HTTP-only mode (no NATS connection)")
@@ -142,16 +137,21 @@ defmodule Quanta.Actor.CommandRouter do
 
   @impl true
   def handle_continue(:subscribe, state) do
-    case subscribe(state.nats_connection) do
-      {:ok, sid} ->
+    case Quanta.Nats.Core.subscribe(@nats_subject, @queue_group, self()) do
+      {:ok, sub} ->
         Logger.info("CommandRouter subscribed to #{@nats_subject}")
-        {:noreply, %{state | subscription: sid}}
+        {:noreply, %{state | subscription: sub}}
 
       {:error, reason} ->
         Logger.error("CommandRouter failed to subscribe: #{inspect(reason)}")
         Process.send_after(self(), :retry_subscribe, 5_000)
         {:noreply, state}
     end
+  catch
+    :exit, reason ->
+      Logger.warning("CommandRouter NATS not ready, retrying: #{inspect(reason)}")
+      Process.send_after(self(), :retry_subscribe, 5_000)
+      {:noreply, state}
   end
 
   # NATS messages are dispatched synchronously in the GenServer process.
@@ -170,7 +170,7 @@ defmodule Quanta.Actor.CommandRouter do
           {:error, :invalid_subject}
       end
 
-    if reply_to, do: send_nats_reply(state.nats_connection, reply_to, result)
+    if reply_to, do: send_nats_reply(reply_to, result)
 
     {:noreply, state}
   end
@@ -185,12 +185,11 @@ defmodule Quanta.Actor.CommandRouter do
     {:noreply, state}
   end
 
-  defp subscribe(connection) do
-    Gnat.sub(connection, self(), @nats_subject, queue_group: @queue_group)
-  end
-
-  defp send_nats_reply(connection, reply_to, result) do
-    Gnat.pub(connection, reply_to, encode_reply(result))
+  defp send_nats_reply(reply_to, result) do
+    Quanta.Nats.Core.publish(reply_to, encode_reply(result))
+  catch
+    :exit, reason ->
+      Logger.warning("Failed to send NATS reply to #{reply_to}: #{inspect(reason)}")
   end
 
   defp encode_reply({:ok, data}) when is_binary(data), do: data

@@ -26,6 +26,9 @@ defmodule Quanta.SupervisorTest do
       assert is_pid(children[Quanta.SideEffect.TaskSupervisor])
       assert Process.alive?(children[Quanta.SideEffect.TaskSupervisor])
 
+      assert is_pid(children[Quanta.Nats.CoreSupervisor])
+      assert Process.alive?(children[Quanta.Nats.CoreSupervisor])
+
       assert is_pid(children[Quanta.Actor.CommandRouter])
       assert Process.alive?(children[Quanta.Actor.CommandRouter])
 

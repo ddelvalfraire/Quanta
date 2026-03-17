@@ -39,17 +39,18 @@ defmodule Quanta.Nats.Core do
   end
 
   @doc """
-  Subscribe to a subject with a queue group.
+  Subscribe to a subject, optionally with a queue group.
 
   Returns `{:ok, {conn_name, sid}}` so the caller can unsubscribe later.
   Always uses pool connection 0 for subscriptions.
   """
-  @spec subscribe(String.t(), String.t(), pid()) ::
+  @spec subscribe(String.t(), String.t() | nil, pid()) ::
           {:ok, {atom(), non_neg_integer()}} | {:error, term()}
   def subscribe(subject, queue_group, handler) do
     conn = connection(0)
+    opts = if queue_group, do: [queue_group: queue_group], else: []
 
-    case Gnat.sub(conn, handler, subject, queue_group: queue_group) do
+    case Gnat.sub(conn, handler, subject, opts) do
       {:ok, sid} -> {:ok, {conn, sid}}
       {:error, _} = err -> err
     end
