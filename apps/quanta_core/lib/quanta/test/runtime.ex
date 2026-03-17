@@ -118,8 +118,6 @@ defmodule Quanta.Test.Runtime do
     :ok
   end
 
-  # --- Internal ---
-
   defp deliver_message(rt, actor_id, envelope) do
     case Map.get(rt.actors, actor_id) do
       nil ->

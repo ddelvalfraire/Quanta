@@ -5,10 +5,6 @@
 
 use std::fmt;
 
-// ---------------------------------------------------------------------------
-// Snapshot codec — fixed-width big-endian, no bitcode
-// ---------------------------------------------------------------------------
-
 /// KV snapshot header size in bytes: js_seq(8) + state_version(2) + nonce(8).
 pub const SNAPSHOT_HEADER_SIZE: usize = 18;
 
@@ -35,10 +31,6 @@ pub fn decode_snapshot_header(bytes: &[u8]) -> Result<(u64, u16, u64, &[u8]), Co
     let state_data = &bytes[18..];
     Ok((js_seq, state_version, nonce, state_data))
 }
-
-// ---------------------------------------------------------------------------
-// Wire codec — version byte + bitcode-encoded header + payload
-// ---------------------------------------------------------------------------
 
 /// Wire format version.
 pub const WIRE_VERSION: u8 = 0x01;
@@ -114,10 +106,6 @@ pub fn decode_wire_frame(frame: &[u8]) -> Result<(EnvelopeHeader, &[u8]), CodecE
     Ok((header, payload))
 }
 
-// ---------------------------------------------------------------------------
-// Error type
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, PartialEq)]
 pub enum CodecError {
     TruncatedInput { expected: usize, got: usize },
@@ -141,15 +129,9 @@ impl fmt::Display for CodecError {
 
 impl std::error::Error for CodecError {}
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // -- Snapshot tests --
 
     #[test]
     fn snapshot_roundtrip() {
@@ -218,8 +200,6 @@ mod tests {
         let (_, _, _, state_data) = decode_snapshot_header(&header).unwrap();
         assert!(state_data.is_empty());
     }
-
-    // -- Wire tests --
 
     #[test]
     fn wire_roundtrip() {

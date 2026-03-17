@@ -165,8 +165,6 @@ fn encode_metadata<'a>(env: Env<'a>, metadata: &[(String, String)]) -> Term<'a> 
     })
 }
 
-// --- Map helpers ---
-
 fn map_get<'a>(env: Env<'a>, map: Term<'a>, key: Atom) -> Result<Term<'a>, String> {
     map.map_get(key.encode(env))
         .map_err(|_| "missing key".to_string())
