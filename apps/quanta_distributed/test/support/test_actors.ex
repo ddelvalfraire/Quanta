@@ -47,6 +47,12 @@ defmodule Quanta.Test.Actors.Counter do
       "publish:" <> channel ->
         {state, [{:publish, channel, "published_payload"}]}
 
+      "respond:" <> reply_payload ->
+        case envelope.sender do
+          %Quanta.ActorId{} = sender -> {state, [{:send, sender, reply_payload}]}
+          _ -> {state, []}
+        end
+
       _ ->
         {state, []}
     end
@@ -75,6 +81,29 @@ defmodule Quanta.Test.Actors.Echo do
   @impl true
   def handle_message(state, envelope) do
     {state, [{:reply, "echo:" <> envelope.payload}]}
+  end
+
+  @impl true
+  def handle_timer(state, _), do: {state, []}
+end
+
+defmodule Quanta.Test.Actors.Responder do
+  @moduledoc false
+  @behaviour Quanta.Actor
+
+  @impl true
+  def init(_payload), do: {"idle", []}
+
+  @impl true
+  def handle_message(_state, envelope) do
+    case envelope.payload do
+      "ask:" <> target_id ->
+        target = %Quanta.ActorId{namespace: "test", type: "counter", id: target_id}
+        {"waiting", [{:send, target, "respond:pong"}]}
+
+      _ ->
+        {"got:" <> envelope.payload, [{:reply, envelope.payload}]}
+    end
   end
 
   @impl true

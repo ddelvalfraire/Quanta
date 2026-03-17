@@ -16,6 +16,7 @@ defmodule Quanta.Actor.Server do
   @mailbox_warn_threshold 1_000
   @mailbox_shed_threshold 5_000
   @mailbox_critical_threshold 10_000
+  @init_attempts_table :quanta_actor_init_attempts
 
   defstruct [
     :actor_id,
@@ -98,18 +99,21 @@ defmodule Quanta.Actor.Server do
   end
 
   @impl true
-  def handle_call({:message, envelope}, _from, state) do
+  def handle_call({:message, envelope}, from, state) do
     case check_mailbox(state) do
       level when level in [:shedding, :critical] ->
         {:reply, {:error, :overloaded}, state}
 
       _ ->
-        {reply, state, stop?} = dispatch_message(state, envelope)
+        {reply, state, stop?, sent_ids} = dispatch_message(state, envelope)
 
         cond do
           stop? && reply -> {:stop, :normal, reply, state}
           stop? -> {:stop, :normal, {:ok, :no_reply}, state}
           reply -> {:reply, reply, state}
+          reply == nil and sent_ids != [] ->
+            state = stash_pending_replies(from, sent_ids, state)
+            {:noreply, state}
           true -> {:reply, {:ok, :no_reply}, state}
         end
     end
@@ -146,7 +150,13 @@ defmodule Quanta.Actor.Server do
         {:noreply, state}
 
       _ ->
-        {_reply, state, stop?} = dispatch_message(state, envelope)
+        {pending_from, state} = pop_pending_reply(envelope, state)
+        {reply, state, stop?, _sent_ids} = dispatch_message(state, envelope)
+
+        if pending_from && reply do
+          GenServer.reply(pending_from, reply)
+        end
+
         if stop?, do: {:stop, :normal, state}, else: {:noreply, state}
     end
   end
@@ -179,8 +189,20 @@ defmodule Quanta.Actor.Server do
 
         {new_state, effects} = state.module.handle_timer(state.state_data, name)
         state = %{state | state_data: new_state}
-        {_reply, state, stop?} = process_effects(effects, state, envelope)
+        {_reply, state, stop?, _sent_ids} = process_effects(effects, state, envelope)
         if stop?, do: {:stop, :normal, state}, else: {:noreply, state}
+    end
+  end
+
+  @impl true
+  def handle_info({:pending_reply_timeout, msg_id}, state) do
+    case Map.pop(state.pending_replies, msg_id) do
+      {nil, _} ->
+        {:noreply, state}
+
+      {{from, _timer_ref}, pending_replies} ->
+        GenServer.reply(from, {:error, :actor_timeout})
+        {:noreply, %{state | pending_replies: pending_replies}}
     end
   end
 
@@ -190,20 +212,28 @@ defmodule Quanta.Actor.Server do
   end
 
   defp activate(state, manifest) do
-    {state_data, init_effects} = state.module.init(<<>>)
+    state = %{state | manifest: manifest}
 
-    state = %{
-      state
-      | manifest: manifest,
-        state_data: state_data,
-        status: :active,
-        activated_at: System.monotonic_time()
-    }
+    try do
+      {state_data, init_effects} = state.module.init(<<>>)
 
-    state = process_init_effects(init_effects, state)
-    state = schedule_idle_timer(state)
+      state = %{
+        state
+        | state_data: state_data,
+          status: :active,
+          activated_at: System.monotonic_time()
+      }
 
-    {:noreply, state}
+      state = process_init_effects(init_effects, state)
+      state = schedule_idle_timer(state)
+      clear_init_failures(state.actor_id)
+
+      {:noreply, state}
+    rescue
+      e ->
+        stacktrace = __STACKTRACE__
+        handle_init_failure(state, e, stacktrace)
+    end
   end
 
   defp dispatch_message(state, envelope) do
@@ -241,12 +271,13 @@ defmodule Quanta.Actor.Server do
   end
 
   defp process_effects(effects, state, envelope) do
-    Enum.reduce(effects, {nil, state, false}, fn effect, {reply, state, stop?} ->
+    Enum.reduce(effects, {nil, state, false, []}, fn effect, {reply, state, stop?, sent_ids} ->
       case process_effect(effect, state, envelope) do
-        {:reply, value, state} -> {value, state, stop?}
-        {:state, state} -> {reply, state, stop?}
-        :stop_self -> {reply, state, true}
-        :ok -> {reply, state, stop?}
+        {:reply, value, state} -> {value, state, stop?, sent_ids}
+        {:state, state} -> {reply, state, stop?, sent_ids}
+        {:sent, msg_id} -> {reply, state, stop?, [msg_id | sent_ids]}
+        :stop_self -> {reply, state, true, sent_ids}
+        :ok -> {reply, state, stop?, sent_ids}
       end
     end)
   end
@@ -264,7 +295,7 @@ defmodule Quanta.Actor.Server do
       Envelope.new(
         timestamp: Quanta.HLC.Server.now(),
         causation_id: envelope.message_id,
-        correlation_id: envelope.correlation_id || envelope.message_id,
+        correlation_id: envelope.message_id,
         sender: state.actor_id,
         payload: payload
       )
@@ -272,12 +303,12 @@ defmodule Quanta.Actor.Server do
     case Registry.lookup(target) do
       {:ok, pid} ->
         GenServer.cast(pid, {:incoming_message, out_envelope})
+        {:sent, out_envelope.message_id}
 
       :not_found ->
         Logger.warning("Send target not found: #{inspect(target)}")
+        :ok
     end
-
-    :ok
   end
 
   defp process_effect({:set_timer, name, delay_ms}, state, envelope)
@@ -357,6 +388,33 @@ defmodule Quanta.Actor.Server do
     ArgumentError -> nil
   end
 
+  defp stash_pending_replies(from, sent_ids, state) do
+    timeout_ms = state.manifest.lifecycle.inter_actor_timeout_ms
+
+    Enum.reduce(sent_ids, state, fn msg_id, state ->
+      timer_ref = Process.send_after(self(), {:pending_reply_timeout, msg_id}, timeout_ms)
+      %{state | pending_replies: Map.put(state.pending_replies, msg_id, {from, timer_ref})}
+    end)
+  end
+
+  defp pop_pending_reply(envelope, state) do
+    case envelope.correlation_id do
+      nil ->
+        {nil, state}
+
+      corr_id ->
+        case Map.pop(state.pending_replies, corr_id) do
+          {nil, _} ->
+            {nil, state}
+
+          {{from, timer_ref}, pending_replies} ->
+            Process.cancel_timer(timer_ref)
+            receive do: ({:pending_reply_timeout, ^corr_id} -> :ok), after: (0 -> :ok)
+            {from, %{state | pending_replies: pending_replies}}
+        end
+    end
+  end
+
   defp cancel_named_timer(state, name) do
     case Map.pop(state.named_timers, name) do
       {nil, _} ->
@@ -387,6 +445,43 @@ defmodule Quanta.Actor.Server do
     if function_exported?(state.module, :on_passivate, 1) do
       state.module.on_passivate(state.state_data)
     end
+  end
+
+  defp handle_init_failure(state, error, stacktrace) do
+    actor_id = state.actor_id
+
+    if :ets.whereis(@init_attempts_table) != :undefined do
+      count =
+        try do
+          :ets.update_counter(@init_attempts_table, actor_id, {2, 1})
+        rescue
+          ArgumentError ->
+            :ets.insert(@init_attempts_table, {actor_id, 1})
+            1
+        end
+
+      if count >= 3 do
+        Logger.error("Actor #{inspect(actor_id)} failed init 3 times, giving up")
+        :ets.delete(@init_attempts_table, actor_id)
+        {:stop, :normal, state}
+      else
+        Logger.error("Actor #{inspect(actor_id)} init failure ##{count}: #{Exception.message(error)}")
+        {:stop, {error, stacktrace}, state}
+      end
+    else
+      Logger.error("Actor #{inspect(actor_id)} init failure: #{Exception.message(error)}")
+      {:stop, {error, stacktrace}, state}
+    end
+  end
+
+  defp clear_init_failures(actor_id) do
+    if :ets.whereis(@init_attempts_table) != :undefined do
+      :ets.delete(@init_attempts_table, actor_id)
+    end
+
+    :ok
+  rescue
+    ArgumentError -> :ok
   end
 
   defp check_mailbox(state) do

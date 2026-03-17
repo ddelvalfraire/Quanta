@@ -198,8 +198,9 @@ defmodule Quanta.Actor.ServerTest do
       {:ok, pid_a} = start_actor(actor_id_a)
       {:ok, pid_b} = start_actor(actor_id_b)
 
-      Server.send_message(pid_a, make_envelope("send:send-b"))
-      Process.sleep(50)
+      envelope = Envelope.new(payload: "send:send-b")
+      GenServer.cast(pid_a, {:incoming_message, envelope})
+      Process.sleep(100)
 
       assert {:ok, <<1::64>>} = Server.get_state(pid_b)
     end
@@ -208,7 +209,7 @@ defmodule Quanta.Actor.ServerTest do
       actor_id = make_actor_id("send-unknown-src")
       {:ok, pid} = start_actor(actor_id)
 
-      assert {:ok, _} = Server.send_message(pid, make_envelope("send:nonexistent"))
+      assert {:ok, :no_reply} = Server.send_message(pid, make_envelope("send:nonexistent"))
       assert Process.alive?(pid)
     end
   end
@@ -405,18 +406,69 @@ defmodule Quanta.Actor.ServerTest do
     end
   end
 
-  describe "correlation_id forwarding" do
-    test "send preserves root correlation_id through chains" do
-      actor_id_a = make_actor_id("corr-a")
-      actor_id_b = make_actor_id("corr-b")
-      {:ok, pid_a} = start_actor(actor_id_a)
-      {:ok, pid_b} = start_actor(actor_id_b)
+  describe "pending replies" do
+    test "caller gets reply when target actor responds" do
+      :ok = ManifestRegistry.put(build_manifest(type: "responder"))
 
-      envelope = Envelope.new(payload: "send:corr-b", correlation_id: "root-123")
-      Server.send_message(pid_a, envelope)
-      Process.sleep(50)
+      responder_id = make_actor_id("pr-req", "responder")
+      counter_id = make_actor_id("pr-counter")
+      {:ok, responder_pid} = start_actor(responder_id, Quanta.Test.Actors.Responder)
+      {:ok, _} = start_actor(counter_id)
 
-      assert {:ok, <<1::64>>} = Server.get_state(pid_b)
+      result = Server.send_message(responder_pid, make_envelope("ask:pr-counter"), 5_000)
+      assert {:ok, "pong"} = result
+    end
+
+    test "pending reply times out with {:error, :actor_timeout}" do
+      short_lifecycle = %Manifest.Lifecycle{
+        idle_timeout_ms: 300_000,
+        idle_no_subscribers_timeout_ms: 30_000,
+        max_concurrent_messages: 1,
+        inter_actor_timeout_ms: 100,
+        http_timeout_ms: 5_000
+      }
+
+      :ok = ManifestRegistry.put(build_manifest(type: "fast_timeout", lifecycle: short_lifecycle))
+
+      sender_id = make_actor_id("pr-timeout-sender", "fast_timeout")
+      target_id = make_actor_id("pr-timeout-target")
+      {:ok, sender_pid} = start_actor(sender_id)
+      {:ok, _} = start_actor(target_id)
+
+      result = Server.send_message(sender_pid, make_envelope("send:pr-timeout-target"), 5_000)
+      assert {:error, :actor_timeout} = result
+    end
+  end
+
+  describe "init failure tracking" do
+    test "3 consecutive init failures stops with :normal" do
+      Process.flag(:trap_exit, true)
+      :ok = ManifestRegistry.put(build_manifest(type: "failer"))
+
+      actor_id = %ActorId{namespace: "test", type: "failer", id: "fail-3x"}
+      opts = [actor_id: actor_id, module: Quanta.Test.Actors.Failer]
+
+      for i <- 1..3 do
+        {:ok, pid} = Server.start_link(opts)
+        assert_receive {:EXIT, ^pid, reason}, 1000
+
+        if i == 3, do: assert(reason == :normal)
+
+        Process.sleep(50)
+      end
+    after
+      Process.flag(:trap_exit, false)
+    end
+  end
+
+  describe "DynSup default child_spec" do
+    test "start_actor without explicit child_spec starts Actor.Server" do
+      actor_id = make_actor_id("dynsup-default")
+      {:ok, pid} = DynSup.start_actor(actor_id, module: Counter)
+
+      assert Process.alive?(pid)
+      assert {:ok, <<0::64>>} = Server.get_state(pid)
+      assert {:ok, ^pid} = Registry.lookup(actor_id)
     end
   end
 

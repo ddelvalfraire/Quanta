@@ -31,7 +31,10 @@ defmodule Quanta.Actor.DynSup do
   @spec start_actor(Quanta.ActorId.t(), keyword()) ::
           {:ok, pid()} | {:error, {:already_started, pid()} | term()}
   def start_actor(%Quanta.ActorId{} = actor_id, opts) do
-    child_spec = Keyword.fetch!(opts, :child_spec)
+    child_spec =
+      Keyword.get_lazy(opts, :child_spec, fn ->
+        {Quanta.Actor.Server, Keyword.put(opts, :actor_id, actor_id)}
+      end)
 
     DynamicSupervisor.start_child(
       {:via, PartitionSupervisor, {__MODULE__, actor_id}},
