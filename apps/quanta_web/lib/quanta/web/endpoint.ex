@@ -6,5 +6,7 @@ defmodule Quanta.Web.Endpoint do
     pass: ["*/*"],
     json_decoder: Jason
 
+  plug Quanta.Web.Plugs.RequestId
+
   plug Quanta.Web.Router
 end
