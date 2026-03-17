@@ -8,6 +8,10 @@ defmodule Quanta.Web.ConnCase do
       import Phoenix.ConnTest
 
       @endpoint Quanta.Web.Endpoint
+
+      @admin_key "qk_admin_test_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      @rw_key "qk_rw_test_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      @ro_key "qk_ro_test_cccccccccccccccccccccccccccccccc"
     end
   end
 
@@ -53,6 +57,6 @@ defmodule Quanta.Web.ConnCase do
       Application.put_env(:quanta_distributed, :actor_modules, prev)
     end)
 
-    :ok
+    {:ok, conn: Phoenix.ConnTest.build_conn()}
   end
 end
