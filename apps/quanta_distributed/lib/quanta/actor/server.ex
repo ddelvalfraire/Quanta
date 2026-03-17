@@ -153,10 +153,13 @@ defmodule Quanta.Actor.Server do
         {pending_from, state} = pop_pending_reply(envelope, state)
         {reply, state, stop?, _sent_ids} = dispatch_message(state, envelope)
 
-        if pending_from && reply do
-          GenServer.reply(pending_from, reply)
-          state = cancel_pending_replies_for(pending_from, state)
-        end
+        state =
+          if pending_from && reply do
+            GenServer.reply(pending_from, reply)
+            cancel_pending_replies_for(pending_from, state)
+          else
+            state
+          end
 
         if stop?, do: {:stop, :normal, state}, else: {:noreply, state}
     end

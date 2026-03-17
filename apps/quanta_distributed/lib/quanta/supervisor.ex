@@ -15,6 +15,7 @@ defmodule Quanta.Supervisor do
   @impl true
   def init(_opts) do
     :ets.new(:quanta_actor_init_attempts, [:named_table, :public, :set])
+    Quanta.RateLimit.init()
 
     children = [
       Quanta.HLC.Server,
@@ -23,6 +24,7 @@ defmodule Quanta.Supervisor do
       Quanta.Actor.ManifestRegistry,
       Quanta.Actor.DynSup,
       {Task.Supervisor, name: Quanta.SideEffect.TaskSupervisor},
+      Quanta.Actor.CommandRouter,
       Quanta.Actor.CompactionScheduler
     ]
 
