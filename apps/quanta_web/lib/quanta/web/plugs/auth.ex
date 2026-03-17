@@ -22,14 +22,16 @@ defmodule Quanta.Web.Plugs.Auth do
   defp parse_key(token) do
     case Regex.run(@key_pattern, token) do
       [_, scope_str, namespace, _random] ->
-        {:ok, String.to_existing_atom(scope_str), namespace}
+        {:ok, scope_atom(scope_str), namespace}
 
       _ ->
         :error
     end
-  rescue
-    ArgumentError -> :error
   end
+
+  defp scope_atom("admin"), do: :admin
+  defp scope_atom("rw"), do: :rw
+  defp scope_atom("ro"), do: :ro
 
   defp validate_key(token) do
     api_keys = Application.get_env(:quanta_web, :api_keys, [])
