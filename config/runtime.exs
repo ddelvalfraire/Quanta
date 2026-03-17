@@ -17,6 +17,8 @@ config :logger, level: String.to_existing_atom(log_level)
 config :quanta_distributed,
   nats_urls:
     System.get_env("QUANTA_NATS_URLS", "nats://localhost:4222") |> String.split(","),
+  nats_pool_size:
+    System.get_env("QUANTA_NATS_POOL_SIZE", "2") |> String.to_integer(),
   cluster_name:
     System.get_env("QUANTA_CLUSTER_NAME", "quanta"),
   node_name:
