@@ -65,6 +65,7 @@ defmodule Quanta.Test.Actors.Counter do
     {new, [{:persist, new}]}
   end
 
+  @impl true
   def handle_timer(state, _), do: {state, []}
 
   @impl true

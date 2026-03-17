@@ -155,6 +155,7 @@ defmodule Quanta.Actor.Server do
 
         if pending_from && reply do
           GenServer.reply(pending_from, reply)
+          state = cancel_pending_replies_for(pending_from, state)
         end
 
         if stop?, do: {:stop, :normal, state}, else: {:noreply, state}
@@ -356,6 +357,7 @@ defmodule Quanta.Actor.Server do
     :ok
   end
 
+  # Hard stop — bypasses on_passivate. Syn auto-deregisters on process death.
   defp process_effect(:stop_self, _state, _envelope) do
     :stop_self
   end
@@ -413,6 +415,20 @@ defmodule Quanta.Actor.Server do
             {from, %{state | pending_replies: pending_replies}}
         end
     end
+  end
+
+  defp cancel_pending_replies_for(from, state) do
+    {to_cancel, to_keep} =
+      Map.split_with(state.pending_replies, fn {_msg_id, {stashed_from, _ref}} ->
+        stashed_from == from
+      end)
+
+    Enum.each(to_cancel, fn {msg_id, {_from, timer_ref}} ->
+      Process.cancel_timer(timer_ref)
+      receive do: ({:pending_reply_timeout, ^msg_id} -> :ok), after: (0 -> :ok)
+    end)
+
+    %{state | pending_replies: to_keep}
   end
 
   defp cancel_named_timer(state, name) do
