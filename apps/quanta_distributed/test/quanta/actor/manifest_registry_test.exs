@@ -15,7 +15,12 @@ defmodule Quanta.Actor.ManifestRegistryTest do
   end
 
   setup do
-    start_supervised!(ManifestRegistry)
+    # Table is :protected — clear from the owning process
+    :sys.replace_state(ManifestRegistry, fn state ->
+      :ets.delete_all_objects(state)
+      state
+    end)
+
     :ok
   end
 
