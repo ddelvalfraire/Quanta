@@ -26,9 +26,20 @@ defmodule Quanta.Web.TypeControllerTest do
     end
 
     test "returns empty list for unknown namespace", %{conn: conn} do
+      # Use a key scoped to this namespace
+      Application.put_env(:quanta_web, :api_keys, [
+        "qk_admin_test_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "qk_rw_test_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "qk_ro_test_cccccccccccccccccccccccccccccccc",
+        "qk_ro_nonexistent_dddddddddddddddddddddddddddddddd"
+      ])
+
       conn =
         conn
-        |> auth(@ro_key)
+        |> put_req_header(
+          "authorization",
+          "Bearer qk_ro_nonexistent_dddddddddddddddddddddddddddddddd"
+        )
         |> get("/api/v1/types/nonexistent")
 
       assert json_response(conn, 200) == []
@@ -75,7 +86,7 @@ defmodule Quanta.Web.TypeControllerTest do
         |> auth()
         |> post("/api/v1/types/test/greeter/deploy", %{manifest: upload, wasm: wasm_upload})
 
-      assert json_response(conn, 501)["error"] == "WASM runtime not available"
+      assert json_response(conn, 501)["error"] == "wasm_not_available"
     end
 
     test "returns 422 for invalid manifest YAML", %{conn: conn} do
@@ -138,7 +149,6 @@ defmodule Quanta.Web.TypeControllerTest do
     end
 
     test "returns 400 when manifest part is missing", %{conn: conn} do
-      # Send a non-manifest field so multipart is valid but manifest key is absent
       dummy = %Plug.Upload{
         path: write_temp("dummy"),
         filename: "other.txt",

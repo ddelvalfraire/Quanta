@@ -33,13 +33,7 @@ defmodule Quanta.Web.TypeController do
         deploy_manifest(conn, upload, ns, type)
 
       true ->
-        conn
-        |> put_status(400)
-        |> json(%{
-          error: "missing manifest part",
-          request_id: conn.assigns[:request_id],
-          trace_id: nil
-        })
+        error_response(conn, 400, "missing manifest part")
     end
   end
 
@@ -55,23 +49,10 @@ defmodule Quanta.Web.TypeController do
       })
     else
       {:error, errors} when is_list(errors) ->
-        conn
-        |> put_status(422)
-        |> json(%{
-          error: "manifest validation failed",
-          details: errors,
-          request_id: conn.assigns[:request_id],
-          trace_id: nil
-        })
+        error_response(conn, 422, "manifest validation failed", errors)
 
       {:error, reason} when is_binary(reason) ->
-        conn
-        |> put_status(422)
-        |> json(%{
-          error: reason,
-          request_id: conn.assigns[:request_id],
-          trace_id: nil
-        })
+        error_response(conn, 422, reason)
 
       {:error, reason} ->
         error_response(conn, reason)

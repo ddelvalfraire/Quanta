@@ -7,6 +7,7 @@ defmodule Quanta.Web.Router do
 
   pipeline :authenticated do
     plug Quanta.Web.Plugs.Auth
+    plug Quanta.Web.Plugs.RequireNamespace
   end
 
   # Health routes bypass :api pipeline — probes must not be rejected on Accept negotiation

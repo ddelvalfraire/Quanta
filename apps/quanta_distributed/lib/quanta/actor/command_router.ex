@@ -79,11 +79,11 @@ defmodule Quanta.Actor.CommandRouter do
     if DynSup.count_actors() >= max_actors do
       {:error, :node_at_capacity}
     else
-      case manifest_module(manifest) do
-        nil ->
+      case Quanta.ModuleResolver.resolve(manifest) do
+        {:error, :module_not_configured} ->
           {:error, :module_not_configured}
 
-        module ->
+        {:ok, module} ->
           start_and_deliver(actor_id, module, envelope, timeout)
       end
     end
@@ -112,17 +112,6 @@ defmodule Quanta.Actor.CommandRouter do
 
   defp deliver(pid, envelope, timeout) do
     Server.send_message(pid, envelope, timeout)
-  end
-
-  # Phase 1: resolve module from app config; T06/T16 will use WASM module registry.
-  defp manifest_module(manifest) do
-    case Application.get_env(:quanta_distributed, :actor_modules, %{}) do
-      modules when is_map(modules) ->
-        Map.get(modules, {manifest.namespace, manifest.type})
-
-      _ ->
-        nil
-    end
   end
 
   @impl true

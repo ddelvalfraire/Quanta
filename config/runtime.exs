@@ -48,6 +48,10 @@ if config_env() != :test do
     secret_key_base: System.fetch_env!("QUANTA_SECRET_KEY_BASE"),
     http: [port: System.get_env("QUANTA_HTTP_PORT", "4000") |> String.to_integer()],
     url: [host: System.get_env("QUANTA_HOST", "localhost")]
+
+  config :quanta_web,
+    api_keys:
+      System.fetch_env!("QUANTA_API_KEYS") |> String.split(",", trim: true)
 end
 
 # --- Telemetry ---

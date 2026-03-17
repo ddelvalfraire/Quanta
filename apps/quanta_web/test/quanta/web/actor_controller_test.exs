@@ -59,7 +59,9 @@ defmodule Quanta.Web.ActorControllerTest do
         |> put_req_header("content-type", "application/octet-stream")
         |> post("/api/v1/actors/test/unknown/x/messages", "inc")
 
-      assert json_response(conn, 404)["error"] == "actor type not found"
+      body = json_response(conn, 404)
+      assert body["error"] == "actor_type_not_found"
+      assert body["message"] == "actor type not found"
     end
 
     test "returns 400 for invalid actor id", %{conn: conn} do
@@ -69,7 +71,7 @@ defmodule Quanta.Web.ActorControllerTest do
         |> put_req_header("content-type", "application/octet-stream")
         |> post("/api/v1/actors/test/counter/bad id!/messages", "inc")
 
-      assert json_response(conn, 400)["error"] == "invalid actor id"
+      assert json_response(conn, 400)["error"] == "invalid_actor_id"
     end
 
     test "passes X-Quanta-Correlation-Id header", %{conn: conn} do
@@ -85,7 +87,7 @@ defmodule Quanta.Web.ActorControllerTest do
       assert conn.status == 200
     end
 
-    test "returns request_id in error responses", %{conn: conn} do
+    test "returns request_id and trace_id in error responses", %{conn: conn} do
       conn =
         conn
         |> auth()
@@ -95,6 +97,7 @@ defmodule Quanta.Web.ActorControllerTest do
       body = json_response(conn, 404)
       assert is_binary(body["request_id"])
       assert body["trace_id"] == nil
+      assert is_binary(body["message"])
     end
 
     test "requires rw scope", %{conn: conn} do
@@ -105,6 +108,59 @@ defmodule Quanta.Web.ActorControllerTest do
         |> post("/api/v1/actors/test/counter/x/messages", "inc")
 
       assert conn.status == 403
+    end
+
+    test "returns 408 on actor timeout", %{conn: conn} do
+      {:ok, pid} = start_actor("msg-timeout")
+      :sys.suspend(pid)
+
+      conn =
+        conn
+        |> auth()
+        |> put_req_header("content-type", "application/octet-stream")
+        |> post("/api/v1/actors/test/counter/msg-timeout/messages", "inc")
+
+      assert json_response(conn, 408)["error"] == "actor_timeout"
+      :sys.resume(pid)
+    end
+
+    test "returns 429 when rate limited", %{conn: conn} do
+      rate_limits = %Quanta.Manifest.RateLimits{
+        messages_per_second: 1,
+        messages_per_second_type: 100_000
+      }
+
+      :ok =
+        Quanta.Actor.ManifestRegistry.put(%Quanta.Manifest{
+          version: "1",
+          type: "limited",
+          namespace: "test",
+          rate_limits: rate_limits
+        })
+
+      prev = Application.get_env(:quanta_distributed, :actor_modules, %{})
+
+      Application.put_env(
+        :quanta_distributed,
+        :actor_modules,
+        Map.put(prev, {"test", "limited"}, Quanta.Web.Test.Counter)
+      )
+
+      conn1 =
+        conn
+        |> auth()
+        |> put_req_header("content-type", "application/octet-stream")
+        |> post("/api/v1/actors/test/limited/rl-1/messages", "inc")
+
+      assert conn1.status == 200
+
+      conn2 =
+        build_conn()
+        |> auth()
+        |> put_req_header("content-type", "application/octet-stream")
+        |> post("/api/v1/actors/test/limited/rl-1/messages", "inc")
+
+      assert json_response(conn2, 429)["error"] == "rate_limited"
     end
   end
 
@@ -128,7 +184,7 @@ defmodule Quanta.Web.ActorControllerTest do
         |> auth(@ro_key)
         |> get("/api/v1/actors/test/counter/nope/state")
 
-      assert json_response(conn, 404)["error"] == "actor not found"
+      assert json_response(conn, 404)["error"] == "actor_not_found"
     end
   end
 
@@ -156,7 +212,7 @@ defmodule Quanta.Web.ActorControllerTest do
         |> auth(@ro_key)
         |> get("/api/v1/actors/test/counter/nope/meta")
 
-      assert json_response(conn, 404)["error"] == "actor not found"
+      assert json_response(conn, 404)["error"] == "actor_not_found"
     end
   end
 
@@ -194,7 +250,7 @@ defmodule Quanta.Web.ActorControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post("/api/v1/actors/test/counter", Jason.encode!(%{id: "dup-1"}))
 
-      assert json_response(conn, 409)["error"] == "actor already exists"
+      assert json_response(conn, 409)["error"] == "actor_already_exists"
     end
 
     test "returns 404 for unknown type", %{conn: conn} do
@@ -204,7 +260,7 @@ defmodule Quanta.Web.ActorControllerTest do
         |> put_req_header("content-type", "application/json")
         |> post("/api/v1/actors/test/unknown", Jason.encode!(%{}))
 
-      assert json_response(conn, 404)["error"] == "actor type not found"
+      assert json_response(conn, 404)["error"] == "actor_type_not_found"
     end
 
     test "requires rw scope", %{conn: conn} do
@@ -215,6 +271,20 @@ defmodule Quanta.Web.ActorControllerTest do
         |> post("/api/v1/actors/test/counter", Jason.encode!(%{}))
 
       assert conn.status == 403
+    end
+
+    test "returns 503 when node at capacity", %{conn: conn} do
+      prev = Application.get_env(:quanta_distributed, :max_actors_per_node)
+      Application.put_env(:quanta_distributed, :max_actors_per_node, 0)
+
+      conn =
+        conn
+        |> auth()
+        |> put_req_header("content-type", "application/json")
+        |> post("/api/v1/actors/test/counter", Jason.encode!(%{}))
+
+      assert json_response(conn, 503)["error"] == "node_at_capacity"
+      Application.put_env(:quanta_distributed, :max_actors_per_node, prev || 1_000_000)
     end
   end
 
@@ -236,7 +306,16 @@ defmodule Quanta.Web.ActorControllerTest do
         |> auth()
         |> delete("/api/v1/actors/test/counter/nope")
 
-      assert json_response(conn, 404)["error"] == "actor not found"
+      assert json_response(conn, 404)["error"] == "actor_not_found"
+    end
+
+    test "requires rw scope", %{conn: conn} do
+      conn =
+        conn
+        |> auth(@ro_key)
+        |> delete("/api/v1/actors/test/counter/x")
+
+      assert conn.status == 403
     end
   end
 end

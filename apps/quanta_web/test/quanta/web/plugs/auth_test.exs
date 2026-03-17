@@ -120,4 +120,28 @@ defmodule Quanta.Web.Plugs.AuthTest do
     end
   end
 
+  describe "namespace enforcement" do
+    test "rejects request to wrong namespace", %{conn: conn} do
+      conn =
+        conn
+        |> auth(@rw_key)
+        |> get("/api/v1/types/other")
+
+      assert conn.status == 403
+      assert json_response(conn, 403)["error"] == "namespace_forbidden"
+    end
+
+    test "allows request to matching namespace", %{conn: conn} do
+      conn =
+        conn
+        |> auth(@ro_key)
+        |> get("/api/v1/types/test")
+
+      assert conn.status == 200
+    end
+  end
+
+  defp auth(conn, key) do
+    put_req_header(conn, "authorization", "Bearer #{key}")
+  end
 end

@@ -1,7 +1,7 @@
 defmodule Quanta.Web.Plugs.Auth do
   @moduledoc false
   import Plug.Conn
-  import Phoenix.Controller, only: [json: 2]
+  import Quanta.Web.ErrorHelpers, only: [error_response: 2]
 
   @key_pattern ~r/^qk_(admin|rw|ro)_([a-zA-Z0-9_-]+)_([a-zA-Z0-9]{32})$/
 
@@ -15,7 +15,7 @@ defmodule Quanta.Web.Plugs.Auth do
       |> assign(:auth_scope, scope)
       |> assign(:auth_namespace, namespace)
     else
-      _ -> halt_unauthorized(conn)
+      _ -> error_response(conn, :unauthorized) |> halt()
     end
   end
 
@@ -42,36 +42,4 @@ defmodule Quanta.Web.Plugs.Auth do
       :error
     end
   end
-
-  defp halt_unauthorized(conn) do
-    conn
-    |> put_status(401)
-    |> json(%{error: "unauthorized", request_id: conn.assigns[:request_id], trace_id: nil})
-    |> halt()
-  end
-end
-
-defmodule Quanta.Web.Plugs.RequireScope do
-  @moduledoc false
-  import Plug.Conn
-  import Phoenix.Controller, only: [json: 2]
-
-  @scope_levels %{admin: 3, rw: 2, ro: 1}
-
-  def init(required_scope) when is_atom(required_scope), do: required_scope
-
-  def call(conn, required_scope) do
-    user_scope = conn.assigns[:auth_scope]
-
-    if scope_level(user_scope) >= scope_level(required_scope) do
-      conn
-    else
-      conn
-      |> put_status(403)
-      |> json(%{error: "insufficient scope", request_id: conn.assigns[:request_id], trace_id: nil})
-      |> halt()
-    end
-  end
-
-  defp scope_level(scope), do: Map.get(@scope_levels, scope, 0)
 end

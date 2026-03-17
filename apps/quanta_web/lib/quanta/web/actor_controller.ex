@@ -4,15 +4,17 @@ defmodule Quanta.Web.ActorController do
   import Quanta.Web.ErrorHelpers
 
   alias Quanta.Actor.{CommandRouter, DynSup, ManifestRegistry, Registry, Server}
-  alias Quanta.{ActorId, Envelope}
+  alias Quanta.{ActorId, Envelope, ModuleResolver}
 
   plug Quanta.Web.Plugs.RequireScope, :rw when action in [:send_message, :spawn, :destroy]
   plug Quanta.Web.Plugs.RequireScope, :ro when action in [:get_state, :get_meta]
 
-  def send_message(conn, %{"ns" => ns, "type" => type, "id" => id}) do
-    with {:ok, actor_id} <- build_actor_id(ns, type, id) do
-      {:ok, body, conn} = Plug.Conn.read_body(conn)
+  @http_timeout_ms 5_000
+  @max_body_bytes 1_048_576
 
+  def send_message(conn, %{"ns" => ns, "type" => type, "id" => id}) do
+    with {:ok, actor_id} <- build_actor_id(ns, type, id),
+         {:ok, body, conn} <- read_payload(conn) do
       correlation_id = get_req_header(conn, "x-quanta-correlation-id") |> List.first()
 
       envelope =
@@ -22,7 +24,7 @@ defmodule Quanta.Web.ActorController do
           correlation_id: correlation_id
         )
 
-      case CommandRouter.route(actor_id, envelope, 5_000) do
+      case CommandRouter.route(actor_id, envelope, @http_timeout_ms) do
         {:ok, binary} when is_binary(binary) ->
           conn
           |> put_resp_content_type("application/octet-stream")
@@ -41,9 +43,8 @@ defmodule Quanta.Web.ActorController do
 
   def get_state(conn, %{"ns" => ns, "type" => type, "id" => id}) do
     with {:ok, actor_id} <- build_actor_id(ns, type, id),
-         {:ok, pid} <- lookup_actor(actor_id) do
-      {:ok, state_data} = Server.get_state(pid)
-
+         {:ok, pid} <- lookup_actor(actor_id),
+         {:ok, state_data} <- call_actor(fn -> Server.get_state(pid) end) do
       conn
       |> put_resp_content_type("application/octet-stream")
       |> send_resp(200, state_data)
@@ -54,9 +55,8 @@ defmodule Quanta.Web.ActorController do
 
   def get_meta(conn, %{"ns" => ns, "type" => type, "id" => id}) do
     with {:ok, actor_id} <- build_actor_id(ns, type, id),
-         {:ok, pid} <- lookup_actor(actor_id) do
-      {:ok, meta} = Server.get_meta(pid)
-
+         {:ok, pid} <- lookup_actor(actor_id),
+         {:ok, meta} <- call_actor(fn -> Server.get_meta(pid) end) do
       activated_at_iso =
         (meta.activated_at + System.time_offset(:native))
         |> System.convert_time_unit(:native, :microsecond)
@@ -83,7 +83,8 @@ defmodule Quanta.Web.ActorController do
 
     with {:ok, actor_id} <- build_actor_id(ns, type, id),
          {:ok, manifest} <- fetch_manifest(ns, type),
-         {:ok, module} <- resolve_module(manifest) do
+         {:ok, module} <- ModuleResolver.resolve(manifest),
+         :ok <- check_capacity() do
       opts = [actor_id: actor_id, module: module]
 
       case DynSup.start_actor(actor_id, opts) do
@@ -98,8 +99,8 @@ defmodule Quanta.Web.ActorController do
         {:error, {:already_registered, _}} ->
           error_response(conn, :actor_already_exists)
 
-        {:error, reason} ->
-          error_response(conn, reason)
+        {:error, _reason} ->
+          error_response(conn, :node_at_capacity)
       end
     else
       {:error, reason} -> error_response(conn, reason)
@@ -139,16 +140,27 @@ defmodule Quanta.Web.ActorController do
     end
   end
 
-  defp resolve_module(manifest) do
-    case Application.get_env(:quanta_distributed, :actor_modules, %{}) do
-      modules when is_map(modules) ->
-        case Map.get(modules, {manifest.namespace, manifest.type}) do
-          nil -> {:error, :module_not_configured}
-          module -> {:ok, module}
-        end
+  defp check_capacity do
+    max = Application.get_env(:quanta_distributed, :max_actors_per_node, 1_000_000)
 
-      _ ->
-        {:error, :module_not_configured}
+    if DynSup.count_actors() < max do
+      :ok
+    else
+      {:error, :node_at_capacity}
     end
+  end
+
+  defp read_payload(conn) do
+    case Plug.Conn.read_body(conn, length: @max_body_bytes) do
+      {:ok, body, conn} -> {:ok, body, conn}
+      {:more, _, _conn} -> {:error, :payload_too_large}
+      {:error, _reason} -> {:error, :payload_too_large}
+    end
+  end
+
+  defp call_actor(fun) do
+    fun.()
+  catch
+    :exit, _ -> {:error, :actor_not_found}
   end
 end
