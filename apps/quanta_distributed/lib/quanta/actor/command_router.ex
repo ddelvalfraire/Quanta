@@ -37,8 +37,17 @@ defmodule Quanta.Actor.CommandRouter do
          {:rate, :ok} <- {:rate, RateLimit.check(actor_id, manifest)} do
       find_and_deliver(actor_id, manifest, envelope, timeout)
     else
-      {:manifest, :error} -> {:error, :actor_type_not_found}
-      {:rate, {:error, :rate_limited, _retry_after}} -> {:error, :rate_limited}
+      {:manifest, :error} ->
+        {:error, :actor_type_not_found}
+
+      {:rate, {:error, :rate_limited, _retry_after}} ->
+        :telemetry.execute(
+          [:quanta, :rate_limit, :rejected],
+          %{},
+          %{actor_id: actor_id}
+        )
+
+        {:error, :rate_limited}
     end
   end
 

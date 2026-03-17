@@ -79,6 +79,12 @@ defmodule Quanta.Actor.Server do
 
     case Registry.register(actor_id) do
       :ok ->
+        Logger.metadata(
+          actor_namespace: actor_id.namespace,
+          actor_type: actor_id.type,
+          actor_id: actor_id.id
+        )
+
         {:ok, %__MODULE__{actor_id: actor_id, module: module}, {:continue, :load_state}}
 
       {:error, :already_registered} ->
@@ -138,6 +144,12 @@ defmodule Quanta.Actor.Server do
 
   @impl true
   def handle_call(:force_passivate, _from, state) do
+    :telemetry.execute(
+      [:quanta, :actor, :passivate],
+      %{},
+      %{actor_id: state.actor_id, reason: :force}
+    )
+
     call_on_passivate(state)
     Registry.deregister(state.actor_id)
     {:stop, :normal, :ok, state}
@@ -167,6 +179,12 @@ defmodule Quanta.Actor.Server do
 
   @impl true
   def handle_info(:passivate, state) do
+    :telemetry.execute(
+      [:quanta, :actor, :passivate],
+      %{},
+      %{actor_id: state.actor_id, reason: :idle}
+    )
+
     call_on_passivate(state)
     Registry.deregister(state.actor_id)
     {:stop, :normal, state}
@@ -217,20 +235,26 @@ defmodule Quanta.Actor.Server do
 
   defp activate(state, manifest) do
     state = %{state | manifest: manifest}
+    meta = %{actor_id: state.actor_id}
 
     try do
-      {state_data, init_effects} = state.module.init(<<>>)
+      state =
+        :telemetry.span([:quanta, :actor, :activate], meta, fn ->
+          {state_data, init_effects} = state.module.init(<<>>)
 
-      state = %{
-        state
-        | state_data: state_data,
-          status: :active,
-          activated_at: System.monotonic_time()
-      }
+          state = %{
+            state
+            | state_data: state_data,
+              status: :active,
+              activated_at: System.monotonic_time()
+          }
 
-      state = process_init_effects(init_effects, state)
-      state = schedule_idle_timer(state)
-      clear_init_failures(state.actor_id)
+          state = process_init_effects(init_effects, state)
+          state = schedule_idle_timer(state)
+          clear_init_failures(state.actor_id)
+
+          {state, meta}
+        end)
 
       {:noreply, state}
     rescue
@@ -241,10 +265,16 @@ defmodule Quanta.Actor.Server do
   end
 
   defp dispatch_message(state, envelope) do
+    Logger.metadata(message_id: envelope.message_id)
     state = reset_idle_timer(state)
-    {new_state, effects} = state.module.handle_message(state.state_data, envelope)
-    state = %{state | state_data: new_state, message_count: state.message_count + 1}
-    process_effects(effects, state, envelope)
+    meta = %{actor_id: state.actor_id, message_id: envelope.message_id}
+
+    :telemetry.span([:quanta, :actor, :message], meta, fn ->
+      {new_state, effects} = state.module.handle_message(state.state_data, envelope)
+      state = %{state | state_data: new_state, message_count: state.message_count + 1}
+      result = process_effects(effects, state, envelope)
+      {result, meta}
+    end)
   end
 
   defp process_init_effects(effects, state) do
@@ -468,6 +498,12 @@ defmodule Quanta.Actor.Server do
 
   defp handle_init_failure(state, error, stacktrace) do
     actor_id = state.actor_id
+
+    :telemetry.execute(
+      [:quanta, :actor, :crash],
+      %{},
+      %{actor_id: actor_id, reason: error, stacktrace: stacktrace}
+    )
 
     if :ets.whereis(@init_attempts_table) != :undefined do
       count =
