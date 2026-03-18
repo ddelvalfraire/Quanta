@@ -20,6 +20,24 @@ defmodule Quanta.Nifs.Native do
   @spec decode_envelope_header(binary()) :: {:ok, map()} | {:error, String.t()}
   def decode_envelope_header(_binary), do: :erlang.nif_error(:nif_not_loaded)
 
+  # --- WasmRuntime: engine / component / linker ---
+
+  def engine_new(), do: :erlang.nif_error(:nif_not_loaded)
+  def component_compile(_engine, _wasm_bytes), do: :erlang.nif_error(:nif_not_loaded)
+  def linker_new(_engine), do: :erlang.nif_error(:nif_not_loaded)
+  def component_serialize(_component, _hmac_key), do: :erlang.nif_error(:nif_not_loaded)
+  def component_deserialize(_engine, _bytes, _hmac_key), do: :erlang.nif_error(:nif_not_loaded)
+  def call_init(_engine, _component, _linker, _payload, _fuel, _mem),
+    do: :erlang.nif_error(:nif_not_loaded)
+  def call_handle_message(_engine, _component, _linker, _state, _envelope, _fuel, _mem),
+    do: :erlang.nif_error(:nif_not_loaded)
+  def call_handle_timer(_engine, _component, _linker, _state, _timer_name, _fuel, _mem),
+    do: :erlang.nif_error(:nif_not_loaded)
+  def call_migrate(_engine, _component, _linker, _state, _from_version, _fuel, _mem),
+    do: :erlang.nif_error(:nif_not_loaded)
+  def call_on_passivate(_engine, _component, _linker, _state, _fuel, _mem),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   # --- NATS JetStream ---
 
   @spec nats_connect(urls :: [String.t()], opts :: map()) ::

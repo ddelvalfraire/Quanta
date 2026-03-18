@@ -6,6 +6,7 @@
 
 # Rust
 /rust/target/
+/rust/fixtures/**/target/
 **/*.rs.bk
 *.pdb
 **/mutants.out*/

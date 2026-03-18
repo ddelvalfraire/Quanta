@@ -12,6 +12,9 @@ crate-type = ["cdylib"]
 quanta-core-rs = { path = "../quanta-core-rs" }
 rustler = "0.37"
 wasmtime = "40"
+wasmtime-wasi = "40"
+hmac = "0.12"
+sha2 = "0.10"
 loro = "1.10"
 async-nats = "0.46"
 bitcode = "0.6"

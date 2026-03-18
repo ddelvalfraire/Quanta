@@ -13,4 +13,6 @@ config :quanta_web,
   ]
 
 config :quanta_nifs,
-  wasm_hmac_key: Base.decode16!("DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF")
+  wasm_hmac_key: Base.decode16!("DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"),
+  default_fuel_limit: 1_000_000,
+  default_memory_limit_bytes: 16 * 1_048_576

@@ -1,0 +1,49 @@
+package quanta:actor;
+
+interface types {
+    record envelope {
+        source: string,
+        payload: list<u8>,
+        correlation-id: option<string>,
+    }
+
+    variant effect {
+        persist,
+        send(send-effect),
+        reply(list<u8>),
+        set-timer(timer-effect),
+        cancel-timer(string),
+        emit-event(list<u8>),
+        log(string),
+    }
+
+    record send-effect {
+        target: string,
+        payload: list<u8>,
+        correlation-id: option<string>,
+    }
+
+    record timer-effect {
+        name: string,
+        delay-ms: u64,
+    }
+
+    record handle-result {
+        state: list<u8>,
+        effects: list<effect>,
+    }
+}
+
+/// Counter actor world — does NOT export migrate (tests :not_exported path)
+world actor-world {
+    export actor;
+}
+
+interface actor {
+    use types.{envelope, handle-result};
+
+    init: func(payload: list<u8>) -> handle-result;
+    handle-message: func(state: list<u8>, envelope: envelope) -> handle-result;
+    handle-timer: func(state: list<u8>, timer-name: string) -> handle-result;
+    on-passivate: func(state: list<u8>) -> list<u8>;
+}
