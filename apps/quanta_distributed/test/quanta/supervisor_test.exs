@@ -34,6 +34,9 @@ defmodule Quanta.SupervisorTest do
 
       assert is_pid(children[Quanta.Actor.CompactionScheduler])
       assert Process.alive?(children[Quanta.Actor.CompactionScheduler])
+
+      assert is_pid(children[Quanta.Nats.JetStream.Connection])
+      assert Process.alive?(children[Quanta.Nats.JetStream.Connection])
     end
 
     test "DynSup partitions have max_restarts 10_000" do
