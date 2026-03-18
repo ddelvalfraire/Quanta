@@ -2,7 +2,7 @@ defmodule Quanta.Test.NatsHelpers do
   @moduledoc false
 
   def ensure_stream(stream_name, subjects) do
-    {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
+    {:ok, gnat} = Gnat.start_link(%{host: ~c"localhost", port: 4222})
 
     payload =
       Jason.encode!(%{
@@ -18,7 +18,7 @@ defmodule Quanta.Test.NatsHelpers do
   end
 
   def delete_stream(stream_name) do
-    {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
+    {:ok, gnat} = Gnat.start_link(%{host: ~c"localhost", port: 4222})
     Gnat.request(gnat, "$JS.API.STREAM.DELETE.#{stream_name}", "")
     GenServer.stop(gnat)
   rescue
@@ -26,7 +26,7 @@ defmodule Quanta.Test.NatsHelpers do
   end
 
   def ensure_kv_bucket(bucket_name) do
-    {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
+    {:ok, gnat} = Gnat.start_link(%{host: ~c"localhost", port: 4222})
 
     payload =
       Jason.encode!(%{
@@ -47,7 +47,7 @@ defmodule Quanta.Test.NatsHelpers do
   end
 
   def delete_kv_bucket(bucket_name) do
-    {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
+    {:ok, gnat} = Gnat.start_link(%{host: ~c"localhost", port: 4222})
     Gnat.request(gnat, "$JS.API.STREAM.DELETE.KV_#{bucket_name}", "")
     GenServer.stop(gnat)
   rescue

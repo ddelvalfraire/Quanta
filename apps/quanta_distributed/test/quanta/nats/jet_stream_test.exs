@@ -5,31 +5,19 @@ defmodule Quanta.Nats.JetStreamTest do
   import Quanta.Test.NatsHelpers
 
   describe "get_connection/0" do
-    test "raises when persistent_term is not set" do
-      key = :quanta_jetstream_conn
+    test "returns {:error, :not_connected} when persistent_term is not set" do
+      # Save existing connection, erase, test, then restore
+      prev = Quanta.Nats.JetStream.Connection.get_connection()
 
-      # Save existing value, erase, test, then restore
-      prev =
-        try do
-          {:ok, :persistent_term.get(key)}
-        rescue
-          ArgumentError -> :none
-        end
+      :persistent_term.erase(:quanta_jetstream_conn)
 
       try do
-        :persistent_term.erase(key)
-      rescue
-        ArgumentError -> :ok
-      end
-
-      try do
-        assert_raise ArgumentError, fn ->
-          Quanta.Nats.JetStream.Connection.get_connection()
-        end
+        assert {:error, :not_connected} =
+                 Quanta.Nats.JetStream.Connection.get_connection()
       after
         case prev do
-          {:ok, val} -> :persistent_term.put(key, val)
-          :none -> :ok
+          {:ok, conn} -> :persistent_term.put(:quanta_jetstream_conn, conn)
+          {:error, :not_connected} -> :ok
         end
       end
     end

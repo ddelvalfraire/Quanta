@@ -12,21 +12,24 @@ defmodule Quanta.Nats.JetStream.Connection do
   require Logger
 
   @persistent_term_key :quanta_jetstream_conn
+  @initial_backoff_ms 100
   @max_backoff_ms 5_000
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Read the connection ref from `:persistent_term`. Raises if not set."
-  @spec get_connection() :: reference()
+  @spec get_connection() :: {:ok, reference()} | {:error, :not_connected}
   def get_connection do
-    :persistent_term.get(@persistent_term_key)
+    case :persistent_term.get(@persistent_term_key, nil) do
+      nil -> {:error, :not_connected}
+      conn -> {:ok, conn}
+    end
   end
 
   @impl true
   def init(_opts) do
-    {:ok, %{backoff_ms: 100}, {:continue, :connect}}
+    {:ok, %{backoff_ms: @initial_backoff_ms}, {:continue, :connect}}
   end
 
   @impl true
@@ -54,7 +57,7 @@ defmodule Quanta.Nats.JetStream.Connection do
       {:ok, conn} ->
         :persistent_term.put(@persistent_term_key, conn)
         Logger.info("JetStream connected")
-        {:noreply, %{state | backoff_ms: 100}}
+        {:noreply, %{state | backoff_ms: @initial_backoff_ms}}
 
       {:error, reason} ->
         backoff = state.backoff_ms
