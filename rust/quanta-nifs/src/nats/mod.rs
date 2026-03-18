@@ -1,3 +1,4 @@
+pub mod consumer;
 pub mod kv;
 pub mod publish;
 
@@ -19,6 +20,8 @@ pub(crate) mod atoms {
         seq,
         value,
         revision,
+        subject,
+        payload,
     }
 }
 
@@ -99,4 +102,5 @@ fn term_map_get_u64(map_term: &Term, key: &str) -> Option<u64> {
 
 pub fn load(env: Env, _: Term) -> bool {
     env.register::<NatsConnectionResource>().is_ok()
+        && env.register::<consumer::ConsumerResource>().is_ok()
 }

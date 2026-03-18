@@ -118,6 +118,122 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
     end
   end
 
+  describe "consumer lifecycle" do
+    setup %{conn: conn} do
+      stream = "TEST_CONSUMER_#{:erlang.unique_integer([:positive])}"
+      ensure_stream(conn, stream, "test.consumer.#{stream}.>")
+      on_exit(fn -> delete_stream(conn, stream) end)
+      %{stream_name: stream}
+    end
+
+    test "create, fetch, delete", %{conn: conn, stream_name: stream} do
+      subject = "test.consumer.#{stream}.events"
+
+      # Publish 3 messages
+      for i <- 1..3 do
+        ref = make_ref()
+        :ok = Quanta.Nifs.Native.js_publish_async(conn, self(), ref, subject, "msg#{i}", nil)
+        assert_receive {:ok, ^ref, _}, 5_000
+      end
+
+      # Create consumer
+      ref_create = make_ref()
+      :ok = Quanta.Nifs.Native.consumer_create_async(conn, self(), ref_create, stream, subject, 0)
+      assert_receive {:ok, ^ref_create, consumer_ref}, 5_000
+      assert is_reference(consumer_ref)
+
+      # Fetch messages
+      ref_fetch = make_ref()
+      :ok = Quanta.Nifs.Native.consumer_fetch_async(conn, self(), ref_fetch, consumer_ref, 10, 2_000)
+      assert_receive {:ok, ^ref_fetch, messages}, 5_000
+      assert length(messages) == 3
+
+      [msg1, msg2, msg3] = messages
+      assert msg1.subject == subject
+      assert msg1.payload == "msg1"
+      assert is_integer(msg1.seq)
+      assert msg2.payload == "msg2"
+      assert msg3.payload == "msg3"
+
+      # Delete consumer
+      ref_del = make_ref()
+      :ok = Quanta.Nifs.Native.consumer_delete_async(conn, self(), ref_del, consumer_ref)
+      assert_receive {:ok, ^ref_del}, 5_000
+    end
+  end
+
+  describe "purge_subject_async/5" do
+    setup %{conn: conn} do
+      stream = "TEST_PURGE_#{:erlang.unique_integer([:positive])}"
+      ensure_stream(conn, stream, "test.purge.#{stream}.>")
+      on_exit(fn -> delete_stream(conn, stream) end)
+      %{stream_name: stream}
+    end
+
+    test "purges messages for a subject", %{conn: conn, stream_name: stream} do
+      subject = "test.purge.#{stream}.item"
+
+      # Publish messages
+      for i <- 1..3 do
+        ref = make_ref()
+        :ok = Quanta.Nifs.Native.js_publish_async(conn, self(), ref, subject, "msg#{i}", nil)
+        assert_receive {:ok, ^ref, _}, 5_000
+      end
+
+      # Purge
+      ref_purge = make_ref()
+      :ok = Quanta.Nifs.Native.purge_subject_async(conn, self(), ref_purge, stream, subject)
+      assert_receive {:ok, ^ref_purge}, 5_000
+
+      # Verify: create consumer at seq 0, fetch should get nothing
+      ref_create = make_ref()
+      :ok = Quanta.Nifs.Native.consumer_create_async(conn, self(), ref_create, stream, subject, 0)
+      assert_receive {:ok, ^ref_create, consumer_ref}, 5_000
+
+      ref_fetch = make_ref()
+      :ok = Quanta.Nifs.Native.consumer_fetch_async(conn, self(), ref_fetch, consumer_ref, 10, 1_000)
+      assert_receive {:ok, ^ref_fetch, messages}, 5_000
+      assert messages == []
+
+      # Cleanup
+      ref_del = make_ref()
+      :ok = Quanta.Nifs.Native.consumer_delete_async(conn, self(), ref_del, consumer_ref)
+      assert_receive {:ok, ^ref_del}, 5_000
+    end
+  end
+
+  describe "backpressure" do
+    test "returns :nats_backpressure when semaphore is full" do
+      # Connect with max_in_flight: 1
+      {:ok, conn} = Quanta.Nifs.Native.nats_connect(["nats://localhost:4222"], %{max_in_flight: 1})
+
+      stream = "TEST_BP_#{:erlang.unique_integer([:positive])}"
+      ensure_stream(conn, stream, "test.bp.#{stream}.>")
+      on_exit(fn -> delete_stream(conn, stream) end)
+
+      subject = "test.bp.#{stream}.item"
+
+      # Fire many calls rapidly — with max_in_flight: 1, at least some should
+      # get backpressure since the Tokio task holds the permit until it completes.
+      results =
+        for i <- 1..50 do
+          ref = make_ref()
+          Quanta.Nifs.Native.js_publish_async(conn, self(), ref, subject, "msg#{i}", nil)
+        end
+
+      backpressure_count = Enum.count(results, &(&1 == {:error, :nats_backpressure}))
+      ok_count = Enum.count(results, &(&1 == :ok))
+
+      assert backpressure_count > 0,
+        "Expected at least one backpressure response, got #{ok_count} oks"
+
+      # Drain all successful publish acks
+      for _ <- 1..ok_count do
+        assert_receive {:ok, _, _}, 5_000
+      end
+    end
+  end
+
   # --- Test helpers: create/delete streams and KV buckets via gnat ---
 
   defp ensure_stream(_conn, stream_name, subjects) do
