@@ -1,6 +1,9 @@
+use std::panic::AssertUnwindSafe;
+
+use futures_util::FutureExt;
 use rustler::{Binary, Encoder, Env, LocalPid, NewBinary, OwnedEnv, ResourceArc, Term};
 
-use super::{atoms, NatsConnectionResource};
+use super::{atoms, encode_task_panic, NatsConnectionResource, NifError};
 use crate::macros::nif_safe;
 
 #[rustler::nif]
@@ -27,11 +30,11 @@ fn kv_get_async<'a>(
         inner.runtime.spawn(async move {
             let _permit = permit;
 
-            let result: Result<(Vec<u8>, u64), String> = async {
+            let result = AssertUnwindSafe(async {
                 let store = jetstream
                     .get_key_value(&bucket)
                     .await
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| NifError::Other(format!("{}", e)))?;
 
                 match store.entry(&key).await {
                     Ok(Some(entry)) => {
@@ -41,39 +44,40 @@ fn kv_get_async<'a>(
                         ) {
                             Ok((entry.value.to_vec(), entry.revision))
                         } else {
-                            Err("not_found".to_string())
+                            Err(NifError::NotFound)
                         }
                     }
-                    Ok(None) => Err("not_found".to_string()),
-                    Err(e) => Err(format!("{}", e)),
+                    Ok(None) => Err(NifError::NotFound),
+                    Err(e) => Err(NifError::Other(format!("{}", e))),
                 }
-            }
+            })
+            .catch_unwind()
             .await;
 
             let _ = owned_env.send_and_clear(&caller_pid, |env| {
                 let ref_term = saved_ref.load(env);
                 match result {
-                    Ok((value, revision)) => {
+                    Ok(Ok((value, revision))) => {
                         let mut value_binary = NewBinary::new(env, value.len());
                         value_binary.as_mut_slice().copy_from_slice(&value);
                         let map = rustler::Term::map_from_pairs(
                             env,
                             &[
-                                (atoms::value().encode(env), Binary::from(value_binary).encode(env)),
+                                (
+                                    atoms::value().encode(env),
+                                    Binary::from(value_binary).encode(env),
+                                ),
                                 (atoms::revision().encode(env), revision.encode(env)),
                             ],
-                        )
-                        .unwrap();
-                        (atoms::ok(), ref_term, map).encode(env)
+                        );
+                        match map {
+                            Ok(map) => (atoms::ok(), ref_term, map).encode(env),
+                            Err(_) => NifError::Other("encoding_error".into())
+                                .encode_term(env, ref_term),
+                        }
                     }
-                    Err(reason) => {
-                        let reason_term = if reason == "not_found" {
-                            atoms::not_found().encode(env)
-                        } else {
-                            reason.encode(env)
-                        };
-                        (atoms::error(), ref_term, reason_term).encode(env)
-                    }
+                    Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),
+                    Err(panic) => encode_task_panic(env, ref_term, panic),
                 }
             });
         });
@@ -108,31 +112,36 @@ fn kv_put_async<'a>(
         inner.runtime.spawn(async move {
             let _permit = permit;
 
-            let result: Result<u64, String> = async {
+            let result = AssertUnwindSafe(async {
                 let store = jetstream
                     .get_key_value(&bucket)
                     .await
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| NifError::Other(format!("{}", e)))?;
 
                 store
                     .put(&key, value.into())
                     .await
-                    .map_err(|e| format!("{}", e))
-            }
+                    .map_err(|e| NifError::Other(format!("{}", e)))
+            })
+            .catch_unwind()
             .await;
 
             let _ = owned_env.send_and_clear(&caller_pid, |env| {
                 let ref_term = saved_ref.load(env);
                 match result {
-                    Ok(revision) => {
+                    Ok(Ok(revision)) => {
                         let map = rustler::Term::map_from_pairs(
                             env,
                             &[(atoms::revision().encode(env), revision.encode(env))],
-                        )
-                        .unwrap();
-                        (atoms::ok(), ref_term, map).encode(env)
+                        );
+                        match map {
+                            Ok(map) => (atoms::ok(), ref_term, map).encode(env),
+                            Err(_) => NifError::Other("encoding_error".into())
+                                .encode_term(env, ref_term),
+                        }
                     }
-                    Err(reason) => (atoms::error(), ref_term, reason.encode(env)).encode(env),
+                    Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),
+                    Err(panic) => encode_task_panic(env, ref_term, panic),
                 }
             });
         });
@@ -165,21 +174,26 @@ fn kv_delete_async<'a>(
         inner.runtime.spawn(async move {
             let _permit = permit;
 
-            let result: Result<(), String> = async {
+            let result = AssertUnwindSafe(async {
                 let store = jetstream
                     .get_key_value(&bucket)
                     .await
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| NifError::Other(format!("{}", e)))?;
 
-                store.delete(&key).await.map_err(|e| format!("{}", e))
-            }
+                store
+                    .delete(&key)
+                    .await
+                    .map_err(|e| NifError::Other(format!("{}", e)))
+            })
+            .catch_unwind()
             .await;
 
             let _ = owned_env.send_and_clear(&caller_pid, |env| {
                 let ref_term = saved_ref.load(env);
                 match result {
-                    Ok(()) => (atoms::ok(), ref_term).encode(env),
-                    Err(reason) => (atoms::error(), ref_term, reason.encode(env)).encode(env),
+                    Ok(Ok(())) => (atoms::ok(), ref_term).encode(env),
+                    Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),
+                    Err(panic) => encode_task_panic(env, ref_term, panic),
                 }
             });
         });

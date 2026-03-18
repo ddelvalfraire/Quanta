@@ -1,6 +1,9 @@
+use std::panic::AssertUnwindSafe;
+
+use futures_util::FutureExt;
 use rustler::{Binary, Encoder, Env, LocalPid, NewBinary, OwnedEnv, Resource, ResourceArc, Term};
 
-use super::{atoms, NatsConnectionResource};
+use super::{atoms, encode_task_panic, NatsConnectionResource, NifError};
 use crate::macros::nif_safe;
 
 pub struct ConsumerResource {
@@ -27,17 +30,24 @@ fn consumer_create_async<'a>(
     nif_safe!(env, {
         let inner = &conn.inner;
 
+        let permit = match inner.semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => return (atoms::error(), atoms::nats_backpressure()).encode(env),
+        };
+
         let mut owned_env = OwnedEnv::new();
         let saved_ref = owned_env.save(caller_ref);
         let jetstream = inner.jetstream.clone();
         let stream_name = stream.clone();
 
         inner.runtime.spawn(async move {
-            let result = async {
+            let _permit = permit;
+
+            let result = AssertUnwindSafe(async {
                 let js_stream = jetstream
                     .get_stream(&stream)
                     .await
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| NifError::Other(format!("{}", e)))?;
 
                 let deliver_policy = if start_seq == 0 {
                     async_nats::jetstream::consumer::DeliverPolicy::All
@@ -54,21 +64,19 @@ fn consumer_create_async<'a>(
                         ..Default::default()
                     })
                     .await
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| NifError::Other(format!("{}", e)))?;
 
-                let name = consumer
-                    .cached_info()
-                    .name
-                    .clone();
+                let name = consumer.cached_info().name.clone();
 
-                Ok::<_, String>((consumer, name))
-            }
+                Ok::<_, NifError>((consumer, name))
+            })
+            .catch_unwind()
             .await;
 
             let _ = owned_env.send_and_clear(&caller_pid, |env| {
                 let ref_term = saved_ref.load(env);
                 match result {
-                    Ok((consumer, name)) => {
+                    Ok(Ok((consumer, name))) => {
                         let resource = ResourceArc::new(ConsumerResource {
                             consumer,
                             stream_name,
@@ -76,7 +84,8 @@ fn consumer_create_async<'a>(
                         });
                         (atoms::ok(), ref_term, resource).encode(env)
                     }
-                    Err(reason) => (atoms::error(), ref_term, reason.encode(env)).encode(env),
+                    Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),
+                    Err(panic) => encode_task_panic(env, ref_term, panic),
                 }
             });
         });
@@ -98,12 +107,19 @@ fn consumer_fetch_async<'a>(
     nif_safe!(env, {
         let inner = &conn.inner;
 
+        let permit = match inner.semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => return (atoms::error(), atoms::nats_backpressure()).encode(env),
+        };
+
         let mut owned_env = OwnedEnv::new();
         let saved_ref = owned_env.save(caller_ref);
         let consumer_clone = consumer.clone();
 
         inner.runtime.spawn(async move {
-            let result = async {
+            let _permit = permit;
+
+            let result = AssertUnwindSafe(async {
                 use futures_util::StreamExt;
 
                 let consumer_ref = &consumer_clone.consumer;
@@ -113,7 +129,7 @@ fn consumer_fetch_async<'a>(
                     .expires(std::time::Duration::from_millis(timeout_ms))
                     .messages()
                     .await
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| NifError::Other(format!("{}", e)))?;
 
                 let mut msgs: Vec<(String, Vec<u8>, u64)> = Vec::new();
                 while let Some(msg_result) = batch.next().await {
@@ -121,23 +137,26 @@ fn consumer_fetch_async<'a>(
                         Ok(msg) => {
                             let subject = msg.subject.to_string();
                             let payload = msg.payload.to_vec();
-                            let info = msg.info().map_err(|e| format!("{}", e))?;
+                            let info = msg.info().map_err(|e| NifError::Other(format!("{}", e)))?;
                             let seq = info.stream_sequence;
-                            msg.ack().await.ok();
+                            if let Err(e) = msg.ack().await {
+                                return Err(NifError::Other(format!("ack_failed: {}", e)));
+                            }
                             msgs.push((subject, payload, seq));
                         }
-                        Err(e) => return Err(format!("{}", e)),
+                        Err(e) => return Err(NifError::Other(format!("{}", e))),
                     }
                 }
 
-                Ok::<_, String>(msgs)
-            }
+                Ok::<_, NifError>(msgs)
+            })
+            .catch_unwind()
             .await;
 
             let _ = owned_env.send_and_clear(&caller_pid, |env| {
                 let ref_term = saved_ref.load(env);
                 match result {
-                    Ok(msgs) => {
+                    Ok(Ok(msgs)) => {
                         let msg_terms: Vec<Term> = msgs
                             .into_iter()
                             .map(|(subject, payload, seq)| {
@@ -154,12 +173,13 @@ fn consumer_fetch_async<'a>(
                                         (atoms::seq().encode(env), seq.encode(env)),
                                     ],
                                 )
-                                .unwrap()
+                                .expect("map_from_pairs with static keys cannot fail")
                             })
                             .collect();
                         (atoms::ok(), ref_term, msg_terms).encode(env)
                     }
-                    Err(reason) => (atoms::error(), ref_term, reason.encode(env)).encode(env),
+                    Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),
+                    Err(panic) => encode_task_panic(env, ref_term, panic),
                 }
             });
         });
@@ -179,6 +199,11 @@ fn consumer_delete_async<'a>(
     nif_safe!(env, {
         let inner = &conn.inner;
 
+        let permit = match inner.semaphore.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => return (atoms::error(), atoms::nats_backpressure()).encode(env),
+        };
+
         let mut owned_env = OwnedEnv::new();
         let saved_ref = owned_env.save(caller_ref);
         let jetstream = inner.jetstream.clone();
@@ -186,72 +211,30 @@ fn consumer_delete_async<'a>(
         let consumer_name = consumer.consumer_name.clone();
 
         inner.runtime.spawn(async move {
-            let result = async {
+            let _permit = permit;
+
+            let result = AssertUnwindSafe(async {
                 let stream = jetstream
                     .get_stream(&stream_name)
                     .await
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| NifError::Other(format!("{}", e)))?;
 
                 stream
                     .delete_consumer(&consumer_name)
                     .await
-                    .map_err(|e| format!("{}", e))?;
+                    .map_err(|e| NifError::Other(format!("{}", e)))?;
 
-                Ok::<_, String>(())
-            }
+                Ok::<_, NifError>(())
+            })
+            .catch_unwind()
             .await;
 
             let _ = owned_env.send_and_clear(&caller_pid, |env| {
                 let ref_term = saved_ref.load(env);
                 match result {
-                    Ok(()) => (atoms::ok(), ref_term).encode(env),
-                    Err(reason) => (atoms::error(), ref_term, reason.encode(env)).encode(env),
-                }
-            });
-        });
-
-        atoms::ok().encode(env)
-    })
-}
-
-#[rustler::nif]
-fn purge_subject_async<'a>(
-    env: Env<'a>,
-    conn: ResourceArc<NatsConnectionResource>,
-    caller_pid: LocalPid,
-    caller_ref: Term<'a>,
-    stream: String,
-    subject: String,
-) -> Term<'a> {
-    nif_safe!(env, {
-        let inner = &conn.inner;
-
-        let mut owned_env = OwnedEnv::new();
-        let saved_ref = owned_env.save(caller_ref);
-        let jetstream = inner.jetstream.clone();
-
-        inner.runtime.spawn(async move {
-            let result = async {
-                let js_stream = jetstream
-                    .get_stream(&stream)
-                    .await
-                    .map_err(|e| format!("{}", e))?;
-
-                js_stream
-                    .purge()
-                    .filter(&subject)
-                    .await
-                    .map_err(|e| format!("{}", e))?;
-
-                Ok::<_, String>(())
-            }
-            .await;
-
-            let _ = owned_env.send_and_clear(&caller_pid, |env| {
-                let ref_term = saved_ref.load(env);
-                match result {
-                    Ok(()) => (atoms::ok(), ref_term).encode(env),
-                    Err(reason) => (atoms::error(), ref_term, reason.encode(env)).encode(env),
+                    Ok(Ok(())) => (atoms::ok(), ref_term).encode(env),
+                    Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),
+                    Err(panic) => encode_task_panic(env, ref_term, panic),
                 }
             });
         });

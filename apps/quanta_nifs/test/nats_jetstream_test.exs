@@ -27,13 +27,19 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
       assert is_binary(reason)
       assert reason =~ "connect_error"
     end
+
+    test "rejects negative max_in_flight" do
+      # Negative values are rejected by try_from, falling back to default (10_000)
+      assert {:ok, _conn} =
+               Quanta.Nifs.Native.nats_connect(["nats://localhost:4222"], %{max_in_flight: -1})
+    end
   end
 
   describe "js_publish_async/6" do
-    setup %{conn: conn} do
+    setup do
       stream = "TEST_PUBLISH_#{:erlang.unique_integer([:positive])}"
-      ensure_stream(conn, stream, "test.publish.#{stream}.>")
-      on_exit(fn -> delete_stream(conn, stream) end)
+      ensure_stream(stream, "test.publish.#{stream}.>")
+      on_exit(fn -> delete_stream(stream) end)
       %{stream_name: stream}
     end
 
@@ -64,10 +70,10 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
   end
 
   describe "kv_get_async/5 and kv_put_async/6" do
-    setup %{conn: conn} do
+    setup do
       bucket = "test_kv_#{:erlang.unique_integer([:positive])}"
-      ensure_kv_bucket(conn, bucket)
-      on_exit(fn -> delete_kv_bucket(conn, bucket) end)
+      ensure_kv_bucket(bucket)
+      on_exit(fn -> delete_kv_bucket(bucket) end)
       %{bucket: bucket}
     end
 
@@ -93,10 +99,10 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
   end
 
   describe "kv_delete_async/5" do
-    setup %{conn: conn} do
+    setup do
       bucket = "test_kvdel_#{:erlang.unique_integer([:positive])}"
-      ensure_kv_bucket(conn, bucket)
-      on_exit(fn -> delete_kv_bucket(conn, bucket) end)
+      ensure_kv_bucket(bucket)
+      on_exit(fn -> delete_kv_bucket(bucket) end)
       %{bucket: bucket}
     end
 
@@ -119,10 +125,10 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
   end
 
   describe "consumer lifecycle" do
-    setup %{conn: conn} do
+    setup do
       stream = "TEST_CONSUMER_#{:erlang.unique_integer([:positive])}"
-      ensure_stream(conn, stream, "test.consumer.#{stream}.>")
-      on_exit(fn -> delete_stream(conn, stream) end)
+      ensure_stream(stream, "test.consumer.#{stream}.>")
+      on_exit(fn -> delete_stream(stream) end)
       %{stream_name: stream}
     end
 
@@ -163,10 +169,10 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
   end
 
   describe "purge_subject_async/5" do
-    setup %{conn: conn} do
+    setup do
       stream = "TEST_PURGE_#{:erlang.unique_integer([:positive])}"
-      ensure_stream(conn, stream, "test.purge.#{stream}.>")
-      on_exit(fn -> delete_stream(conn, stream) end)
+      ensure_stream(stream, "test.purge.#{stream}.>")
+      on_exit(fn -> delete_stream(stream) end)
       %{stream_name: stream}
     end
 
@@ -204,12 +210,11 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
 
   describe "backpressure" do
     test "returns :nats_backpressure when semaphore is full" do
-      # Connect with max_in_flight: 1
       {:ok, conn} = Quanta.Nifs.Native.nats_connect(["nats://localhost:4222"], %{max_in_flight: 1})
 
       stream = "TEST_BP_#{:erlang.unique_integer([:positive])}"
-      ensure_stream(conn, stream, "test.bp.#{stream}.>")
-      on_exit(fn -> delete_stream(conn, stream) end)
+      ensure_stream(stream, "test.bp.#{stream}.>")
+      on_exit(fn -> delete_stream(stream) end)
 
       subject = "test.bp.#{stream}.item"
 
@@ -234,9 +239,9 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
     end
   end
 
-  # --- Test helpers: create/delete streams and KV buckets via gnat ---
+  # --- Test helpers ---
 
-  defp ensure_stream(_conn, stream_name, subjects) do
+  defp ensure_stream(stream_name, subjects) do
     {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
 
     payload =
@@ -252,7 +257,7 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
     GenServer.stop(gnat)
   end
 
-  defp delete_stream(_conn, stream_name) do
+  defp delete_stream(stream_name) do
     {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
     Gnat.request(gnat, "$JS.API.STREAM.DELETE.#{stream_name}", "")
     GenServer.stop(gnat)
@@ -260,7 +265,7 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
     _ -> :ok
   end
 
-  defp ensure_kv_bucket(_conn, bucket_name) do
+  defp ensure_kv_bucket(bucket_name) do
     {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
 
     payload =
@@ -281,7 +286,7 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
     GenServer.stop(gnat)
   end
 
-  defp delete_kv_bucket(_conn, bucket_name) do
+  defp delete_kv_bucket(bucket_name) do
     {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
     Gnat.request(gnat, "$JS.API.STREAM.DELETE.KV_#{bucket_name}", "")
     GenServer.stop(gnat)
