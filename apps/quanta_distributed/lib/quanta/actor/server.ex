@@ -8,7 +8,7 @@ defmodule Quanta.Actor.Server do
 
   use GenServer
 
-  alias Quanta.Actor.{DynSup, ManifestRegistry, Registry}
+  alias Quanta.Actor.{EffectExecutor, ManifestRegistry, Registry}
   alias Quanta.Envelope
 
   require Logger
@@ -31,6 +31,20 @@ defmodule Quanta.Actor.Server do
     pending_replies: %{},
     message_count: 0
   ]
+
+  @type t :: %__MODULE__{
+          actor_id: Quanta.ActorId.t() | nil,
+          module: module() | nil,
+          manifest: Quanta.Manifest.t() | nil,
+          state_data: binary() | nil,
+          idle_timer_ref: reference() | nil,
+          activated_at: integer() | nil,
+          status: :activating | :active,
+          events_since_snapshot: non_neg_integer(),
+          named_timers: %{String.t() => map()},
+          pending_replies: %{String.t() => {GenServer.from(), reference()}},
+          message_count: non_neg_integer()
+        }
 
   def child_spec(opts) do
     actor_id = Keyword.fetch!(opts, :actor_id)
@@ -280,6 +294,10 @@ defmodule Quanta.Actor.Server do
   defp process_init_effects(effects, state) do
     Enum.reduce(effects, state, fn
       {:persist, data}, state ->
+        if byte_size(data) > state.manifest.state.max_size_bytes do
+          raise "Persist failed during init for #{inspect(state.actor_id)}: state_too_large"
+        end
+
         %{state | state_data: data, events_since_snapshot: state.events_since_snapshot + 1}
 
       {:set_timer, name, delay_ms}, state
@@ -305,122 +323,20 @@ defmodule Quanta.Actor.Server do
   end
 
   defp process_effects(effects, state, envelope) do
-    Enum.reduce(effects, {nil, state, false, []}, fn effect, {reply, state, stop?, sent_ids} ->
-      case process_effect(effect, state, envelope) do
-        {:reply, value, state} -> {value, state, stop?, sent_ids}
-        {:state, state} -> {reply, state, stop?, sent_ids}
-        {:sent, msg_id} -> {reply, state, stop?, [msg_id | sent_ids]}
-        :stop_self -> {reply, state, true, sent_ids}
-        :ok -> {reply, state, stop?, sent_ids}
-      end
-    end)
-  end
+    context = %{
+      actor_id: state.actor_id,
+      envelope: envelope,
+      manifest: state.manifest,
+      server_state: state
+    }
 
-  defp process_effect({:reply, payload}, state, _envelope) do
-    {:reply, {:ok, payload}, state}
-  end
+    case EffectExecutor.execute(effects, context) do
+      %{} = result ->
+        {result.reply, result.server_state, result.stop_self, result.sent_ids}
 
-  defp process_effect({:persist, data}, state, _envelope) do
-    {:state, %{state | state_data: data, events_since_snapshot: state.events_since_snapshot + 1}}
-  end
-
-  defp process_effect({:send, target, payload}, state, envelope) do
-    out_envelope =
-      Envelope.new(
-        timestamp: Quanta.HLC.Server.now(),
-        causation_id: envelope.message_id,
-        correlation_id: envelope.message_id,
-        sender: state.actor_id,
-        payload: payload
-      )
-
-    case Registry.lookup(target) do
-      {:ok, pid} ->
-        GenServer.cast(pid, {:incoming_message, out_envelope})
-        {:sent, out_envelope.message_id}
-
-      :not_found ->
-        Logger.warning("Send target not found: #{inspect(target)}")
-        :ok
+      {:error, :persist_failed, reason} ->
+        raise "Persist failed for #{inspect(state.actor_id)}: #{inspect(reason)}"
     end
-  end
-
-  defp process_effect({:set_timer, name, delay_ms}, state, envelope)
-       when is_integer(delay_ms) and delay_ms > 0 do
-    max = state.manifest.resources.max_timers
-
-    if map_size(state.named_timers) >= max do
-      Logger.warning(
-        "Max timers (#{max}) reached for #{inspect(state.actor_id)}, dropping timer #{name}"
-      )
-
-      :ok
-    else
-      state = cancel_named_timer(state, name)
-      ref = Process.send_after(self(), {:timer_fire, name}, delay_ms)
-      entry = %{ref: ref, created_by: envelope.message_id}
-      {:state, %{state | named_timers: Map.put(state.named_timers, name, entry)}}
-    end
-  end
-
-  defp process_effect({:set_timer, name, delay_ms}, _state, _envelope) do
-    Logger.warning("Invalid timer delay for #{name}: #{inspect(delay_ms)}, must be positive integer")
-    :ok
-  end
-
-  defp process_effect({:cancel_timer, name}, state, _envelope) do
-    {:state, cancel_named_timer(state, name)}
-  end
-
-  defp process_effect({:publish, _channel, _payload}, _state, _envelope) do
-    :ok
-  end
-
-  # Phase 1: spawned actors inherit the parent's module. T06 will resolve
-  # the dispatch target from the manifest via WASM component lookup.
-  defp process_effect({:spawn_actor, target, _init_payload}, state, _envelope) do
-    opts = [actor_id: target, module: state.module]
-
-    case DynSup.start_actor(target, child_spec: {__MODULE__, opts}) do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, reason} -> Logger.warning("Failed to spawn #{inspect(target)}: #{inspect(reason)}")
-    end
-
-    :ok
-  end
-
-  # Hard stop — bypasses on_passivate. Syn auto-deregisters on process death.
-  defp process_effect(:stop_self, _state, _envelope) do
-    :stop_self
-  end
-
-  # Phase 1: MFA is unconstrained because actor modules are trusted Elixir code.
-  # T06 (WASM) must restrict this to an allowlist before untrusted code runs.
-  defp process_effect({:side_effect, {m, f, a}}, _state, _envelope) do
-    Task.Supervisor.start_child(Quanta.SideEffect.TaskSupervisor, fn ->
-      apply(m, f, a)
-    end)
-
-    :ok
-  end
-
-  defp process_effect({:emit_telemetry, event, measurements, metadata}, _state, _envelope) do
-    event_atoms = event |> String.split(".") |> Enum.map(&safe_to_existing_atom/1)
-
-    if Enum.all?(event_atoms, &is_atom/1) do
-      :telemetry.execute([:quanta, :actor, :custom | event_atoms], measurements, metadata)
-    else
-      Logger.warning("Unknown telemetry event segment in #{inspect(event)}, dropping event")
-    end
-
-    :ok
-  end
-
-  defp safe_to_existing_atom(string) do
-    String.to_existing_atom(string)
-  rescue
-    ArgumentError -> nil
   end
 
   defp stash_pending_replies(from, sent_ids, state) do
@@ -462,17 +378,6 @@ defmodule Quanta.Actor.Server do
     end)
 
     %{state | pending_replies: to_keep}
-  end
-
-  defp cancel_named_timer(state, name) do
-    case Map.pop(state.named_timers, name) do
-      {nil, _} ->
-        state
-
-      {entry, named_timers} ->
-        Process.cancel_timer(entry.ref)
-        %{state | named_timers: named_timers}
-    end
   end
 
   defp schedule_idle_timer(state) do

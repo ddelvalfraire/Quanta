@@ -205,11 +205,26 @@ defmodule Quanta.Actor.ServerTest do
       assert {:ok, <<1::64>>} = Server.get_state(pid_b)
     end
 
-    test "send to unknown actor is no-op" do
-      actor_id = make_actor_id("send-unknown-src")
+    test "send to unknown actor attempts NATS publish without crashing" do
+      # Short inter_actor_timeout so the test doesn't hang 30s when NATS is up
+      # (publish succeeds → pending reply stashed → times out)
+      short_lifecycle = %Manifest.Lifecycle{
+        idle_timeout_ms: 300_000,
+        idle_no_subscribers_timeout_ms: 30_000,
+        max_concurrent_messages: 1,
+        inter_actor_timeout_ms: 200,
+        http_timeout_ms: 5_000
+      }
+
+      :ok = ManifestRegistry.put(build_manifest(type: "nats_send", lifecycle: short_lifecycle))
+
+      actor_id = make_actor_id("send-unknown-src", "nats_send")
       {:ok, pid} = start_actor(actor_id)
 
-      assert {:ok, :no_reply} = Server.send_message(pid, make_envelope("send:nonexistent"))
+      result = Server.send_message(pid, make_envelope("send:nonexistent"), 5_000)
+      # Without NATS: publish fails → {:ok, :no_reply} immediately
+      # With NATS: publish succeeds → pending reply times out
+      assert result in [{:ok, :no_reply}, {:error, :actor_timeout}]
       assert Process.alive?(pid)
     end
   end
@@ -339,7 +354,7 @@ defmodule Quanta.Actor.ServerTest do
   end
 
   describe ":publish effect" do
-    test "is a no-op without crashing" do
+    test "publishes to NATS without crashing" do
       actor_id = make_actor_id("publish-1")
       {:ok, pid} = start_actor(actor_id)
 
