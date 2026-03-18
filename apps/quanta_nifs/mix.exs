@@ -24,7 +24,9 @@ defmodule QuantaNifs.MixProject do
   defp deps do
     [
       {:quanta_core, in_umbrella: true},
-      {:rustler, "~> 0.37"}
+      {:rustler, "~> 0.37"},
+      {:gnat, "~> 1.13", only: :test},
+      {:jason, "~> 1.4", only: :test}
     ]
   end
 end
