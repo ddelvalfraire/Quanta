@@ -1,3 +1,6 @@
+pub mod kv;
+pub mod publish;
+
 use std::sync::Arc;
 
 use rustler::{Encoder, Env, Resource, ResourceArc, Term};
@@ -5,10 +8,17 @@ use tokio::sync::Semaphore;
 
 use crate::macros::nif_safe;
 
-mod atoms {
+pub(crate) mod atoms {
     rustler::atoms! {
         ok,
         error,
+        nats_backpressure,
+        not_found,
+        wrong_last_sequence,
+        stream,
+        seq,
+        value,
+        revision,
     }
 }
 
@@ -55,6 +65,7 @@ fn nats_connect<'a>(env: Env<'a>, urls: Vec<String>, opts: Term<'a>) -> Term<'a>
             Ok(pair) => pair,
             Err(e) => return (atoms::error(), format!("connect_error: {}", e)).encode(env),
         };
+
         let semaphore = Arc::new(Semaphore::new(max_in_flight));
 
         let resource = ResourceArc::new(NatsConnectionResource {

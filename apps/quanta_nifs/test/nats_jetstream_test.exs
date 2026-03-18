@@ -3,6 +3,11 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
 
   @moduletag :nats
 
+  setup_all do
+    {:ok, conn} = Quanta.Nifs.Native.nats_connect(["nats://localhost:4222"], %{})
+    %{conn: conn}
+  end
+
   describe "nats_connect/2" do
     test "connects to a local NATS server" do
       assert {:ok, conn} = Quanta.Nifs.Native.nats_connect(["nats://localhost:4222"], %{})
@@ -22,5 +27,149 @@ defmodule Quanta.Nifs.NatsJetstreamTest do
       assert is_binary(reason)
       assert reason =~ "connect_error"
     end
+  end
+
+  describe "js_publish_async/6" do
+    setup %{conn: conn} do
+      stream = "TEST_PUBLISH_#{:erlang.unique_integer([:positive])}"
+      ensure_stream(conn, stream, "test.publish.#{stream}.>")
+      on_exit(fn -> delete_stream(conn, stream) end)
+      %{stream_name: stream}
+    end
+
+    test "publishes and receives ack", %{conn: conn, stream_name: stream} do
+      ref = make_ref()
+      subject = "test.publish.#{stream}.item1"
+
+      assert :ok =
+               Quanta.Nifs.Native.js_publish_async(conn, self(), ref, subject, "hello", nil)
+
+      assert_receive {:ok, ^ref, %{stream: _, seq: seq}}, 5_000
+      assert is_integer(seq)
+    end
+
+    test "wrong expected sequence returns error", %{conn: conn, stream_name: stream} do
+      subject = "test.publish.#{stream}.item2"
+
+      # Publish first message
+      ref1 = make_ref()
+      :ok = Quanta.Nifs.Native.js_publish_async(conn, self(), ref1, subject, "first", nil)
+      assert_receive {:ok, ^ref1, %{seq: _}}, 5_000
+
+      # Publish with wrong expected sequence
+      ref2 = make_ref()
+      :ok = Quanta.Nifs.Native.js_publish_async(conn, self(), ref2, subject, "second", 999)
+      assert_receive {:error, ^ref2, :wrong_last_sequence}, 5_000
+    end
+  end
+
+  describe "kv_get_async/5 and kv_put_async/6" do
+    setup %{conn: conn} do
+      bucket = "test_kv_#{:erlang.unique_integer([:positive])}"
+      ensure_kv_bucket(conn, bucket)
+      on_exit(fn -> delete_kv_bucket(conn, bucket) end)
+      %{bucket: bucket}
+    end
+
+    test "put then get roundtrip", %{conn: conn, bucket: bucket} do
+      # Put
+      ref1 = make_ref()
+      :ok = Quanta.Nifs.Native.kv_put_async(conn, self(), ref1, bucket, "mykey", "myvalue")
+      assert_receive {:ok, ^ref1, %{revision: rev}}, 5_000
+      assert is_integer(rev)
+
+      # Get
+      ref2 = make_ref()
+      :ok = Quanta.Nifs.Native.kv_get_async(conn, self(), ref2, bucket, "mykey")
+      assert_receive {:ok, ^ref2, %{value: value, revision: ^rev}}, 5_000
+      assert value == "myvalue"
+    end
+
+    test "get missing key returns not_found", %{conn: conn, bucket: bucket} do
+      ref = make_ref()
+      :ok = Quanta.Nifs.Native.kv_get_async(conn, self(), ref, bucket, "nonexistent")
+      assert_receive {:error, ^ref, :not_found}, 5_000
+    end
+  end
+
+  describe "kv_delete_async/5" do
+    setup %{conn: conn} do
+      bucket = "test_kvdel_#{:erlang.unique_integer([:positive])}"
+      ensure_kv_bucket(conn, bucket)
+      on_exit(fn -> delete_kv_bucket(conn, bucket) end)
+      %{bucket: bucket}
+    end
+
+    test "delete a key", %{conn: conn, bucket: bucket} do
+      # Put first
+      ref1 = make_ref()
+      :ok = Quanta.Nifs.Native.kv_put_async(conn, self(), ref1, bucket, "delme", "val")
+      assert_receive {:ok, ^ref1, _}, 5_000
+
+      # Delete
+      ref2 = make_ref()
+      :ok = Quanta.Nifs.Native.kv_delete_async(conn, self(), ref2, bucket, "delme")
+      assert_receive {:ok, ^ref2}, 5_000
+
+      # Verify gone
+      ref3 = make_ref()
+      :ok = Quanta.Nifs.Native.kv_get_async(conn, self(), ref3, bucket, "delme")
+      assert_receive {:error, ^ref3, :not_found}, 5_000
+    end
+  end
+
+  # --- Test helpers: create/delete streams and KV buckets via gnat ---
+
+  defp ensure_stream(_conn, stream_name, subjects) do
+    {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
+
+    payload =
+      Jason.encode!(%{
+        name: stream_name,
+        subjects: [subjects],
+        retention: "limits",
+        storage: "memory",
+        max_msgs: 1000
+      })
+
+    {:ok, %{body: _}} = Gnat.request(gnat, "$JS.API.STREAM.CREATE.#{stream_name}", payload)
+    GenServer.stop(gnat)
+  end
+
+  defp delete_stream(_conn, stream_name) do
+    {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
+    Gnat.request(gnat, "$JS.API.STREAM.DELETE.#{stream_name}", "")
+    GenServer.stop(gnat)
+  rescue
+    _ -> :ok
+  end
+
+  defp ensure_kv_bucket(_conn, bucket_name) do
+    {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
+
+    payload =
+      Jason.encode!(%{
+        name: "KV_#{bucket_name}",
+        subjects: ["$KV.#{bucket_name}.>"],
+        retention: "limits",
+        storage: "memory",
+        max_msgs_per_subject: 1,
+        discard: "new",
+        allow_rollup_hdrs: true,
+        deny_delete: true,
+        deny_purge: false,
+        num_replicas: 1
+      })
+
+    {:ok, %{body: _}} = Gnat.request(gnat, "$JS.API.STREAM.CREATE.KV_#{bucket_name}", payload)
+    GenServer.stop(gnat)
+  end
+
+  defp delete_kv_bucket(_conn, bucket_name) do
+    {:ok, gnat} = Gnat.start_link(%{host: "localhost", port: 4222})
+    Gnat.request(gnat, "$JS.API.STREAM.DELETE.KV_#{bucket_name}", "")
+    GenServer.stop(gnat)
+  rescue
+    _ -> :ok
   end
 end
