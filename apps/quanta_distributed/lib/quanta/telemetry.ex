@@ -19,6 +19,10 @@ defmodule Quanta.Telemetry do
 
   * `[:quanta, :actor, :mailbox, :warning | :shedding | :critical]`
 
+  ### Distributed registry
+
+  * `[:quanta, :actor, :conflict_resolved]` — registry conflict resolved between two nodes
+
   ### Rate limiting
 
   * `[:quanta, :rate_limit, :rejected]` — request rejected by rate limiter

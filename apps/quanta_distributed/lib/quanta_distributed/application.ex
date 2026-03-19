@@ -4,6 +4,7 @@ defmodule QuantaDistributed.Application do
   @impl true
   def start(_type, _args) do
     :syn.add_node_to_scopes(Quanta.Actor.Registry.scopes())
+    :syn.set_event_handler(Quanta.Actor.SynEventHandler)
 
     children = [
       Quanta.Supervisor
