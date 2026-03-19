@@ -9,14 +9,10 @@ services:
       --port 4222
       --cluster nats://0.0.0.0:6222
       --routes nats-route://nats-2:6222,nats-route://nats-3:6222
-      --jetstream
-      --store_dir /data
-      --config /etc/nats/server.conf
+      --jetstream --store_dir /data
     ports:
       - "4222:4222"
       - "8222:8222"
-    volumes:
-      - ./test/nats/server.conf:/etc/nats/server.conf:ro
     networks:
       - nats-cluster
 
@@ -28,13 +24,9 @@ services:
       --port 4222
       --cluster nats://0.0.0.0:6222
       --routes nats-route://nats-1:6222,nats-route://nats-3:6222
-      --jetstream
-      --store_dir /data
-      --config /etc/nats/server.conf
+      --jetstream --store_dir /data
     ports:
       - "4223:4222"
-    volumes:
-      - ./test/nats/server.conf:/etc/nats/server.conf:ro
     networks:
       - nats-cluster
 
@@ -46,13 +38,9 @@ services:
       --port 4222
       --cluster nats://0.0.0.0:6222
       --routes nats-route://nats-1:6222,nats-route://nats-2:6222
-      --jetstream
-      --store_dir /data
-      --config /etc/nats/server.conf
+      --jetstream --store_dir /data
     ports:
       - "4224:4222"
-    volumes:
-      - ./test/nats/server.conf:/etc/nats/server.conf:ro
     networks:
       - nats-cluster
 
