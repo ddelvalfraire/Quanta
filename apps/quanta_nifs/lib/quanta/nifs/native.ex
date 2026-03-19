@@ -130,4 +130,180 @@ defmodule Quanta.Nifs.Native do
         ) :: :ok | {:error, :nats_backpressure}
   def purge_subject_async(_conn, _caller_pid, _ref, _stream, _subject),
     do: :erlang.nif_error(:nif_not_loaded)
+
+  # --- Loro CRDT Engine ---
+
+  # Document lifecycle
+
+  @spec loro_doc_new() :: {:ok, reference()}
+  def loro_doc_new(), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_new_with_peer_id(peer_id :: non_neg_integer()) :: {:ok, reference()}
+  def loro_doc_new_with_peer_id(_peer_id), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_import(doc :: reference(), bytes :: binary()) :: :ok | {:error, String.t()}
+  def loro_doc_import(_doc, _bytes), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_export_snapshot(doc :: reference()) :: {:ok, binary()} | {:error, String.t()}
+  def loro_doc_export_snapshot(_doc), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_export_shallow_snapshot(doc :: reference()) ::
+          {:ok, binary()} | {:error, String.t()}
+  def loro_doc_export_shallow_snapshot(_doc), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_export_updates_from(doc :: reference(), version :: binary()) ::
+          {:ok, binary()} | {:error, String.t()}
+  def loro_doc_export_updates_from(_doc, _version), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_get_value(doc :: reference()) :: {:ok, term()} | {:error, String.t()}
+  def loro_doc_get_value(_doc), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_version(doc :: reference()) :: {:ok, binary()} | {:error, String.t()}
+  def loro_doc_version(_doc), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_state_size(doc :: reference()) :: {:ok, non_neg_integer()} | {:error, String.t()}
+  def loro_doc_state_size(_doc), do: :erlang.nif_error(:nif_not_loaded)
+
+  # Text container
+
+  @spec loro_text_insert(
+          doc :: reference(),
+          container_id :: String.t(),
+          pos :: non_neg_integer(),
+          text :: String.t()
+        ) :: :ok | {:error, String.t()}
+  def loro_text_insert(_doc, _container_id, _pos, _text),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_text_delete(
+          doc :: reference(),
+          container_id :: String.t(),
+          pos :: non_neg_integer(),
+          len :: non_neg_integer()
+        ) :: :ok | {:error, String.t()}
+  def loro_text_delete(_doc, _container_id, _pos, _len),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_doc_configure_text_style(
+          doc :: reference(),
+          key :: String.t(),
+          expand :: String.t()
+        ) :: :ok | {:error, String.t()}
+  def loro_doc_configure_text_style(_doc, _key, _expand),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_text_mark(
+          doc :: reference(),
+          container_id :: String.t(),
+          from :: non_neg_integer(),
+          to :: non_neg_integer(),
+          key :: String.t(),
+          value :: term()
+        ) :: :ok | {:error, String.t()}
+  def loro_text_mark(_doc, _container_id, _from, _to, _key, _value),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_text_to_string(doc :: reference(), container_id :: String.t()) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def loro_text_to_string(_doc, _container_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_text_length(doc :: reference(), container_id :: String.t()) ::
+          {:ok, non_neg_integer()} | {:error, String.t()}
+  def loro_text_length(_doc, _container_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  # Map container
+
+  @spec loro_map_set(
+          doc :: reference(),
+          container_id :: String.t(),
+          key :: String.t(),
+          value :: term()
+        ) :: :ok | {:error, String.t()}
+  def loro_map_set(_doc, _container_id, _key, _value),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_map_delete(doc :: reference(), container_id :: String.t(), key :: String.t()) ::
+          :ok | {:error, String.t()}
+  def loro_map_delete(_doc, _container_id, _key),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_map_get(doc :: reference(), container_id :: String.t(), key :: String.t()) ::
+          {:ok, term()} | {:error, String.t()}
+  def loro_map_get(_doc, _container_id, _key),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  # List container
+
+  @spec loro_list_insert(
+          doc :: reference(),
+          container_id :: String.t(),
+          index :: non_neg_integer(),
+          value :: term()
+        ) :: :ok | {:error, String.t()}
+  def loro_list_insert(_doc, _container_id, _index, _value),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_list_delete(
+          doc :: reference(),
+          container_id :: String.t(),
+          index :: non_neg_integer(),
+          len :: non_neg_integer()
+        ) :: :ok | {:error, String.t()}
+  def loro_list_delete(_doc, _container_id, _index, _len),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_list_get(
+          doc :: reference(),
+          container_id :: String.t(),
+          index :: non_neg_integer()
+        ) :: {:ok, term()} | {:error, String.t()}
+  def loro_list_get(_doc, _container_id, _index),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_list_length(doc :: reference(), container_id :: String.t()) ::
+          {:ok, non_neg_integer()} | {:error, String.t()}
+  def loro_list_length(_doc, _container_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  # Tree container
+
+  @spec loro_tree_create_node(doc :: reference(), container_id :: String.t()) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def loro_tree_create_node(_doc, _container_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_tree_move(
+          doc :: reference(),
+          container_id :: String.t(),
+          node_id :: String.t(),
+          parent_id :: String.t() | nil
+        ) :: :ok | {:error, String.t()}
+  def loro_tree_move(_doc, _container_id, _node_id, _parent_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_tree_delete(
+          doc :: reference(),
+          container_id :: String.t(),
+          node_id :: String.t()
+        ) :: :ok | {:error, String.t()}
+  def loro_tree_delete(_doc, _container_id, _node_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  # Cursor
+
+  @spec loro_cursor_at(
+          doc :: reference(),
+          container_id :: String.t(),
+          pos :: non_neg_integer(),
+          side :: integer()
+        ) :: {:ok, binary()} | {:error, String.t()}
+  def loro_cursor_at(_doc, _container_id, _pos, _side),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec loro_cursor_pos(doc :: reference(), cursor :: binary()) ::
+          {:ok, non_neg_integer()} | {:error, String.t()}
+  def loro_cursor_pos(_doc, _cursor),
+    do: :erlang.nif_error(:nif_not_loaded)
 end
