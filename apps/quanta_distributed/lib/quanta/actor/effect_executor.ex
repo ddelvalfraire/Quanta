@@ -9,6 +9,7 @@ defmodule Quanta.Actor.EffectExecutor do
   alias Quanta.Actor.{DynSup, Registry, Server}
   alias Quanta.Codec.Wire
   alias Quanta.Envelope
+  alias Quanta.Nifs.LoroEngine
 
   require Logger
 
@@ -170,6 +171,76 @@ defmodule Quanta.Actor.EffectExecutor do
     end)
 
     acc
+  end
+
+  defp execute_one({:crdt_ops, ops}, acc, context) when is_list(ops) do
+    state = acc.server_state
+    doc = state.loro_doc
+
+    if is_nil(doc) do
+      Logger.warning("crdt_ops effect on non-CRDT actor #{inspect(context.actor_id)}, ignoring")
+      acc
+    else
+      Enum.each(ops, &apply_crdt_op(doc, &1))
+
+      case LoroEngine.doc_export_updates_from(doc, state.last_version) do
+        {:ok, delta} ->
+          {:ok, new_version} = LoroEngine.doc_version(doc)
+
+          Server.broadcast_crdt_update(state, delta, nil)
+
+          new_state = %{
+            state
+            | last_version: new_version,
+              events_since_snapshot: state.events_since_snapshot + 1
+          }
+
+          check_crdt_state_size(new_state, context)
+          %{acc | server_state: new_state}
+
+        {:error, reason} ->
+          Logger.warning("Failed to export CRDT delta: #{inspect(reason)}")
+          acc
+      end
+    end
+  end
+
+  defp apply_crdt_op(doc, {:text_insert, cid, pos, text}),
+    do: LoroEngine.text_insert(doc, cid, pos, text)
+
+  defp apply_crdt_op(doc, {:text_delete, cid, pos, len}),
+    do: LoroEngine.text_delete(doc, cid, pos, len)
+
+  defp apply_crdt_op(doc, {:text_mark, cid, from, to, key, value}),
+    do: LoroEngine.text_mark(doc, cid, from, to, key, value)
+
+  defp apply_crdt_op(doc, {:map_set, cid, key, value}),
+    do: LoroEngine.map_set(doc, cid, key, value)
+
+  defp apply_crdt_op(doc, {:map_delete, cid, key}),
+    do: LoroEngine.map_delete(doc, cid, key)
+
+  defp apply_crdt_op(doc, {:list_insert, cid, index, value}),
+    do: LoroEngine.list_insert(doc, cid, index, value)
+
+  defp apply_crdt_op(doc, {:list_delete, cid, index, len}),
+    do: LoroEngine.list_delete(doc, cid, index, len)
+
+  defp apply_crdt_op(_doc, op),
+    do: Logger.warning("Unknown CRDT op: #{inspect(op)}")
+
+  defp check_crdt_state_size(state, context) do
+    max = context.manifest.state.max_size_bytes
+
+    case LoroEngine.doc_state_size(state.loro_doc) do
+      {:ok, size} when size > max ->
+        Logger.warning(
+          "CRDT state size #{size} exceeds max #{max} for #{inspect(context.actor_id)}"
+        )
+
+      _ ->
+        :ok
+    end
   end
 
   ## Helpers
