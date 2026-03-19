@@ -212,7 +212,6 @@ defmodule Quanta.Actor.Server do
     )
 
     call_on_passivate(state)
-    # NIF EphemeralStore is reference-counted; no manual cleanup needed
     Registry.deregister(state.actor_id)
     {:stop, :normal, :ok, state}
   end
@@ -322,7 +321,6 @@ defmodule Quanta.Actor.Server do
     )
 
     call_on_passivate(state)
-    # NIF EphemeralStore is reference-counted; no manual cleanup needed
     Registry.deregister(state.actor_id)
     {:stop, :normal, state}
   end

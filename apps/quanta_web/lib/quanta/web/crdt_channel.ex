@@ -72,7 +72,6 @@ defmodule Quanta.Web.CrdtChannel do
     ChannelHelpers.dispatch_message(payload_b64, socket)
   end
 
-  # Fire-and-forget: no reply to client (high-frequency cursor data)
   @impl true
   def handle_in("ephemeral_update", %{"key" => key, "value" => value_b64}, socket) do
     if socket.assigns.auth_scope == :ro do

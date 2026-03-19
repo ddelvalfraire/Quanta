@@ -221,7 +221,6 @@ defmodule Quanta.Web.CrdtChannelTest do
 
       pid = socket.assigns.actor_pid
 
-      # Cast ephemeral update directly to actor (as if from another channel)
       GenServer.cast(pid, {:ephemeral_update, "user:bob", "cursor-pos", :other_pid})
 
       assert_push "ephemeral_update", %{data: data_b64}
@@ -237,7 +236,6 @@ defmodule Quanta.Web.CrdtChannelTest do
       pid = socket.assigns.actor_pid
       channel_pid = socket.channel_pid
 
-      # Cast with sender_pid = this channel's pid (simulates own update)
       GenServer.cast(pid, {:ephemeral_update, "user:alice", "cursor", channel_pid})
 
       refute_push "ephemeral_update", %{}, 200
@@ -269,13 +267,11 @@ defmodule Quanta.Web.CrdtChannelTest do
       {:ok, _reply, socket} =
         subscribe_and_join(socket, "crdt:test:crdt_doc:eph-throttle", %{"user_id" => "alice"})
 
-      # Helper: push ephemeral then sync by sending a crdt_update that produces a reply
       sync = fn ->
         ref = push(socket, "crdt_update", %{"delta" => "!!!"})
         assert_reply ref, :error, %{reason: "invalid_base64"}
       end
 
-      # First push goes through — capture initial and post-push timestamps
       state0 = :sys.get_state(socket.channel_pid)
       init_at = state0.assigns.last_ephemeral_at
 
@@ -285,13 +281,11 @@ defmodule Quanta.Web.CrdtChannelTest do
       last_at1 = state1.assigns.last_ephemeral_at
       assert last_at1 > init_at
 
-      # Second push within 100ms should be throttled
       push(socket, "ephemeral_update", %{"key" => "k2", "value" => Base.encode64("v2")})
       sync.()
       state2 = :sys.get_state(socket.channel_pid)
       assert state2.assigns.last_ephemeral_at == last_at1
 
-      # After throttle window, push goes through
       Process.sleep(110)
       push(socket, "ephemeral_update", %{"key" => "k3", "value" => Base.encode64("v3")})
       sync.()
@@ -305,12 +299,10 @@ defmodule Quanta.Web.CrdtChannelTest do
       {:ok, sock_a} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})
       {:ok, _reply, sock_a} = subscribe_and_join(sock_a, topic, %{"user_id" => "alice"})
 
-      # Set some ephemeral data
       value = Base.encode64("cursor-data")
       push(sock_a, "ephemeral_update", %{"key" => "user:alice", "value" => value})
       Process.sleep(50)
 
-      # Second client joins and receives initial state
       {:ok, sock_b} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})
       {:ok, _reply, _sock_b} = subscribe_and_join(sock_b, topic, %{"user_id" => "bob"})
 
@@ -330,14 +322,10 @@ defmodule Quanta.Web.CrdtChannelTest do
 
       actor_pid = sock_a.assigns.actor_pid
 
-      # Simulate a presence_diff being broadcast (normally from Presence)
       diff = %{joins: %{}, leaves: %{"departed" => %{metas: []}}}
       send(sock_a.channel_pid, %{event: "presence_diff", payload: diff})
-
-      # Give time for the message to propagate
       Process.sleep(50)
 
-      # Actor should still be alive (subscriber_left is just an informational msg)
       assert Process.alive?(actor_pid)
     end
   end
