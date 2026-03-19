@@ -18,6 +18,14 @@ defmodule Quanta.Web.PubSubChannelTest do
   end
 
   describe "publish" do
+    test "ro scope cannot publish" do
+      {:ok, socket} = connect(Quanta.Web.ActorSocket, %{"token" => @ro_key})
+      {:ok, _reply, socket} = subscribe_and_join(socket, "pubsub:test", %{})
+
+      ref = push(socket, "publish", %{"data" => "hello"})
+      assert_reply ref, :error, %{reason: "insufficient_scope"}
+    end
+
     test "relays messages to other subscribers" do
       {:ok, socket1} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})
       {:ok, _reply, socket1} = subscribe_and_join(socket1, "pubsub:test", %{})

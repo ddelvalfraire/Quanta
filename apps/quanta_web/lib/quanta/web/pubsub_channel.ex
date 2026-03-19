@@ -12,7 +12,11 @@ defmodule Quanta.Web.PubSubChannel do
 
   @impl true
   def handle_in("publish", payload, socket) do
-    broadcast_from!(socket, "publish", payload)
-    {:noreply, socket}
+    if socket.assigns.auth_scope == :ro do
+      {:reply, {:error, %{reason: "insufficient_scope"}}, socket}
+    else
+      broadcast_from!(socket, "publish", payload)
+      {:noreply, socket}
+    end
   end
 end

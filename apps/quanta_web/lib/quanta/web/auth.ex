@@ -8,8 +8,6 @@ defmodule Quanta.Web.Auth do
     with {:ok, scope, namespace} <- parse_key(token),
          :ok <- validate_key(token) do
       {:ok, scope, namespace}
-    else
-      _ -> :error
     end
   end
 

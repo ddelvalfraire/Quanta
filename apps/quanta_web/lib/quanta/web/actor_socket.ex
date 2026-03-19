@@ -24,4 +24,8 @@ defmodule Quanta.Web.ActorSocket do
 
   @impl true
   def id(socket), do: "actor_socket:#{socket.assigns.auth_namespace}"
+
+  def handle_error(conn, :unauthorized) do
+    Plug.Conn.send_resp(conn, 403, "Forbidden")
+  end
 end

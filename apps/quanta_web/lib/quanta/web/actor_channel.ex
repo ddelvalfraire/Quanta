@@ -11,19 +11,18 @@ defmodule Quanta.Web.ActorChannel do
         if actor_id.namespace != socket.assigns.auth_namespace do
           {:error, %{reason: "namespace_forbidden"}}
         else
-          case CommandRouter.ensure_active(actor_id) do
-            {:ok, pid} ->
-              ref = Process.monitor(pid)
-              {:ok, state_data} = Server.get_state(pid)
+          with {:ok, pid} <- CommandRouter.ensure_active(actor_id),
+               {:ok, state_data} <- fetch_state(pid) do
+            ref = Process.monitor(pid)
 
-              socket =
-                socket
-                |> assign(:actor_id, actor_id)
-                |> assign(:actor_pid, pid)
-                |> assign(:actor_ref, ref)
+            socket =
+              socket
+              |> assign(:actor_id, actor_id)
+              |> assign(:actor_pid, pid)
+              |> assign(:actor_ref, ref)
 
-              {:ok, %{state: Base.encode64(state_data)}, socket}
-
+            {:ok, %{state: Base.encode64(state_data)}, socket}
+          else
             {:error, reason} ->
               {:error, %{reason: to_string(reason)}}
           end
@@ -69,18 +68,27 @@ defmodule Quanta.Web.ActorChannel do
     end
   end
 
+  @impl true
   def handle_info(%{event: "state_update", payload: payload}, socket) do
     push(socket, "state_update", payload)
     {:noreply, socket}
   end
 
+  @impl true
   def handle_info(%{event: "node_draining"}, socket) do
     push(socket, "node_draining", %{})
     {:noreply, socket}
   end
 
+  @impl true
   def handle_info(_msg, socket) do
     {:noreply, socket}
+  end
+
+  defp fetch_state(pid) do
+    Server.get_state(pid)
+  catch
+    :exit, _ -> {:error, :actor_unavailable}
   end
 
   defp parse_actor_topic(rest) do

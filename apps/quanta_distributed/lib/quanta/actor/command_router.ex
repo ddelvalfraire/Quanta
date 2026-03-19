@@ -55,7 +55,7 @@ defmodule Quanta.Actor.CommandRouter do
   Look up an actor, activating it if not already running.
 
   Skips rate limits — this is for establishing a channel connection,
-  not delivering a message.
+  not delivering a message. The node capacity guard still applies.
   """
   @spec ensure_active(ActorId.t()) :: {:ok, pid()} | {:error, term()}
   def ensure_active(%ActorId{} = actor_id) do
@@ -64,14 +64,20 @@ defmodule Quanta.Actor.CommandRouter do
         {:ok, pid}
 
       :not_found ->
-        with {:manifest, {:ok, manifest}} <-
-               {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
-             {:resolve, {:ok, module}} <-
-               {:resolve, Quanta.ModuleResolver.resolve(manifest)} do
-          start_actor(actor_id, module)
+        max_actors = Application.get_env(:quanta_distributed, :max_actors_per_node, 1_000_000)
+
+        if DynSup.count_actors() >= max_actors do
+          {:error, :node_at_capacity}
         else
-          {:manifest, :error} -> {:error, :actor_type_not_found}
-          {:resolve, {:error, reason}} -> {:error, reason}
+          with {:manifest, {:ok, manifest}} <-
+                 {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
+               {:resolve, {:ok, module}} <-
+                 {:resolve, Quanta.ModuleResolver.resolve(manifest)} do
+            start_actor(actor_id, module)
+          else
+            {:manifest, :error} -> {:error, :actor_type_not_found}
+            {:resolve, {:error, reason}} -> {:error, reason}
+          end
         end
     end
   end

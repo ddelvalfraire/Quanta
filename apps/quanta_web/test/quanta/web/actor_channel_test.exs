@@ -1,8 +1,7 @@
 defmodule Quanta.Web.ActorChannelTest do
   use Quanta.Web.ChannelCase, async: false
 
-  alias Quanta.Actor.{Registry, Server}
-  alias Quanta.ActorId
+  alias Quanta.Actor.Server
 
   describe "socket connect" do
     test "connects with valid rw token" do
