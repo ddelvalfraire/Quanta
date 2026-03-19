@@ -97,16 +97,12 @@ defmodule Quanta.DrainIntegrationTest do
         [:quanta, :drain, :completed]
       ])
 
-    # Actor 1-2: idle counters
     {:ok, pid1} = start_actor(make_actor_id("int-idle-1"))
     {:ok, pid2} = start_actor(make_actor_id("int-idle-2"))
 
-    # Actor 3: counter with a timer
     {:ok, pid3} = start_actor(make_actor_id("int-timer-1"))
-    env = Envelope.new(payload: "set_timer:heartbeat:60000")
-    Server.send_message(pid3, env)
+    Server.send_message(pid3, Envelope.new(payload: "set_timer:heartbeat:60000"))
 
-    # Actor 4-5: CRDT docs (have subscriber-like state)
     {:ok, pid4} = start_actor(make_actor_id("int-crdt-1", "crdt_doc"), Quanta.Test.Actors.CrdtDoc)
     {:ok, pid5} = start_actor(make_actor_id("int-crdt-2", "crdt_doc"), Quanta.Test.Actors.CrdtDoc)
 
@@ -114,17 +110,13 @@ defmodule Quanta.DrainIntegrationTest do
     assert Enum.all?(all_pids, &Process.alive?/1)
     assert DynSup.count_actors() >= 5
 
-    # Start drain
     {:ok, _} = Drain.start_drain(@fast_opts)
     assert Drain.draining?()
-
     assert :ok = Drain.await(15_000)
 
-    # All actors should be stopped
     Process.sleep(100)
     refute Enum.any?(all_pids, &Process.alive?/1)
 
-    # Verify telemetry order
     assert_received {[:quanta, :drain, :started], ^ref, %{}, %{node: _}}
 
     assert_received {[:quanta, :drain, :step_started], ^ref, %{},
@@ -136,7 +128,6 @@ defmodule Quanta.DrainIntegrationTest do
     assert_received {[:quanta, :drain, :step_started], ^ref, %{},
                      %{node: _, step: :ordered_passivation}}
 
-    # Batch passivated should have been emitted at least once
     assert_received {[:quanta, :drain, :batch_passivated], ^ref,
                      %{count: count, duration_ms: _}, %{node: _}}
 
@@ -163,7 +154,6 @@ defmodule Quanta.DrainIntegrationTest do
     {:ok, _} = Drain.start_drain(@fast_opts)
     assert Drain.draining?()
 
-    # While draining, the flag is set
     assert :persistent_term.get({Drain, :draining}, false) == true
 
     assert :ok = Drain.await(5_000)

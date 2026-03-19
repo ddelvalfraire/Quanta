@@ -22,7 +22,6 @@ defmodule Quanta.Drain do
   @persistent_term_key {__MODULE__, :draining}
   @batch_size 1000
 
-  # Default total drain budget: 80s from start
   @default_total_drain_budget_ms 80_000
   @default_complete_in_flight_delay_ms 2_000
   @default_ordered_passivation_delay_ms 8_000
@@ -126,7 +125,6 @@ defmodule Quanta.Drain do
     state = %{state | step: :passivate_batch, remaining_pids: sorted}
     send(self(), :passivate_batch)
 
-    # Compute force_stop as absolute deadline from drain start
     force_stop_delay = force_stop_remaining_ms(state)
     Process.send_after(self(), :force_stop, force_stop_delay)
 

@@ -27,7 +27,6 @@ defmodule Quanta.Web.DrainControllerTest do
         end
       end
 
-      # Re-add self to topology
       if Process.whereis(Quanta.Cluster.Topology) do
         send(Process.whereis(Quanta.Cluster.Topology), {:nodeup, node(), []})
         Quanta.Cluster.Topology.nodes()

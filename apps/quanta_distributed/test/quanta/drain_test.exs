@@ -20,20 +20,17 @@ defmodule Quanta.DrainTest do
 
   setup do
     on_exit(fn ->
-      # Clean up persistent term if drain didn't finish
       try do
         :persistent_term.erase({Drain, :draining})
       rescue
         ArgumentError -> :ok
       end
 
-      # Ensure topology has self
       if Process.whereis(Quanta.Cluster.Topology) do
         send(Process.whereis(Quanta.Cluster.Topology), {:nodeup, node(), []})
         Quanta.Cluster.Topology.nodes()
       end
 
-      # Stop drain process if still running
       if pid = Process.whereis(Drain) do
         try do
           GenServer.stop(pid, :normal, 1_000)
@@ -72,7 +69,6 @@ defmodule Quanta.DrainTest do
     end
 
     test "returns :timeout when drain takes too long" do
-      # Use very long delays to trigger timeout
       {:ok, _pid} = Drain.start_drain(
         complete_in_flight_delay_ms: 60_000,
         ordered_passivation_delay_ms: 60_000,
@@ -84,7 +80,6 @@ defmodule Quanta.DrainTest do
 
   describe "full drain cycle" do
     test "stops all actors" do
-      # Start some agents under DynSup
       pids =
         for i <- 1..3 do
           actor_id = make_actor_id("drain-full-#{i}")
@@ -97,7 +92,6 @@ defmodule Quanta.DrainTest do
       {:ok, _} = Drain.start_drain(@fast_opts)
       assert :ok = Drain.await(10_000)
 
-      # After drain, agents should be stopped by force_stop
       Process.sleep(50)
       refute Enum.any?(pids, &Process.alive?/1)
     end
@@ -153,10 +147,6 @@ defmodule Quanta.DrainTest do
       {:ok, _} = Drain.start_drain(@fast_opts)
       assert :ok = Drain.await(10_000)
 
-      # Agents aren't real actor Servers, so they'll be classified as priority 0
-      # (dead/unresponsive to :sys.get_state). They get force_stopped instead.
-      # The batch may or may not fire depending on timing.
-      # Just verify the drain completed without errors.
       _ = ref
     end
   end

@@ -46,9 +46,7 @@ defmodule Quanta.DrainHooksTest do
       assert_received {[:quanta, :cluster, :node_down], ^ref, %{count: _}, %{node: self_node}}
       assert self_node == node()
     after
-      # Re-add self so other tests aren't affected
       send(Process.whereis(Topology), {:nodeup, node(), []})
-      # Wait for the message to be processed
       _ = Topology.nodes()
     end
 
