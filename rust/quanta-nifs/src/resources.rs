@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use rustler::Resource;
 
 use crate::wasm_runtime::ActorStoreData;
@@ -15,5 +18,13 @@ impl Resource for ComponentResource {}
 pub struct LinkerResource(pub wasmtime::component::Linker<ActorStoreData>);
 impl Resource for LinkerResource {}
 
-// NatsConnectionResource — T07 (depends on NatsInner, not yet defined)
-// LoroDocResource — Phase 2 (depends on Mutex<loro::LoroDoc>)
+/// Loro CRDT document wrapped in Mutex for thread safety.
+/// LoroDoc is Send but !Sync — Mutex provides the Sync bound required by ResourceArc.
+/// GenServer serializes access so contention is minimal; the Mutex exists for correctness.
+pub struct LoroDocResource(pub Mutex<LoroDocInner>);
+impl Resource for LoroDocResource {}
+
+pub struct LoroDocInner {
+    pub doc: loro::LoroDoc,
+    pub text_styles: HashMap<String, loro::StyleConfig>,
+}

@@ -21,6 +21,7 @@ fn load(env: Env, info: rustler::Term) -> bool {
     env.register::<resources::EngineResource>().is_ok()
         && env.register::<resources::ComponentResource>().is_ok()
         && env.register::<resources::LinkerResource>().is_ok()
+        && env.register::<resources::LoroDocResource>().is_ok()
         && nats::load(env, info)
 }
 
