@@ -26,6 +26,8 @@ defmodule Quanta.Web.CrdtChannel do
               |> assign(:actor_ref, ref)
               |> assign(:user_id, user_id)
 
+            Phoenix.PubSub.subscribe(Quanta.Web.PubSub, "system:drain")
+
             topic = "crdt:#{actor_id.namespace}:#{actor_id.type}:#{actor_id.id}"
             Presence.track(self(), topic, user_id, %{joined_at: System.system_time(:second)})
             send(self(), :after_join)
@@ -84,6 +86,12 @@ defmodule Quanta.Web.CrdtChannel do
   @impl true
   def handle_info(:after_join, socket) do
     ChannelHelpers.push_presence_state(socket)
+  end
+
+  @impl true
+  def handle_info(:node_draining, socket) do
+    push(socket, "node_draining", %{reconnect_ms: 1_000})
+    {:noreply, socket}
   end
 
   @impl true
