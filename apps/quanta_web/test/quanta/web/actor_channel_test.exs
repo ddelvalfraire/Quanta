@@ -96,6 +96,17 @@ defmodule Quanta.Web.ActorChannelTest do
     end
   end
 
+  describe "drain notification" do
+    test "node_draining push includes reconnect_ms" do
+      {:ok, socket} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})
+      {:ok, _reply, _socket} = subscribe_and_join(socket, "actor:test:counter:drain-1", %{})
+
+      Phoenix.PubSub.local_broadcast(Quanta.Web.PubSub, "system:drain", :node_draining)
+
+      assert_push "node_draining", %{reconnect_ms: 1_000}
+    end
+  end
+
   describe "actor death" do
     test "force_passivate pushes actor_stopped" do
       {:ok, socket} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})

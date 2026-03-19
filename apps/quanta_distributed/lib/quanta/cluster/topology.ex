@@ -22,6 +22,12 @@ defmodule Quanta.Cluster.Topology do
     GenServer.call(__MODULE__, :healthy?)
   end
 
+  @doc "Removes the current node from the hash ring and emits node_down telemetry."
+  @spec remove_self() :: :ok
+  def remove_self do
+    GenServer.call(__MODULE__, :remove_self)
+  end
+
   @spec ring() :: {:ok, pid()} | {:error, :not_ready}
   def ring do
     case :persistent_term.get(@persistent_term_key, nil) do
@@ -57,6 +63,14 @@ defmodule Quanta.Cluster.Topology do
   end
 
   @impl true
+  def handle_call(:remove_self, _from, state) do
+    case do_remove_node(node(), state) do
+      {:ok, new_state} -> {:reply, :ok, new_state}
+      :noop -> {:reply, :ok, state}
+    end
+  end
+
+  @impl true
   def handle_info({:nodeup, node, _info}, state) do
     if MapSet.member?(state.nodes, node) do
       {:noreply, state}
@@ -78,21 +92,13 @@ defmodule Quanta.Cluster.Topology do
 
   @impl true
   def handle_info({:nodedown, node, _info}, state) do
-    if MapSet.member?(state.nodes, node) do
-      Logger.info("Node left cluster: #{node}")
-      {:ok, _} = ExHashRing.Ring.remove_node(state.ring, node)
+    case do_remove_node(node, state) do
+      {:ok, new_state} ->
+        Logger.info("Node left cluster: #{node}")
+        {:noreply, new_state}
 
-      new_nodes = MapSet.delete(state.nodes, node)
-
-      Quanta.Telemetry.emit(
-        [:quanta, :cluster, :node_down],
-        %{count: MapSet.size(new_nodes)},
-        %{node: node}
-      )
-
-      {:noreply, %{state | nodes: new_nodes}}
-    else
-      {:noreply, state}
+      :noop ->
+        {:noreply, state}
     end
   end
 
@@ -104,5 +110,22 @@ defmodule Quanta.Cluster.Topology do
     :persistent_term.erase(@persistent_term_key)
   rescue
     ArgumentError -> :ok
+  end
+
+  defp do_remove_node(target_node, state) do
+    if MapSet.member?(state.nodes, target_node) do
+      {:ok, _} = ExHashRing.Ring.remove_node(state.ring, target_node)
+      new_nodes = MapSet.delete(state.nodes, target_node)
+
+      Quanta.Telemetry.emit(
+        [:quanta, :cluster, :node_down],
+        %{count: MapSet.size(new_nodes)},
+        %{node: target_node}
+      )
+
+      {:ok, %{state | nodes: new_nodes}}
+    else
+      :noop
+    end
   end
 end

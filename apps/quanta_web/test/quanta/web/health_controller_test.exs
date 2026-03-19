@@ -14,6 +14,19 @@ defmodule Quanta.Web.HealthControllerTest do
       assert json_response(conn, 200) == %{"status" => "ok"}
     end
 
+    test "returns 503 when node is draining", %{conn: conn} do
+      :persistent_term.put({Quanta.Drain, :draining}, true)
+
+      conn = get(conn, "/health/ready")
+      assert json_response(conn, 503) == %{"status" => "draining"}
+    after
+      try do
+        :persistent_term.erase({Quanta.Drain, :draining})
+      rescue
+        ArgumentError -> :ok
+      end
+    end
+
     test "returns 503 when a critical process is down", %{conn: conn} do
       # Suspend supervisor to prevent auto-restart
       :sys.suspend(Quanta.Supervisor)

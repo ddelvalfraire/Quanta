@@ -23,6 +23,8 @@ defmodule Quanta.Web.ActorChannel do
               |> assign(:actor_ref, ref)
               |> assign(:user_id, user_id)
 
+            Phoenix.PubSub.subscribe(Quanta.Web.PubSub, "system:drain")
+
             topic = "actor:#{actor_id.namespace}:#{actor_id.type}:#{actor_id.id}"
             Presence.track(self(), topic, user_id, %{joined_at: System.system_time(:second)})
             send(self(), :after_join)
@@ -56,8 +58,8 @@ defmodule Quanta.Web.ActorChannel do
   end
 
   @impl true
-  def handle_info(%{event: "node_draining"}, socket) do
-    push(socket, "node_draining", %{})
+  def handle_info(:node_draining, socket) do
+    push(socket, "node_draining", %{reconnect_ms: 1_000})
     {:noreply, socket}
   end
 

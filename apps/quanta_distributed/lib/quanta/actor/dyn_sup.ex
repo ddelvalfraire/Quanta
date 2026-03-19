@@ -62,4 +62,19 @@ defmodule Quanta.Actor.DynSup do
       acc + active
     end)
   end
+
+  @doc "Returns a flat list of all actor pids across all partitions."
+  @spec list_actor_pids() :: [pid()]
+  def list_actor_pids do
+    __MODULE__
+    |> PartitionSupervisor.which_children()
+    |> Enum.flat_map(fn {_id, sup_pid, _type, _modules} ->
+      sup_pid
+      |> DynamicSupervisor.which_children()
+      |> Enum.reduce([], fn
+        {_id, pid, _type, _modules}, acc when is_pid(pid) -> [pid | acc]
+        _, acc -> acc
+      end)
+    end)
+  end
 end

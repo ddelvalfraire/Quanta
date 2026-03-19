@@ -61,4 +61,24 @@ defmodule Quanta.Nats.Core do
   def unsubscribe({conn, sid}) do
     Gnat.unsub(conn, sid)
   end
+
+  @doc "Gracefully stop all NATS connections in the pool."
+  @spec close_all() :: :ok
+  def close_all do
+    for i <- 0..(pool_size() - 1) do
+      conn = connection(i)
+
+      case Process.whereis(conn) do
+        nil -> :ok
+        pid -> GenServer.stop(pid, :normal, 5_000)
+      end
+    end
+
+    :ok
+  catch
+    kind, reason ->
+      require Logger
+      Logger.warning("Nats.Core.close_all failed: #{kind} #{inspect(reason)}")
+      :ok
+  end
 end

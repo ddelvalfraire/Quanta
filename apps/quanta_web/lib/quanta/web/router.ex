@@ -10,10 +10,20 @@ defmodule Quanta.Web.Router do
     plug Quanta.Web.Plugs.RequireNamespace
   end
 
+  pipeline :internal do
+    plug :accepts, ["json"]
+    plug Quanta.Web.Plugs.InternalAuth
+  end
+
   # Health routes bypass :api pipeline — probes must not be rejected on Accept negotiation
   scope "/health", Quanta.Web do
     get "/live", HealthController, :live
     get "/ready", HealthController, :ready
+  end
+
+  scope "/api/internal", Quanta.Web do
+    pipe_through :internal
+    post "/drain", DrainController, :drain
   end
 
   scope "/api/v1", Quanta.Web do
