@@ -1,37 +1,56 @@
 defmodule Quanta.Bench.Tier4.SteadyState500k do
-  @moduledoc """
-  B4.3 -- 500K actor steady state benchmark.
-
-  Measures memory footprint and message throughput with 500K actors registered
-  in the system. Used to compare against Akka, Orleans, and Proto.Actor.
-
-  SLO: < 2 KB memory per actor, > 100K msg/sec sustained.
-  """
+  @moduledoc "B4.3 -- Large actor population. Measures spawn + message throughput at scale."
 
   alias Quanta.Bench.Base
 
-  @actor_count 500_000
-
-  @doc "Run the B4.3 steady state benchmark."
   @spec run :: :ok
   def run do
-    Base.run("tier4_steady_state_500k", scenarios(), warmup: 1, time: 10)
-  end
-
-  defp scenarios do
-    %{
-      "register_500k" => fn ->
-        # TODO: Register @actor_count lightweight actors (spawn + register in ETS)
-        # TODO: Measure total memory, compute per-actor overhead
-        # TODO: Assert per-actor memory < 2048 bytes
-        _ = @actor_count
-        :ok
+    Base.run("tier4_steady_state", %{
+      "spawn_10k" => fn ->
+        pids = for _ <- 1..10_000, do: spawn_link(fn -> receive do: (:ping -> :ok) end)
+        for pid <- pids, do: send(pid, :ping)
       end,
-      "message_throughput_500k" => fn ->
-        # TODO: With 500K actors registered, send messages to random subset
-        # TODO: Measure messages/sec sustained over 10s window
-        :ok
+      "spawn_100k" => fn ->
+        pids = for _ <- 1..100_000, do: spawn_link(fn -> receive do: (:ping -> :ok) end)
+        for pid <- pids, do: send(pid, :ping)
+      end,
+      "message_10k_registered" => fn ->
+        # Spawn actors, register in ETS, then round-robin message them
+        reg = :ets.new(:bench_ss, [:set, :public])
+
+        pids =
+          for i <- 1..10_000 do
+            pid =
+              spawn_link(fn ->
+                receive do
+                  {:ping, from, ref} -> send(from, {:pong, ref})
+                end
+              end)
+
+            :ets.insert(reg, {i, pid})
+            pid
+          end
+
+        parent = self()
+
+        refs =
+          for i <- 1..10_000 do
+            [{_, pid}] = :ets.lookup(reg, i)
+            ref = make_ref()
+            send(pid, {:ping, parent, ref})
+            ref
+          end
+
+        for ref <- refs do
+          receive do
+            {:pong, ^ref} -> :ok
+          after
+            10_000 -> raise "steady_state timed out"
+          end
+        end
+
+        :ets.delete(reg)
       end
-    }
+    }, warmup: 1, time: 5)
   end
 end

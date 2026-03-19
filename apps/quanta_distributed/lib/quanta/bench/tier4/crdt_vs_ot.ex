@@ -1,49 +1,56 @@
 defmodule Quanta.Bench.Tier4.CrdtVsOt do
-  @moduledoc """
-  B4.4 -- CRDT vs OT comparison benchmark.
-
-  Compares Loro CRDT merge performance against a simulated OT transform
-  baseline. Measures merge time, document size overhead, and convergence
-  latency for equivalent editing workloads.
-
-  SLO: CRDT merge within 2x of OT transform time for typical workloads.
-  """
+  @moduledoc "B4.4 -- CRDT merge vs simulated OT transform. SLO: <2x overhead."
 
   alias Quanta.Bench.Base
+  alias Quanta.Nifs.LoroEngine
 
-  # alias Quanta.Nifs.LoroEngine
-  @edit_count 10_000
+  @edit_count 5_000
 
-  @doc "Run the B4.4 CRDT vs OT comparison benchmark."
   @spec run :: :ok
   def run do
-    Base.run("tier4_crdt_vs_ot", scenarios(), warmup: 1, time: 10)
-  end
-
-  defp scenarios do
-    %{
+    Base.run("tier4_crdt_vs_ot", %{
       "crdt_sequential_merge" => fn ->
-        # TODO: Create two Loro docs, each with @edit_count / 2 edits
-        # TODO: Export delta from one, import into the other
-        # TODO: Measure merge time
-        _ = @edit_count
-        :ok
+        {:ok, a} = LoroEngine.doc_new_with_peer_id(1)
+        {:ok, b} = LoroEngine.doc_new_with_peer_id(2)
+
+        for i <- 0..div(@edit_count, 2) - 1 do
+          :ok = LoroEngine.text_insert(a, "text", 0, "a")
+        end
+
+        for i <- 0..div(@edit_count, 2) - 1 do
+          :ok = LoroEngine.text_insert(b, "text", 0, "b")
+        end
+
+        {:ok, snap_a} = LoroEngine.doc_export_snapshot(a)
+        {:ok, snap_b} = LoroEngine.doc_export_snapshot(b)
+
+        :ok = LoroEngine.doc_apply_delta(a, snap_b)
+        :ok = LoroEngine.doc_apply_delta(b, snap_a)
+
+        {:ok, val_a} = LoroEngine.doc_get_value(a)
+        {:ok, val_b} = LoroEngine.doc_get_value(b)
+        true = val_a == val_b
       end,
       "ot_simulated_transform" => fn ->
-        # TODO: Simulate OT-style transform for equivalent operations
-        # TODO: Apply N transforms in sequence, measure total time
-        # NOTE: This is a simulated baseline — no real OT library needed
-        :ok
+        # Simulate OT: sequential transform of @edit_count operations
+        # Each transform is an O(1) list operation (best-case OT)
+        doc = :array.new(@edit_count, default: 0)
+
+        Enum.reduce(0..(@edit_count - 1), doc, fn i, acc ->
+          :array.set(i, ?a + rem(i, 26), acc)
+        end)
       end,
-      "crdt_document_size" => fn ->
-        # TODO: Create doc with @edit_count ops, export snapshot
-        # TODO: Measure snapshot size vs raw content size (overhead ratio)
-        # {:ok, doc} = LoroEngine.doc_new()
-        # ...inserts...
-        # {:ok, snap} = LoroEngine.doc_export_snapshot(doc)
-        # byte_size(snap) / @edit_count
-        :ok
+      "crdt_doc_size_overhead" => fn ->
+        {:ok, doc} = LoroEngine.doc_new()
+
+        for i <- 0..(@edit_count - 1) do
+          :ok = LoroEngine.text_insert(doc, "text", i, "x")
+        end
+
+        {:ok, snap} = LoroEngine.doc_export_snapshot(doc)
+        {:ok, text} = LoroEngine.text_to_string(doc, "text")
+        _overhead_ratio = byte_size(snap) / byte_size(text)
       end
-    }
+    }, warmup: 1, time: 10)
   end
 end

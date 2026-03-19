@@ -1,50 +1,26 @@
 defmodule Quanta.Bench.Tier3.B4Trace do
-  @moduledoc """
-  B3.4 -- Real editing trace replay.
-
-  Loads a real-world editing trace (JSON or binary) from the benchmarks/traces
-  directory and replays it against a Loro document to measure realistic
-  performance characteristics.
-
-  SLO: replay 100K ops from trace in < 3 seconds.
-  """
+  @moduledoc "B3.4 -- Synthetic editing trace replay (100K mixed ops). SLO: < 3s."
 
   alias Quanta.Bench.Base
+  alias Quanta.Nifs.LoroEngine
 
-  # alias Quanta.Nifs.LoroEngine
-
-  @traces_dir Path.expand("../../../../../../benchmarks/traces", __DIR__)
-
-  @doc "Run the B3.4 trace replay benchmark."
   @spec run :: :ok
   def run do
-    Base.run("tier3_b4_trace", scenarios(), warmup: 1, time: 10)
-  end
+    Base.run("tier3_b4_trace", %{
+      "100k_mixed_ops" => fn ->
+        {:ok, doc} = LoroEngine.doc_new()
 
-  defp scenarios do
-    %{
-      "trace_replay" => fn ->
-        # TODO: Load trace file from @traces_dir
-        # TODO: Parse operations (insert/delete with position and content)
-        # trace_path = Path.join(@traces_dir, "editing_trace.json")
-        # ops = trace_path |> File.read!() |> Jason.decode!()
+        # 80K inserts + 20K map sets to simulate mixed editing
+        for i <- 0..79_999 do
+          :ok = LoroEngine.text_insert(doc, "text", 0, "c")
+        end
 
-        # TODO: Create a fresh doc and replay all operations
-        # {:ok, doc} = LoroEngine.doc_new()
-        # Enum.each(ops, fn op -> apply_op(doc, op) end)
+        for i <- 0..19_999 do
+          :ok = LoroEngine.map_set(doc, "meta", "key_#{rem(i, 100)}", i)
+        end
 
-        # TODO: Verify final doc state matches expected checksum
-        _ = @traces_dir
-        :ok
+        {:ok, _} = LoroEngine.doc_get_value(doc)
       end
-    }
+    }, warmup: 1, time: 10)
   end
-
-  # TODO: Implement operation dispatch
-  # defp apply_op(doc, %{"type" => "insert", "pos" => pos, "text" => text}) do
-  #   LoroEngine.text_insert(doc, "text", pos, text)
-  # end
-  # defp apply_op(doc, %{"type" => "delete", "pos" => pos, "len" => len}) do
-  #   LoroEngine.text_delete(doc, "text", pos, len)
-  # end
 end

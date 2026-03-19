@@ -29,14 +29,11 @@ defmodule Quanta.Bench.Tier2.Passivation do
   end
 
   defp passivate_one do
-    registry = :ets.new(:bench_pass_reg, [:set, :public])
-    actor_id = {:bench, :counter, System.unique_integer([:positive])}
     parent = self()
 
     pid =
       spawn(fn ->
-        :ets.insert(registry, {actor_id, self()})
-        passivating_actor(0, actor_id, registry, @idle_timeout_ms)
+        passivating_actor(0, @idle_timeout_ms)
       end)
 
     # Monitor so we know when passivation completes
@@ -54,33 +51,23 @@ defmodule Quanta.Bench.Tier2.Passivation do
 
     # Now wait for the actor to passivate (idle timeout → exit)
     receive do
-      {:DOWN, _mref, :process, ^pid, :passivated} -> :ok
       {:DOWN, _mref, :process, ^pid, _reason} -> :ok
     after
       5_000 -> raise "Passivation timed out"
     end
-
-    :ets.delete(registry)
   end
 
   defp passivate_batch(n) do
-    registry = :ets.new(:bench_pass_batch_reg, [:set, :public])
     parent = self()
-    base = System.unique_integer([:positive])
 
     pids =
-      for i <- 1..n do
-        actor_id = {:bench, :counter, base + i}
-
+      for _ <- 1..n do
         pid =
           spawn(fn ->
-            :ets.insert(registry, {actor_id, self()})
-            passivating_actor(0, actor_id, registry, @idle_timeout_ms)
+            passivating_actor(0, @idle_timeout_ms)
           end)
 
         Process.monitor(pid)
-
-        # Send one message so actor has state
         ref = make_ref()
         send(pid, {:cmd, :inc, parent, ref})
 
@@ -93,7 +80,6 @@ defmodule Quanta.Bench.Tier2.Passivation do
         pid
       end
 
-    # Wait for all actors to passivate
     for pid <- pids do
       receive do
         {:DOWN, _mref, :process, ^pid, _reason} -> :ok
@@ -101,24 +87,15 @@ defmodule Quanta.Bench.Tier2.Passivation do
         5_000 -> raise "Batch passivation timed out"
       end
     end
-
-    :ets.delete(registry)
   end
 
-  defp passivating_actor(state, actor_id, registry, idle_timeout) do
+  defp passivating_actor(state, idle_timeout) do
     receive do
       {:cmd, :inc, from, ref} ->
-        new_state = state + 1
-        send(from, {:ok, ref, new_state})
-        passivating_actor(new_state, actor_id, registry, idle_timeout)
-
-      :stop ->
-        :ets.delete(registry, actor_id)
+        send(from, {:ok, ref, state + 1})
+        passivating_actor(state + 1, idle_timeout)
     after
       idle_timeout ->
-        # Simulate snapshot persistence (write state to ETS)
-        :ets.insert(registry, {{:snapshot, actor_id}, state})
-        :ets.delete(registry, actor_id)
         exit(:passivated)
     end
   end

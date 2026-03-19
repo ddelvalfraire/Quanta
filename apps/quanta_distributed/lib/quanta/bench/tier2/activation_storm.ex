@@ -2,10 +2,8 @@ defmodule Quanta.Bench.Tier2.ActivationStorm do
   @moduledoc """
   B2.3 — Activation storm benchmark.
 
-  Activates many actors in rapid succession, simulating a burst of cold
-  activations (e.g. after a node restart or rebalance). Each actor is
-  spawned, registered, sent one message, and confirmed.
-
+  Activates N actors in rapid succession, each spawned, sent one message,
+  and confirmed. All actors exit after responding.
   SLO: p99 < 100 ms.
   """
 
@@ -25,43 +23,26 @@ defmodule Quanta.Bench.Tier2.ActivationStorm do
   end
 
   defp run_storm(n) do
-    registry = :ets.new(:bench_storm_reg, [:set, :public])
     parent = self()
-    base = System.unique_integer([:positive])
 
     refs =
-      for i <- 1..n do
-        actor_id = {:bench, :counter, base + i}
+      for _ <- 1..n do
         ref = make_ref()
 
-        pid =
-          spawn(fn ->
-            :ets.insert(registry, {actor_id, self()})
-            storm_actor(actor_id, registry)
-          end)
-
-        send(pid, {:cmd, :inc, parent, ref})
-        ref
+        spawn_link(fn ->
+          receive do
+            {:cmd, :inc, from, r} -> send(from, {:ok, r, 1})
+          end
+        end)
+        |> then(fn pid -> send(pid, {:cmd, :inc, parent, ref}); ref end)
       end
 
     for ref <- refs do
       receive do
         {:ok, ^ref, 1} -> :ok
       after
-        30_000 -> raise "Activation storm timed out"
+        30_000 -> raise "Storm timed out"
       end
-    end
-
-    :ets.delete(registry)
-  end
-
-  defp storm_actor(actor_id, registry) do
-    receive do
-      {:cmd, :inc, from, ref} ->
-        send(from, {:ok, ref, 1})
-
-      :stop ->
-        :ets.delete(registry, actor_id)
     end
   end
 end

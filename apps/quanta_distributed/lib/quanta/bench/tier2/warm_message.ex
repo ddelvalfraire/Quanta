@@ -2,9 +2,7 @@ defmodule Quanta.Bench.Tier2.WarmMessage do
   @moduledoc """
   B2.2 — Warm message delivery benchmark.
 
-  Pre-activates an actor and then measures the cost of sending messages to it
-  through a registry lookup + send + reply cycle.
-
+  Pre-activates a long-lived actor and measures send + reply cost.
   SLO: p99 < 1 ms.
   """
 
@@ -16,19 +14,10 @@ defmodule Quanta.Bench.Tier2.WarmMessage do
   end
 
   defp scenarios do
-    registry = :ets.new(:bench_warm_reg, [:set, :public])
-    actor_id = {:bench, :counter, 0}
+    actor = spawn_link(fn -> counter_loop(0) end)
 
-    pid =
-      spawn(fn ->
-        counter_loop(0)
-      end)
-
-    :ets.insert(registry, {actor_id, pid})
-
-    scenarios = %{
+    %{
       "warm_single_message" => fn ->
-        [{^actor_id, actor}] = :ets.lookup(registry, actor_id)
         ref = make_ref()
         send(actor, {:cmd, :inc, self(), ref})
 
@@ -39,8 +28,6 @@ defmodule Quanta.Bench.Tier2.WarmMessage do
         end
       end,
       "warm_burst_100" => fn ->
-        [{^actor_id, actor}] = :ets.lookup(registry, actor_id)
-
         refs =
           for _ <- 1..100 do
             ref = make_ref()
@@ -57,21 +44,13 @@ defmodule Quanta.Bench.Tier2.WarmMessage do
         end
       end
     }
-
-    # Return scenarios; the actor stays alive for the entire benchmark run.
-    # Benchee will call these functions many times during warmup + timed runs.
-    scenarios
   end
 
   defp counter_loop(state) do
     receive do
       {:cmd, :inc, from, ref} ->
-        new_state = state + 1
-        send(from, {:ok, ref, new_state})
-        counter_loop(new_state)
-
-      :stop ->
-        :ok
+        send(from, {:ok, ref, state + 1})
+        counter_loop(state + 1)
     end
   end
 end

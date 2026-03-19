@@ -1,49 +1,29 @@
 defmodule Quanta.Bench.Tier3.SnapshotRoundtrip do
-  @moduledoc """
-  B3.2 -- Export/import snapshot roundtrip benchmark.
-
-  Creates a document with substantial state, then measures the time to export
-  a snapshot and re-import it into a fresh document.
-
-  SLO: p99 < 5 ms for snapshot export + import roundtrip.
-  """
+  @moduledoc "B3.2 -- Snapshot export/import roundtrip. SLO: p99 < 5ms."
 
   alias Quanta.Bench.Base
+  alias Quanta.Nifs.LoroEngine
 
-  # Number of inserts to pre-populate the document with before benchmarking
-  # alias Quanta.Nifs.LoroEngine
-  # @doc_size 10_000
-
-  @doc "Run the B3.2 snapshot roundtrip benchmark."
   @spec run :: :ok
   def run do
-    Base.run("tier3_snapshot_roundtrip", scenarios(), warmup: 2, time: 5)
-  end
+    # Pre-populate a doc with 10K inserts
+    {:ok, doc} = LoroEngine.doc_new()
+    for i <- 0..9_999, do: :ok = LoroEngine.text_insert(doc, "text", i, "a")
+    {:ok, snapshot} = LoroEngine.doc_export_snapshot(doc)
 
-  defp scenarios do
-    # TODO: Pre-populate a doc with 10_000 inserts before benchmarking
-    # {:ok, doc} = LoroEngine.doc_new()
-    # for i <- 0..9_999, do: LoroEngine.text_insert(doc, "text", i, "a")
-
-    %{
+    Base.run("tier3_snapshot_roundtrip", %{
       "snapshot_export" => fn ->
-        # TODO: Export snapshot from pre-populated doc
-        # {:ok, _snapshot} = LoroEngine.doc_export_snapshot(doc)
-        :ok
+        {:ok, _} = LoroEngine.doc_export_snapshot(doc)
       end,
       "snapshot_import" => fn ->
-        # TODO: Import a pre-exported snapshot into a fresh doc
-        # {:ok, fresh} = LoroEngine.doc_new()
-        # :ok = LoroEngine.doc_import(fresh, snapshot)
-        :ok
+        {:ok, fresh} = LoroEngine.doc_new()
+        :ok = LoroEngine.doc_import(fresh, snapshot)
       end,
       "snapshot_roundtrip" => fn ->
-        # TODO: Export + import in one operation, measure combined time
-        # {:ok, snap} = LoroEngine.doc_export_snapshot(doc)
-        # {:ok, fresh} = LoroEngine.doc_new()
-        # :ok = LoroEngine.doc_import(fresh, snap)
-        :ok
+        {:ok, snap} = LoroEngine.doc_export_snapshot(doc)
+        {:ok, fresh} = LoroEngine.doc_new()
+        :ok = LoroEngine.doc_import(fresh, snap)
       end
-    }
+    }, warmup: 2, time: 5)
   end
 end
