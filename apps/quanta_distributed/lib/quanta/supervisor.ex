@@ -17,7 +17,11 @@ defmodule Quanta.Supervisor do
     :ets.new(:quanta_actor_init_attempts, [:named_table, :public, :set])
     Quanta.RateLimit.init()
 
+    topologies = Application.get_env(:libcluster, :topologies, [])
+
     children = [
+      {Cluster.Supervisor, [topologies, [name: Quanta.ClusterSupervisor]]},
+      Quanta.Cluster.Topology,
       Quanta.HLC.Server,
       Quanta.Wasm.EngineManager,
       Quanta.Wasm.ModuleRegistry,

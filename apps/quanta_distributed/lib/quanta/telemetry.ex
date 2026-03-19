@@ -31,6 +31,11 @@ defmodule Quanta.Telemetry do
 
   * `[:quanta, :actor, :custom, ...]`
 
+  ### Cluster membership
+
+  * `[:quanta, :cluster, :node_up]` — a node joined the cluster
+  * `[:quanta, :cluster, :node_down]` — a node left the cluster
+
   ### Broadway event processing
 
   * `[:quanta, :broadway, :success]` — batch of messages successfully processed

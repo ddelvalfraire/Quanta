@@ -31,6 +31,12 @@ defmodule Quanta.ActorId do
     "#{ns}.#{type}.#{id}"
   end
 
+  @doc "Returns a stable string key for consistent-hash placement."
+  @spec to_placement_key(t()) :: String.t()
+  def to_placement_key(%__MODULE__{namespace: ns, type: type, id: id}) do
+    "#{ns}.#{type}.#{id}"
+  end
+
   @doc "Identity — ActorId structs are used directly as syn registry keys."
   @spec to_syn_key(t()) :: t()
   def to_syn_key(%__MODULE__{} = actor_id), do: actor_id

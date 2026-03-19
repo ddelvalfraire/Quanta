@@ -33,7 +33,9 @@ defmodule QuantaDistributed.MixProject do
       {:broadway, "~> 1.2"},
       {:gnat, "~> 1.13"},
       {:syn, "~> 3.4"},
-      {:telemetry, "~> 1.3"}
+      {:telemetry, "~> 1.3"},
+      {:libcluster, "~> 3.5"},
+      {:ex_hash_ring, "~> 7.0"}
     ]
   end
 end
