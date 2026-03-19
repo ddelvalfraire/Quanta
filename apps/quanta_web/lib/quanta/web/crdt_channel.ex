@@ -5,6 +5,7 @@ defmodule Quanta.Web.CrdtChannel do
   alias Quanta.Web.{ChannelHelpers, Presence}
 
   @max_delta_bytes 1_048_576
+  @ephemeral_throttle_ms 100
 
   @impl true
   def join("crdt:" <> rest, params, socket) do
@@ -25,6 +26,7 @@ defmodule Quanta.Web.CrdtChannel do
               |> assign(:actor_pid, pid)
               |> assign(:actor_ref, ref)
               |> assign(:user_id, user_id)
+              |> assign(:last_ephemeral_at, System.monotonic_time(:millisecond) - @ephemeral_throttle_ms)
 
             Phoenix.PubSub.subscribe(Quanta.Web.PubSub, "system:drain")
 
@@ -69,6 +71,28 @@ defmodule Quanta.Web.CrdtChannel do
   end
 
   @impl true
+  def handle_in("ephemeral_update", %{"key" => key, "value" => value_b64}, socket) do
+    now = System.monotonic_time(:millisecond)
+
+    if now - socket.assigns.last_ephemeral_at < @ephemeral_throttle_ms do
+      {:noreply, socket}
+    else
+      case Base.decode64(value_b64) do
+        {:ok, value_bytes} ->
+          GenServer.cast(
+            socket.assigns.actor_pid,
+            {:ephemeral_update, key, value_bytes, self()}
+          )
+
+          {:noreply, assign(socket, :last_ephemeral_at, now)}
+
+        :error ->
+          {:noreply, socket}
+      end
+    end
+  end
+
+  @impl true
   def handle_info({:crdt_update, delta_bytes, peer_id}, socket) do
     if peer_id == socket.assigns.user_id do
       {:noreply, socket}
@@ -91,6 +115,34 @@ defmodule Quanta.Web.CrdtChannel do
   @impl true
   def handle_info(:node_draining, socket) do
     push(socket, "node_draining", %{reconnect_ms: 1_000})
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:ephemeral_update, encoded_bytes, sender_pid}, socket) do
+    if sender_pid != self() do
+      push(socket, "ephemeral_update", %{data: Base.encode64(encoded_bytes)})
+    end
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:ephemeral_state, encoded_bytes}, socket) do
+    push(socket, "ephemeral_state", %{data: Base.encode64(encoded_bytes)})
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info(%{event: "presence_diff", payload: diff}, socket) do
+    push(socket, "presence_diff", diff)
+
+    if socket.assigns[:actor_pid] do
+      for {user_id, _metas} <- diff.leaves do
+        send(socket.assigns.actor_pid, {:subscriber_left, user_id})
+      end
+    end
+
     {:noreply, socket}
   end
 
