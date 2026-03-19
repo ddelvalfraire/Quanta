@@ -23,9 +23,8 @@ defmodule Quanta.Bench.Tier1 do
   @spec modules :: [module()]
   def modules do
     [
-      # Populated by subsequent PRs:
-      # Quanta.Bench.Tier1.PingPong,
-      # Quanta.Bench.Tier1.FanOut,
+      Quanta.Bench.Tier1.PingPong,
+      Quanta.Bench.Tier1.FanOut
       # Quanta.Bench.Tier1.Skynet,
       # Quanta.Bench.Tier1.ConcurrentMailbox,
     ]
