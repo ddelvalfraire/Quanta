@@ -30,6 +30,7 @@ defmodule QuantaDistributed.MixProject do
     [
       {:quanta_core, in_umbrella: true},
       {:quanta_nifs, in_umbrella: true},
+      {:broadway, "~> 1.2"},
       {:gnat, "~> 1.13"},
       {:syn, "~> 3.4"},
       {:telemetry, "~> 1.3"}
