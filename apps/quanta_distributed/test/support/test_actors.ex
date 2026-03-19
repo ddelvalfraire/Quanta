@@ -111,6 +111,42 @@ defmodule Quanta.Test.Actors.Responder do
   def handle_timer(state, _), do: {state, []}
 end
 
+defmodule Quanta.Test.Actors.CrdtDoc do
+  @moduledoc false
+  @behaviour Quanta.Actor
+
+  @impl true
+  def init(_payload) do
+    {<<>>, [{:crdt_ops, [{:text_insert, "text", 0, "hello"}]}]}
+  end
+
+  @impl true
+  def handle_message(state, envelope) do
+    case envelope.payload do
+      "text_insert:" <> rest ->
+        [pos_str, text] = String.split(rest, ":", parts: 2)
+        pos = String.to_integer(pos_str)
+        {state, [{:crdt_ops, [{:text_insert, "text", pos, text}]}]}
+
+      "map_set:" <> rest ->
+        [key, value] = String.split(rest, ":", parts: 2)
+        {state, [{:crdt_ops, [{:map_set, "data", key, value}]}]}
+
+      "get" ->
+        {state, [{:reply, state}]}
+
+      _ ->
+        {state, []}
+    end
+  end
+
+  @impl true
+  def handle_timer(state, _), do: {state, []}
+
+  @impl true
+  def on_passivate(state), do: state
+end
+
 defmodule Quanta.Test.Actors.Failer do
   @moduledoc false
   @behaviour Quanta.Actor
