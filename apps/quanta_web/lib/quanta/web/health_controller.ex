@@ -6,6 +6,16 @@ defmodule Quanta.Web.HealthController do
   end
 
   def ready(conn, _params) do
+    if Quanta.Drain.draining?() do
+      conn
+      |> put_status(503)
+      |> json(%{status: "draining"})
+    else
+      do_ready_check(conn)
+    end
+  end
+
+  defp do_ready_check(conn) do
     checks = %{
       supervisor: process_alive?(Quanta.Supervisor),
       manifest_registry: process_alive?(Quanta.Actor.ManifestRegistry),

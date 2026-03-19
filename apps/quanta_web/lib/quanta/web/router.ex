@@ -16,6 +16,10 @@ defmodule Quanta.Web.Router do
     get "/ready", HealthController, :ready
   end
 
+  scope "/api/internal", Quanta.Web do
+    get "/drain", DrainController, :drain
+  end
+
   scope "/api/v1", Quanta.Web do
     pipe_through [:api, :authenticated]
 
