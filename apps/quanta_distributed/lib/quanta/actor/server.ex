@@ -8,8 +8,9 @@ defmodule Quanta.Actor.Server do
 
   use GenServer
 
-  alias Quanta.Actor.{EffectExecutor, ManifestRegistry, Registry}
+  alias Quanta.Actor.{CrdtOps, EphemeralStore, EffectExecutor, ManifestRegistry, Registry}
   alias Quanta.Envelope
+  alias Quanta.Nifs.LoroEngine
 
   require Logger
 
@@ -17,6 +18,7 @@ defmodule Quanta.Actor.Server do
   @mailbox_shed_threshold 5_000
   @mailbox_critical_threshold 10_000
   @init_attempts_table :quanta_actor_init_attempts
+  @ephemeral_ttl_ms 30_000
 
   defstruct [
     :actor_id,
@@ -25,6 +27,9 @@ defmodule Quanta.Actor.Server do
     :state_data,
     :idle_timer_ref,
     :activated_at,
+    :loro_doc,
+    :ephemeral_store,
+    :last_version,
     status: :activating,
     events_since_snapshot: 0,
     named_timers: %{},
@@ -39,6 +44,9 @@ defmodule Quanta.Actor.Server do
           state_data: binary() | nil,
           idle_timer_ref: reference() | nil,
           activated_at: integer() | nil,
+          loro_doc: reference() | nil,
+          ephemeral_store: :ets.tid() | nil,
+          last_version: binary() | nil,
           status: :activating | :active,
           events_since_snapshot: non_neg_integer(),
           named_timers: %{String.t() => map()},
@@ -141,7 +149,14 @@ defmodule Quanta.Actor.Server do
 
   @impl true
   def handle_call(:get_state, _from, state) do
-    {:reply, {:ok, state.state_data}, state}
+    reply =
+      if state.loro_doc do
+        CrdtOps.encode_value_as_json(state.loro_doc)
+      else
+        {:ok, state.state_data}
+      end
+
+    {:reply, reply, state}
   end
 
   @impl true
@@ -165,8 +180,37 @@ defmodule Quanta.Actor.Server do
     )
 
     call_on_passivate(state)
+    cleanup_crdt(state)
     Registry.deregister(state.actor_id)
     {:stop, :normal, :ok, state}
+  end
+
+  @impl true
+  def handle_cast({:crdt_delta, delta_bytes, peer_id}, state) do
+    case LoroEngine.doc_apply_delta(state.loro_doc, delta_bytes) do
+      :ok ->
+        {:ok, new_version} = LoroEngine.doc_version(state.loro_doc)
+
+        CrdtOps.broadcast_update(state.actor_id, delta_bytes, peer_id)
+
+        state = %{
+          state
+          | last_version: new_version,
+            events_since_snapshot: state.events_since_snapshot + 1
+        }
+
+        CrdtOps.check_state_size(
+          state.loro_doc,
+          state.manifest.state.max_size_bytes,
+          state.actor_id
+        )
+
+        {:noreply, reset_idle_timer(state)}
+
+      {:error, reason} ->
+        Logger.warning("Failed to apply CRDT delta: #{inspect(reason)}")
+        {:noreply, state}
+    end
   end
 
   @impl true
@@ -200,6 +244,7 @@ defmodule Quanta.Actor.Server do
     )
 
     call_on_passivate(state)
+    cleanup_crdt(state)
     Registry.deregister(state.actor_id)
     {:stop, :normal, state}
   end
@@ -254,16 +299,12 @@ defmodule Quanta.Actor.Server do
     try do
       state =
         :telemetry.span([:quanta, :actor, :activate], meta, fn ->
-          {state_data, init_effects} = state.module.init(<<>>)
+          state =
+            case manifest.state.kind do
+              {:crdt, _type} -> activate_crdt(state)
+              _ -> activate_standard(state)
+            end
 
-          state = %{
-            state
-            | state_data: state_data,
-              status: :active,
-              activated_at: System.monotonic_time()
-          }
-
-          state = process_init_effects(init_effects, state)
           state = schedule_idle_timer(state)
           clear_init_failures(state.actor_id)
 
@@ -278,17 +319,66 @@ defmodule Quanta.Actor.Server do
     end
   end
 
+  defp activate_standard(state) do
+    {state_data, init_effects} = state.module.init(<<>>)
+
+    state = %{
+      state
+      | state_data: state_data,
+        status: :active,
+        activated_at: System.monotonic_time()
+    }
+
+    process_init_effects(init_effects, state)
+  end
+
+  defp activate_crdt(state) do
+    {:ok, doc} = LoroEngine.doc_new()
+    {:ok, tid} = EphemeralStore.new(@ephemeral_ttl_ms)
+    {:ok, version} = LoroEngine.doc_version(doc)
+
+    state = %{
+      state
+      | loro_doc: doc,
+        ephemeral_store: tid,
+        last_version: version,
+        state_data: <<>>,
+        status: :active,
+        activated_at: System.monotonic_time()
+    }
+
+    {_state_data, init_effects} = state.module.init(<<>>)
+    process_init_effects(init_effects, state)
+  end
+
   defp dispatch_message(state, envelope) do
     Logger.metadata(message_id: envelope.message_id)
     state = reset_idle_timer(state)
     meta = %{actor_id: state.actor_id, message_id: envelope.message_id}
 
     :telemetry.span([:quanta, :actor, :message], meta, fn ->
-      {new_state, effects} = state.module.handle_message(state.state_data, envelope)
-      state = %{state | state_data: new_state, message_count: state.message_count + 1}
-      result = process_effects(effects, state, envelope)
-      {result, meta}
+      if state.loro_doc do
+        dispatch_crdt_message(state, envelope, meta)
+      else
+        {new_state, effects} = state.module.handle_message(state.state_data, envelope)
+        state = %{state | state_data: new_state, message_count: state.message_count + 1}
+        result = process_effects(effects, state, envelope)
+        {result, meta}
+      end
     end)
+  end
+
+  defp dispatch_crdt_message(state, envelope, meta) do
+    snapshot_json =
+      case CrdtOps.encode_value_as_json(state.loro_doc) do
+        {:ok, json} -> json
+        {:error, _} -> "{}"
+      end
+
+    {_state, effects} = state.module.handle_message(snapshot_json, envelope)
+    state = %{state | message_count: state.message_count + 1}
+    result = process_effects(effects, state, envelope)
+    {result, meta}
   end
 
   defp process_init_effects(effects, state) do
@@ -316,6 +406,11 @@ defmodule Quanta.Actor.Server do
       {:set_timer, name, delay_ms}, state ->
         Logger.warning("Invalid timer delay for #{name} during init: #{inspect(delay_ms)}")
         state
+
+      {:crdt_ops, ops}, state when is_list(ops) and state.loro_doc != nil ->
+        CrdtOps.apply_ops(state.loro_doc, ops)
+        {:ok, new_version} = LoroEngine.doc_version(state.loro_doc)
+        %{state | last_version: new_version, events_since_snapshot: state.events_since_snapshot + 1}
 
       _other, state ->
         state
@@ -397,7 +492,23 @@ defmodule Quanta.Actor.Server do
 
   defp call_on_passivate(state) do
     if function_exported?(state.module, :on_passivate, 1) do
-      state.module.on_passivate(state.state_data)
+      passivate_data =
+        if state.loro_doc do
+          case LoroEngine.doc_export_shallow_snapshot(state.loro_doc) do
+            {:ok, snapshot} -> snapshot
+            {:error, _} -> state.state_data
+          end
+        else
+          state.state_data
+        end
+
+      state.module.on_passivate(passivate_data)
+    end
+  end
+
+  defp cleanup_crdt(state) do
+    if state.ephemeral_store do
+      EphemeralStore.destroy(state.ephemeral_store)
     end
   end
 

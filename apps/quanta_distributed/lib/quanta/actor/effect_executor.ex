@@ -6,9 +6,10 @@ defmodule Quanta.Actor.EffectExecutor do
   reply values, and sent message IDs. Persist failure halts execution.
   """
 
-  alias Quanta.Actor.{DynSup, Registry, Server}
+  alias Quanta.Actor.{CrdtOps, DynSup, Registry, Server}
   alias Quanta.Codec.Wire
   alias Quanta.Envelope
+  alias Quanta.Nifs.LoroEngine
 
   require Logger
 
@@ -170,6 +171,38 @@ defmodule Quanta.Actor.EffectExecutor do
     end)
 
     acc
+  end
+
+  defp execute_one({:crdt_ops, ops}, acc, context) when is_list(ops) do
+    state = acc.server_state
+    doc = state.loro_doc
+
+    if is_nil(doc) do
+      Logger.warning("crdt_ops effect on non-CRDT actor #{inspect(context.actor_id)}, ignoring")
+      acc
+    else
+      CrdtOps.apply_ops(doc, ops)
+
+      case LoroEngine.doc_export_updates_from(doc, state.last_version) do
+        {:ok, delta} ->
+          {:ok, new_version} = LoroEngine.doc_version(doc)
+
+          CrdtOps.broadcast_update(context.actor_id, delta, nil)
+
+          new_state = %{
+            state
+            | last_version: new_version,
+              events_since_snapshot: state.events_since_snapshot + 1
+          }
+
+          CrdtOps.check_state_size(doc, context.manifest.state.max_size_bytes, context.actor_id)
+          %{acc | server_state: new_state}
+
+        {:error, reason} ->
+          Logger.warning("Failed to export CRDT delta: #{inspect(reason)}")
+          acc
+      end
+    end
   end
 
   ## Helpers

@@ -22,6 +22,7 @@ defmodule Quanta.Supervisor do
     children = [
       {Cluster.Supervisor, [topologies, [name: Quanta.ClusterSupervisor]]},
       Quanta.Cluster.Topology,
+      %{id: Quanta.Actor.CrdtPubSub, start: {:pg, :start_link, [Quanta.Actor.CrdtPubSub]}},
       Quanta.HLC.Server,
       Quanta.Wasm.EngineManager,
       Quanta.Wasm.ModuleRegistry,
