@@ -7,6 +7,11 @@ defmodule Quanta.Actor.DynSup do
   via `:erlang.phash2(actor_id, N)`.
   """
 
+  @spec child_spec(any()) :: %{
+          id: Quanta.Actor.DynSup,
+          start: {Quanta.Actor.DynSup, :start_link, [...]},
+          type: :supervisor
+        }
   def child_spec(opts) do
     %{
       id: __MODULE__,
@@ -15,6 +20,7 @@ defmodule Quanta.Actor.DynSup do
     }
   end
 
+  @spec start_link(any()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(_opts) do
     PartitionSupervisor.start_link(
       child_spec:
