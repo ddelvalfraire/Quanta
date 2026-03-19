@@ -8,8 +8,7 @@ nats_available? =
       false
   end
 
-unless nats_available? do
-  ExUnit.configure(exclude: [:nats])
-end
+excludes = [:multi_node, :integration, :chaos, :load]
+excludes = if nats_available?, do: excludes, else: [:nats | excludes]
 
-ExUnit.start()
+ExUnit.start(exclude: excludes)

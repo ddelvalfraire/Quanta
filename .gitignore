@@ -35,6 +35,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Benchmark results (generated)
+benchmarks/results/
+
 # Claude Code
 CLAUDE.md
 .claude/
