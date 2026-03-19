@@ -306,4 +306,35 @@ defmodule Quanta.Nifs.Native do
           {:ok, non_neg_integer()} | {:error, String.t()}
   def loro_cursor_pos(_doc, _cursor),
     do: :erlang.nif_error(:nif_not_loaded)
+
+  # --- Loro EphemeralStore ---
+
+  @spec ephemeral_store_new(timeout_ms :: non_neg_integer()) :: {:ok, reference()}
+  def ephemeral_store_new(_timeout_ms), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec ephemeral_store_set(store :: reference(), key :: String.t(), value :: binary()) :: :ok
+  def ephemeral_store_set(_store, _key, _value), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec ephemeral_store_get(store :: reference(), key :: String.t()) ::
+          {:ok, binary()} | :not_found
+  def ephemeral_store_get(_store, _key), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec ephemeral_store_delete(store :: reference(), key :: String.t()) :: :ok
+  def ephemeral_store_delete(_store, _key), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec ephemeral_store_get_all(store :: reference()) :: {:ok, %{String.t() => binary()}}
+  def ephemeral_store_get_all(_store), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec ephemeral_store_keys(store :: reference()) :: {:ok, [String.t()]}
+  def ephemeral_store_keys(_store), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec ephemeral_store_encode(store :: reference(), key :: String.t()) :: {:ok, binary()}
+  def ephemeral_store_encode(_store, _key), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec ephemeral_store_encode_all(store :: reference()) :: {:ok, binary()}
+  def ephemeral_store_encode_all(_store), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec ephemeral_store_apply_encoded(store :: reference(), bytes :: binary()) ::
+          :ok | {:error, String.t()}
+  def ephemeral_store_apply_encoded(_store, _bytes), do: :erlang.nif_error(:nif_not_loaded)
 end
