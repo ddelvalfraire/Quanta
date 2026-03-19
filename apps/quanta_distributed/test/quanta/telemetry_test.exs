@@ -122,7 +122,7 @@ defmodule Quanta.TelemetryTest do
 
       short_lifecycle = %Manifest.Lifecycle{
         idle_timeout_ms: 30,
-        idle_no_subscribers_timeout_ms: 30_000,
+        idle_no_subscribers_timeout_ms: 30,
         max_concurrent_messages: 1,
         inter_actor_timeout_ms: 30_000,
         http_timeout_ms: 5_000
