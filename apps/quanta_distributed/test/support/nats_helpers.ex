@@ -46,6 +46,30 @@ defmodule Quanta.Test.NatsHelpers do
     GenServer.stop(gnat)
   end
 
+  def ensure_consumer(stream_name, consumer_name, filter_subject, opts \\ []) do
+    {:ok, gnat} = Gnat.start_link(%{host: ~c"localhost", port: 4222})
+
+    payload =
+      Jason.encode!(%{
+        stream_name: stream_name,
+        config: %{
+          durable_name: consumer_name,
+          filter_subject: filter_subject,
+          ack_policy: Keyword.get(opts, :ack_policy, "explicit"),
+          deliver_policy: Keyword.get(opts, :deliver_policy, "all")
+        }
+      })
+
+    {:ok, %{body: _}} =
+      Gnat.request(
+        gnat,
+        "$JS.API.CONSUMER.DURABLE.CREATE.#{stream_name}.#{consumer_name}",
+        payload
+      )
+
+    GenServer.stop(gnat)
+  end
+
   def delete_kv_bucket(bucket_name) do
     {:ok, gnat} = Gnat.start_link(%{host: ~c"localhost", port: 4222})
     Gnat.request(gnat, "$JS.API.STREAM.DELETE.KV_#{bucket_name}", "")

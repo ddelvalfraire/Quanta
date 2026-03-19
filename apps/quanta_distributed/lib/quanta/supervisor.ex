@@ -24,6 +24,7 @@ defmodule Quanta.Supervisor do
       Quanta.Actor.ManifestRegistry,
       Quanta.Nats.CoreSupervisor,
       Quanta.Nats.JetStream.Connection,
+      Quanta.Broadway.PipelineSupervisor,
       Quanta.Actor.DynSup,
       {Task.Supervisor, name: Quanta.SideEffect.TaskSupervisor},
       Quanta.Actor.CommandRouter,

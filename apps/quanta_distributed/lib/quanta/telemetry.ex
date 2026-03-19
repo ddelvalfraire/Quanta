@@ -31,6 +31,11 @@ defmodule Quanta.Telemetry do
 
   * `[:quanta, :actor, :custom, ...]`
 
+  ### Broadway event processing
+
+  * `[:quanta, :broadway, :success]` — batch of messages successfully processed
+  * `[:quanta, :broadway, :failed]` — batch of messages that failed processing
+
   ## Future events (declared, not yet instrumented)
 
   * `[:quanta, :wasm, :call, :start | :stop | :exception]` — T06
