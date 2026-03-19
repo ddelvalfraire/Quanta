@@ -647,6 +647,57 @@ defmodule Quanta.Actor.ServerTest do
     end
   end
 
+  describe "ephemeral awareness" do
+    test "ephemeral cast stores value and broadcasts to subscribers" do
+      {_actor_id, pid} = start_crdt_actor("eph-bcast")
+      :ok = Server.subscribe(pid, self(), "alice")
+      assert_receive {:ephemeral_state, _}, 200
+
+      GenServer.cast(pid, {:ephemeral_update, "user:bob", "cursor-data", self()})
+
+      assert_receive {:ephemeral_update, encoded, _sender}, 500
+      assert is_binary(encoded)
+    end
+
+    test "subscribe sends initial ephemeral state" do
+      {_actor_id, pid} = start_crdt_actor("eph-init")
+
+      GenServer.cast(pid, {:ephemeral_update, "user:pre", "data", self()})
+      Process.sleep(50)
+
+      :ok = Server.subscribe(pid, self(), "viewer")
+      assert_receive {:ephemeral_state, bytes}, 500
+      assert is_binary(bytes)
+    end
+
+    test "unsubscribe cleans up ephemeral data and broadcasts deletion" do
+      {_actor_id, pid} = start_crdt_actor("eph-unsub")
+
+      :ok = Server.subscribe(pid, self(), "watcher")
+      assert_receive {:ephemeral_state, _}, 200
+
+      {:ok, client} = Agent.start_link(fn -> nil end)
+      :ok = Server.subscribe(pid, client, "leaving")
+
+      GenServer.cast(pid, {:ephemeral_update, "user:leaving", "cursor", self()})
+      assert_receive {:ephemeral_update, _, _}, 200
+
+      :ok = Server.unsubscribe(pid, client)
+      assert_receive {:ephemeral_update, encoded, nil}, 500
+      assert is_binary(encoded)
+    end
+
+    test "non-CRDT actor handles ephemeral cast as no-op" do
+      actor_id = make_actor_id("eph-noop")
+      {:ok, pid} = start_actor(actor_id)
+
+      GenServer.cast(pid, {:ephemeral_update, "user:x", "data", self()})
+      Process.sleep(50)
+
+      assert Process.alive?(pid)
+    end
+  end
+
   describe "CRDT state size" do
     test "warns when state exceeds max_size_bytes" do
       small_state = %Manifest.State{

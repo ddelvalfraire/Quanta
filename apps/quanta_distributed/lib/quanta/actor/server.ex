@@ -8,9 +8,9 @@ defmodule Quanta.Actor.Server do
 
   use GenServer
 
-  alias Quanta.Actor.{CrdtOps, EphemeralStore, EffectExecutor, ManifestRegistry, Registry}
+  alias Quanta.Actor.{CrdtOps, EffectExecutor, ManifestRegistry, Registry}
   alias Quanta.Envelope
-  alias Quanta.Nifs.LoroEngine
+  alias Quanta.Nifs.{EphemeralStore, LoroEngine}
 
   require Logger
 
@@ -46,7 +46,7 @@ defmodule Quanta.Actor.Server do
           idle_timer_ref: reference() | nil,
           activated_at: integer() | nil,
           loro_doc: reference() | nil,
-          ephemeral_store: :ets.tid() | nil,
+          ephemeral_store: reference() | nil,
           last_version: binary() | nil,
           status: :activating | :active,
           events_since_snapshot: non_neg_integer(),
@@ -212,7 +212,6 @@ defmodule Quanta.Actor.Server do
     )
 
     call_on_passivate(state)
-    cleanup_crdt(state)
     Registry.deregister(state.actor_id)
     {:stop, :normal, :ok, state}
   end
@@ -235,6 +234,12 @@ defmodule Quanta.Actor.Server do
     subscribers = Map.put(state.subscribers, channel_pid, {user_id, ref})
     state = %{state | subscribers: subscribers}
     state = reset_idle_timer(state)
+
+    if state.ephemeral_store do
+      {:ok, bytes} = EphemeralStore.encode_all(state.ephemeral_store)
+      send(channel_pid, {:ephemeral_state, bytes})
+    end
+
     {:reply, :ok, state}
   end
 
@@ -297,6 +302,17 @@ defmodule Quanta.Actor.Server do
   end
 
   @impl true
+  def handle_cast({:ephemeral_update, key, value_bytes, sender_pid}, state) do
+    if state.ephemeral_store do
+      :ok = EphemeralStore.set(state.ephemeral_store, key, value_bytes)
+      {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
+      broadcast_ephemeral(state, encoded, sender_pid)
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(:passivate, state) do
     :telemetry.execute(
       [:quanta, :actor, :passivate],
@@ -305,7 +321,6 @@ defmodule Quanta.Actor.Server do
     )
 
     call_on_passivate(state)
-    cleanup_crdt(state)
     Registry.deregister(state.actor_id)
     {:stop, :normal, state}
   end
@@ -349,7 +364,8 @@ defmodule Quanta.Actor.Server do
   end
 
   @impl true
-  def handle_info({:subscriber_left, _user_id}, state) do
+  def handle_info({:subscriber_left, user_id}, state) do
+    cleanup_ephemeral_for_user(state, user_id)
     {:noreply, reset_idle_timer(state)}
   end
 
@@ -582,14 +598,35 @@ defmodule Quanta.Actor.Server do
       {nil, _} ->
         state
 
-      {{_user_id, ref}, subscribers} ->
+      {{user_id, ref}, subscribers} ->
         Process.demonitor(ref, [:flush])
-        %{state | subscribers: subscribers}
+        state = %{state | subscribers: subscribers}
+        cleanup_ephemeral_for_user(state, user_id)
+        state
     end
   end
 
   defp broadcast_crdt_update(state, delta_bytes, peer_id) do
     msg = {:crdt_update, delta_bytes, peer_id}
+
+    for {pid, {_user_id, _ref}} <- state.subscribers do
+      send(pid, msg)
+    end
+
+    :ok
+  end
+
+  defp cleanup_ephemeral_for_user(state, user_id) do
+    if state.ephemeral_store do
+      key = "user:#{user_id}"
+      :ok = EphemeralStore.delete(state.ephemeral_store, key)
+      {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
+      broadcast_ephemeral(state, encoded, nil)
+    end
+  end
+
+  defp broadcast_ephemeral(state, encoded_bytes, sender_pid) do
+    msg = {:ephemeral_update, encoded_bytes, sender_pid}
 
     for {pid, {_user_id, _ref}} <- state.subscribers do
       send(pid, msg)
@@ -614,11 +651,6 @@ defmodule Quanta.Actor.Server do
     end
   end
 
-  defp cleanup_crdt(state) do
-    if state.ephemeral_store do
-      EphemeralStore.destroy(state.ephemeral_store)
-    end
-  end
 
   defp handle_init_failure(state, error, stacktrace) do
     actor_id = state.actor_id
