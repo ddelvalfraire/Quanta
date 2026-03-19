@@ -24,9 +24,9 @@ defmodule Quanta.Bench.Tier1 do
   def modules do
     [
       Quanta.Bench.Tier1.PingPong,
-      Quanta.Bench.Tier1.FanOut
-      # Quanta.Bench.Tier1.Skynet,
-      # Quanta.Bench.Tier1.ConcurrentMailbox,
+      Quanta.Bench.Tier1.FanOut,
+      Quanta.Bench.Tier1.Skynet,
+      Quanta.Bench.Tier1.ConcurrentMailbox
     ]
   end
 end
