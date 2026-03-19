@@ -164,7 +164,7 @@ defmodule Quanta.Actor.ServerTest do
     test "fires passivation after timeout" do
       short_lifecycle = %Manifest.Lifecycle{
         idle_timeout_ms: 50,
-        idle_no_subscribers_timeout_ms: 30_000,
+        idle_no_subscribers_timeout_ms: 50,
         max_concurrent_messages: 1,
         inter_actor_timeout_ms: 30_000,
         http_timeout_ms: 5_000
@@ -183,7 +183,7 @@ defmodule Quanta.Actor.ServerTest do
     test "message resets idle timer" do
       short_lifecycle = %Manifest.Lifecycle{
         idle_timeout_ms: 100,
-        idle_no_subscribers_timeout_ms: 30_000,
+        idle_no_subscribers_timeout_ms: 100,
         max_concurrent_messages: 1,
         inter_actor_timeout_ms: 30_000,
         http_timeout_ms: 5_000
@@ -199,6 +199,31 @@ defmodule Quanta.Actor.ServerTest do
       Server.send_message(pid, make_envelope("get"))
       Process.sleep(60)
       Server.send_message(pid, make_envelope("get"))
+
+      assert Process.alive?(pid)
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 500
+    end
+
+    test "subscriber_left resets idle timer" do
+      short_lifecycle = %Manifest.Lifecycle{
+        idle_timeout_ms: 300_000,
+        idle_no_subscribers_timeout_ms: 100,
+        max_concurrent_messages: 1,
+        inter_actor_timeout_ms: 30_000,
+        http_timeout_ms: 5_000
+      }
+
+      :ok = ManifestRegistry.put(build_manifest(type: "sub_left", lifecycle: short_lifecycle))
+
+      actor_id = make_actor_id("idle-sub-left", "sub_left")
+      {:ok, pid} = start_actor(actor_id)
+      ref = Process.monitor(pid)
+
+      for _ <- 1..5 do
+        send(pid, {:subscriber_left, "test-user"})
+        Process.sleep(60)
+      end
 
       assert Process.alive?(pid)
 
@@ -415,7 +440,7 @@ defmodule Quanta.Actor.ServerTest do
     test "stale passivate message does not kill active actor" do
       short_lifecycle = %Manifest.Lifecycle{
         idle_timeout_ms: 30,
-        idle_no_subscribers_timeout_ms: 30_000,
+        idle_no_subscribers_timeout_ms: 200,
         max_concurrent_messages: 1,
         inter_actor_timeout_ms: 30_000,
         http_timeout_ms: 5_000

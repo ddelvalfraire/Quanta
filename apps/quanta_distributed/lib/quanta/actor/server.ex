@@ -288,6 +288,11 @@ defmodule Quanta.Actor.Server do
   end
 
   @impl true
+  def handle_info({:subscriber_left, _user_id}, state) do
+    {:noreply, reset_idle_timer(state)}
+  end
+
+  @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
   end
@@ -476,7 +481,13 @@ defmodule Quanta.Actor.Server do
   end
 
   defp schedule_idle_timer(state) do
-    timeout = state.manifest.lifecycle.idle_timeout_ms
+    timeout =
+      if Quanta.Actor.SubscriberTracker.any_subscribers?(state.actor_id) do
+        state.manifest.lifecycle.idle_timeout_ms
+      else
+        state.manifest.lifecycle.idle_no_subscribers_timeout_ms
+      end
+
     ref = Process.send_after(self(), :passivate, timeout)
     %{state | idle_timer_ref: ref}
   end

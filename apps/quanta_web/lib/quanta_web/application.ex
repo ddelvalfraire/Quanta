@@ -5,6 +5,7 @@ defmodule QuantaWeb.Application do
   def start(_type, _args) do
     children = [
       {Phoenix.PubSub, name: Quanta.Web.PubSub},
+      Quanta.Web.Presence,
       {Quanta.Web.Endpoint, []}
     ]
 
