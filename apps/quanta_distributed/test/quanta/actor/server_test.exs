@@ -519,7 +519,6 @@ defmodule Quanta.Actor.ServerTest do
 
       {:ok, state_json} = Server.get_state(pid)
       state = Jason.decode!(state_json)
-      # init inserted "hello" into the "text" container
       assert get_in(state, ["text"]) == "hello"
     end
 
@@ -535,11 +534,8 @@ defmodule Quanta.Actor.ServerTest do
     test "apply delta from another LoroDoc" do
       {_actor_id, pid} = start_crdt_actor("crdt-delta-1")
 
-      # Create a separate doc, make changes, export delta
       {:ok, other_doc} = Quanta.Nifs.LoroEngine.doc_new()
       :ok = Quanta.Nifs.LoroEngine.text_insert(other_doc, "text", 0, "world")
-      # To get a delta that the actor's doc can import, export a full snapshot
-      # since the two docs have divergent histories
       {:ok, snapshot} = Quanta.Nifs.LoroEngine.doc_export_snapshot(other_doc)
 
       GenServer.cast(pid, {:crdt_delta, snapshot, "peer-1"})
@@ -547,7 +543,6 @@ defmodule Quanta.Actor.ServerTest do
 
       {:ok, state_json} = Server.get_state(pid)
       state = Jason.decode!(state_json)
-      # The text container should have content from both docs
       assert is_binary(state["text"])
       assert Process.alive?(pid)
     end
@@ -561,20 +556,20 @@ defmodule Quanta.Actor.ServerTest do
       assert Process.alive?(pid)
     end
 
-    test "delta application increments events_since_snapshot" do
-      {_actor_id, pid} = start_crdt_actor("crdt-delta-events")
+    test "delta broadcast reaches :pg group members" do
+      {actor_id, pid} = start_crdt_actor("crdt-delta-broadcast")
 
-      # Create valid delta
+      :pg.join(Quanta.Actor.CrdtPubSub, {:crdt, actor_id}, self())
+
       {:ok, other_doc} = Quanta.Nifs.LoroEngine.doc_new()
       :ok = Quanta.Nifs.LoroEngine.text_insert(other_doc, "text", 0, "x")
       {:ok, snapshot} = Quanta.Nifs.LoroEngine.doc_export_snapshot(other_doc)
 
       GenServer.cast(pid, {:crdt_delta, snapshot, "peer-3"})
-      Process.sleep(50)
 
-      # events_since_snapshot is internal state — we verify indirectly via get_meta
-      # which doesn't expose it directly, but the actor should still be alive and functional
-      assert Process.alive?(pid)
+      assert_receive {:crdt_delta, ^actor_id, _delta_bytes, "peer-3"}, 1000
+    after
+      :pg.leave(Quanta.Actor.CrdtPubSub, {:crdt, make_actor_id("crdt-delta-broadcast", "crdt_doc")}, self())
     end
   end
 
@@ -582,7 +577,6 @@ defmodule Quanta.Actor.ServerTest do
     test "handle_message receives JSON snapshot and returns crdt_ops" do
       {_actor_id, pid} = start_crdt_actor("crdt-cmd-1")
 
-      # Send a text_insert command
       Server.send_message(pid, make_envelope("text_insert:5: world"))
       {:ok, state_json} = Server.get_state(pid)
       state = Jason.decode!(state_json)
@@ -593,7 +587,6 @@ defmodule Quanta.Actor.ServerTest do
       {_actor_id, pid} = start_crdt_actor("crdt-cmd-get")
 
       {:ok, reply} = Server.send_message(pid, make_envelope("get"))
-      # The reply is the JSON snapshot passed to handle_message
       state = Jason.decode!(reply)
       assert state["text"] == "hello"
     end
@@ -601,8 +594,6 @@ defmodule Quanta.Actor.ServerTest do
     test "returned state from handle_message is ignored for CRDT actors" do
       {_actor_id, pid} = start_crdt_actor("crdt-cmd-ignore")
 
-      # Send a command — handle_message returns {state, effects}
-      # but state is ignored for CRDT actors, only effects matter
       Server.send_message(pid, make_envelope("map_set:key:value"))
       {:ok, state_json} = Server.get_state(pid)
       state = Jason.decode!(state_json)
@@ -644,10 +635,8 @@ defmodule Quanta.Actor.ServerTest do
       opts = [actor_id: actor_id, module: CrdtDoc]
       {:ok, pid} = DynSup.start_actor(actor_id, child_spec: {Server, opts})
 
-      # The init inserts "hello" which exceeds 1 byte max — should warn but not crash
       assert Process.alive?(pid)
 
-      # Send more data — should still warn but not crash
       Server.send_message(pid, make_envelope("text_insert:5: more data"))
       assert Process.alive?(pid)
     end

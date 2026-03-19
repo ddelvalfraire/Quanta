@@ -11,6 +11,7 @@ defmodule Quanta.Effect do
           | {:map_delete, String.t(), String.t()}
           | {:list_insert, String.t(), non_neg_integer(), term()}
           | {:list_delete, String.t(), non_neg_integer(), non_neg_integer()}
+          | {:tree_move, String.t(), String.t(), String.t() | nil}
 
   @type t ::
           {:reply, binary()}

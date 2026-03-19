@@ -8,7 +8,7 @@ defmodule Quanta.Actor.Server do
 
   use GenServer
 
-  alias Quanta.Actor.{EphemeralStore, EffectExecutor, ManifestRegistry, Registry}
+  alias Quanta.Actor.{CrdtOps, EphemeralStore, EffectExecutor, ManifestRegistry, Registry}
   alias Quanta.Envelope
   alias Quanta.Nifs.LoroEngine
 
@@ -18,6 +18,7 @@ defmodule Quanta.Actor.Server do
   @mailbox_shed_threshold 5_000
   @mailbox_critical_threshold 10_000
   @init_attempts_table :quanta_actor_init_attempts
+  @ephemeral_ttl_ms 30_000
 
   defstruct [
     :actor_id,
@@ -150,10 +151,7 @@ defmodule Quanta.Actor.Server do
   def handle_call(:get_state, _from, state) do
     reply =
       if state.loro_doc do
-        case LoroEngine.doc_get_value(state.loro_doc) do
-          {:ok, value} -> {:ok, Jason.encode!(value)}
-          {:error, reason} -> {:error, reason}
-        end
+        CrdtOps.encode_value_as_json(state.loro_doc)
       else
         {:ok, state.state_data}
       end
@@ -193,7 +191,7 @@ defmodule Quanta.Actor.Server do
       :ok ->
         {:ok, new_version} = LoroEngine.doc_version(state.loro_doc)
 
-        broadcast_crdt_update(state, delta_bytes, peer_id)
+        CrdtOps.broadcast_update(state.actor_id, delta_bytes, peer_id)
 
         state = %{
           state
@@ -201,7 +199,12 @@ defmodule Quanta.Actor.Server do
             events_since_snapshot: state.events_since_snapshot + 1
         }
 
-        check_crdt_state_size(state)
+        CrdtOps.check_state_size(
+          state.loro_doc,
+          state.manifest.state.max_size_bytes,
+          state.actor_id
+        )
+
         {:noreply, reset_idle_timer(state)}
 
       {:error, reason} ->
@@ -331,7 +334,7 @@ defmodule Quanta.Actor.Server do
 
   defp activate_crdt(state) do
     {:ok, doc} = LoroEngine.doc_new()
-    {:ok, tid} = EphemeralStore.new(30_000)
+    {:ok, tid} = EphemeralStore.new(@ephemeral_ttl_ms)
     {:ok, version} = LoroEngine.doc_version(doc)
 
     state = %{
@@ -367,12 +370,12 @@ defmodule Quanta.Actor.Server do
 
   defp dispatch_crdt_message(state, envelope, meta) do
     snapshot_json =
-      case LoroEngine.doc_get_value(state.loro_doc) do
-        {:ok, value} -> Jason.encode!(value)
+      case CrdtOps.encode_value_as_json(state.loro_doc) do
+        {:ok, json} -> json
         {:error, _} -> "{}"
       end
 
-    {_ignored_state, effects} = state.module.handle_message(snapshot_json, envelope)
+    {_state, effects} = state.module.handle_message(snapshot_json, envelope)
     state = %{state | message_count: state.message_count + 1}
     result = process_effects(effects, state, envelope)
     {result, meta}
@@ -405,10 +408,7 @@ defmodule Quanta.Actor.Server do
         state
 
       {:crdt_ops, ops}, state when is_list(ops) and state.loro_doc != nil ->
-        Enum.each(ops, fn op ->
-          apply_crdt_op_init(state.loro_doc, op)
-        end)
-
+        CrdtOps.apply_ops(state.loro_doc, ops)
         {:ok, new_version} = LoroEngine.doc_version(state.loro_doc)
         %{state | last_version: new_version, events_since_snapshot: state.events_since_snapshot + 1}
 
@@ -416,17 +416,6 @@ defmodule Quanta.Actor.Server do
         state
     end)
   end
-
-  defp apply_crdt_op_init(doc, {:text_insert, cid, pos, text}),
-    do: LoroEngine.text_insert(doc, cid, pos, text)
-
-  defp apply_crdt_op_init(doc, {:map_set, cid, key, value}),
-    do: LoroEngine.map_set(doc, cid, key, value)
-
-  defp apply_crdt_op_init(doc, {:list_insert, cid, index, value}),
-    do: LoroEngine.list_insert(doc, cid, index, value)
-
-  defp apply_crdt_op_init(_doc, _op), do: :ok
 
   defp process_effects(effects, state, envelope) do
     context = %{
@@ -520,40 +509,6 @@ defmodule Quanta.Actor.Server do
   defp cleanup_crdt(state) do
     if state.ephemeral_store do
       EphemeralStore.destroy(state.ephemeral_store)
-    end
-  end
-
-  @doc false
-  def broadcast_crdt_update(state, delta_bytes, peer_id) do
-    group = {:crdt, state.actor_id}
-
-    members =
-      try do
-        :pg.get_members(Quanta.Actor.CrdtPubSub, group)
-      catch
-        :exit, _ -> []
-      end
-
-    msg = {:crdt_delta, state.actor_id, delta_bytes, peer_id}
-
-    for pid <- members, pid != self() do
-      send(pid, msg)
-    end
-
-    :ok
-  end
-
-  defp check_crdt_state_size(state) do
-    max = state.manifest.state.max_size_bytes
-
-    case LoroEngine.doc_state_size(state.loro_doc) do
-      {:ok, size} when size > max ->
-        Logger.warning(
-          "CRDT state size #{size} exceeds max #{max} for #{inspect(state.actor_id)}"
-        )
-
-      _ ->
-        :ok
     end
   end
 

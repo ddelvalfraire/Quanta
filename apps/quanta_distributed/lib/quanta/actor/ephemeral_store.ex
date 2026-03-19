@@ -10,7 +10,7 @@ defmodule Quanta.Actor.EphemeralStore do
 
   @spec new(pos_integer()) :: {:ok, tid()}
   def new(ttl_ms) when is_integer(ttl_ms) and ttl_ms > 0 do
-    tid = :ets.new(:ephemeral_store, [:set, :public])
+    tid = :ets.new(:ephemeral_store, [:set, :protected])
     :ets.insert(tid, {:__ttl_ms__, ttl_ms})
     {:ok, tid}
   end
