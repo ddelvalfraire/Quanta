@@ -2,6 +2,8 @@ import Config
 
 config :logger, level: :warning
 
+config :libcluster, topologies: []
+
 config :quanta_web, Quanta.Web.Endpoint,
   secret_key_base: String.duplicate("a", 64)
 

@@ -8,6 +8,12 @@ defmodule Quanta.SupervisorTest do
         |> Supervisor.which_children()
         |> Map.new(fn {id, pid, _type, _modules} -> {id, pid} end)
 
+      assert is_pid(children[Cluster.Supervisor])
+      assert Process.alive?(children[Cluster.Supervisor])
+
+      assert is_pid(children[Quanta.Cluster.Topology])
+      assert Process.alive?(children[Quanta.Cluster.Topology])
+
       assert is_pid(children[Quanta.HLC.Server])
       assert Process.alive?(children[Quanta.HLC.Server])
 

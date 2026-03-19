@@ -12,6 +12,22 @@ end
 
 config :logger, level: String.to_existing_atom(log_level)
 
+# --- Cluster ---
+
+if config_env() == :prod do
+  config :libcluster,
+    topologies: [
+      k8s: [
+        strategy: Cluster.Strategy.Kubernetes.DNS,
+        config: [
+          service: System.get_env("QUANTA_K8S_SERVICE", "quanta-headless"),
+          application_name: System.get_env("QUANTA_APP_NAME", "quanta"),
+          polling_interval: 5_000
+        ]
+      ]
+    ]
+end
+
 # --- Distributed runtime ---
 
 config :quanta_distributed,
