@@ -14,6 +14,24 @@ import (
 )
 
 // ---------------------------------------------------------------------------
+// Standardized iteration counts
+// ---------------------------------------------------------------------------
+
+const (
+	iterPingPong1k    = 200
+	iterPingPong10k   = 100
+	iterFanOut10      = 200
+	iterFanOut100     = 100
+	iterFanOut1000    = 50
+	iterSkynet        = 10
+	iterColdActivation = 1000
+	iterWarmMessage   = 1000
+
+	warmupStandard = 20
+	warmupSkynet   = 5
+)
+
+// ---------------------------------------------------------------------------
 // Message types
 // ---------------------------------------------------------------------------
 
@@ -97,10 +115,10 @@ func percentile(sorted []float64, pct float64) float64 {
 // Benchmark: Ping-Pong
 // ---------------------------------------------------------------------------
 
-func benchPingPong(system *actor.ActorSystem, roundTrips int, iterations int) stats {
-	durations := make([]time.Duration, iterations)
+func benchPingPong(system *actor.ActorSystem, roundTrips int, warmup int, iterations int) stats {
+	allDurations := make([]time.Duration, 0, warmup+iterations)
 
-	for i := 0; i < iterations; i++ {
+	for i := 0; i < warmup+iterations; i++ {
 		var wg sync.WaitGroup
 		wg.Add(1)
 
@@ -134,23 +152,26 @@ func benchPingPong(system *actor.ActorSystem, roundTrips int, iterations int) st
 		start := time.Now()
 		pingerPID := system.Root.Spawn(pingerProps)
 		wg.Wait()
-		durations[i] = time.Since(start)
+		elapsed := time.Since(start)
 
 		_ = system.Root.StopFuture(pingerPID).Wait()
 		_ = system.Root.StopFuture(pongerPID).Wait()
+
+		allDurations = append(allDurations, elapsed)
 	}
 
-	return computeStats(durations)
+	// Discard warmup iterations
+	return computeStats(allDurations[warmup:])
 }
 
 // ---------------------------------------------------------------------------
 // Benchmark: Fan-Out
 // ---------------------------------------------------------------------------
 
-func benchFanOut(system *actor.ActorSystem, fanSize int, iterations int) stats {
-	durations := make([]time.Duration, iterations)
+func benchFanOut(system *actor.ActorSystem, fanSize int, warmup int, iterations int) stats {
+	allDurations := make([]time.Duration, 0, warmup+iterations)
 
-	for i := 0; i < iterations; i++ {
+	for i := 0; i < warmup+iterations; i++ {
 		var wg sync.WaitGroup
 		wg.Add(1)
 
@@ -175,18 +196,18 @@ func benchFanOut(system *actor.ActorSystem, fanSize int, iterations int) stats {
 
 		collectorPID := system.Root.Spawn(collectorProps)
 
+		// Worker spawning is inside the timed section
+		start := time.Now()
 		workers := make([]*actor.PID, fanSize)
 		for j := 0; j < fanSize; j++ {
 			workers[j] = system.Root.Spawn(workerProps)
 		}
-
-		start := time.Now()
 		msg := &broadcast{replyTo: collectorPID}
 		for _, w := range workers {
 			system.Root.Send(w, msg)
 		}
 		wg.Wait()
-		durations[i] = time.Since(start)
+		elapsed := time.Since(start)
 
 		// Cleanup
 		atomic.StoreInt64(&ackCount, 0)
@@ -194,9 +215,12 @@ func benchFanOut(system *actor.ActorSystem, fanSize int, iterations int) stats {
 		for _, w := range workers {
 			_ = system.Root.StopFuture(w).Wait()
 		}
+
+		allDurations = append(allDurations, elapsed)
 	}
 
-	return computeStats(durations)
+	// Discard warmup iterations
+	return computeStats(allDurations[warmup:])
 }
 
 // ---------------------------------------------------------------------------
@@ -242,10 +266,10 @@ func (s *skynetActorImpl) Receive(c actor.Context) {
 	}
 }
 
-func benchSkynet(system *actor.ActorSystem, iterations int) stats {
-	durations := make([]time.Duration, iterations)
+func benchSkynet(system *actor.ActorSystem, warmup int, iterations int) stats {
+	allDurations := make([]time.Duration, 0, warmup+iterations)
 
-	for i := 0; i < iterations; i++ {
+	for i := 0; i < warmup+iterations; i++ {
 		rootProps := actor.PropsFromProducer(func() actor.Actor {
 			return &skynetActorImpl{system: system}
 		})
@@ -254,7 +278,7 @@ func benchSkynet(system *actor.ActorSystem, iterations int) stats {
 		rootPID := system.Root.Spawn(rootProps)
 		future := system.Root.RequestFuture(rootPID, &skynetMsg{num: 0, size: 1_000_000}, 30*time.Second)
 		result, err := future.Result()
-		durations[i] = time.Since(start)
+		elapsed := time.Since(start)
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skynet iteration %d error: %v\n", i, err)
@@ -267,19 +291,22 @@ func benchSkynet(system *actor.ActorSystem, iterations int) stats {
 
 		_ = system.Root.StopFuture(rootPID).Wait()
 		time.Sleep(10 * time.Millisecond)
+
+		allDurations = append(allDurations, elapsed)
 	}
 
-	return computeStats(durations)
+	// Discard warmup iterations
+	return computeStats(allDurations[warmup:])
 }
 
 // ---------------------------------------------------------------------------
 // Benchmark: Cold Activation
 // ---------------------------------------------------------------------------
 
-func benchColdActivation(system *actor.ActorSystem, iterations int) stats {
-	durations := make([]time.Duration, iterations)
+func benchColdActivation(system *actor.ActorSystem, warmup int, iterations int) stats {
+	allDurations := make([]time.Duration, 0, warmup+iterations)
 
-	for i := 0; i < iterations; i++ {
+	for i := 0; i < warmup+iterations; i++ {
 		props := actor.PropsFromFunc(func(c actor.Context) {
 			switch c.Message().(type) {
 			case *warmPing:
@@ -291,23 +318,26 @@ func benchColdActivation(system *actor.ActorSystem, iterations int) stats {
 		pid := system.Root.Spawn(props)
 		future := system.Root.RequestFuture(pid, &warmPing{}, 5*time.Second)
 		_, err := future.Result()
-		durations[i] = time.Since(start)
+		elapsed := time.Since(start)
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cold activation iteration %d error: %v\n", i, err)
 		}
 
 		_ = system.Root.StopFuture(pid).Wait()
+
+		allDurations = append(allDurations, elapsed)
 	}
 
-	return computeStats(durations)
+	// Discard warmup iterations
+	return computeStats(allDurations[warmup:])
 }
 
 // ---------------------------------------------------------------------------
 // Benchmark: Warm Message
 // ---------------------------------------------------------------------------
 
-func benchWarmMessage(system *actor.ActorSystem, iterations int) stats {
+func benchWarmMessage(system *actor.ActorSystem, warmup int, iterations int) stats {
 	props := actor.PropsFromFunc(func(c actor.Context) {
 		switch c.Message().(type) {
 		case *warmPing:
@@ -323,21 +353,24 @@ func benchWarmMessage(system *actor.ActorSystem, iterations int) stats {
 		f.Result()
 	}
 
-	durations := make([]time.Duration, iterations)
-	for i := 0; i < iterations; i++ {
+	allDurations := make([]time.Duration, 0, warmup+iterations)
+	for i := 0; i < warmup+iterations; i++ {
 		start := time.Now()
 		future := system.Root.RequestFuture(pid, &warmPing{}, 5*time.Second)
 		_, err := future.Result()
-		durations[i] = time.Since(start)
+		elapsed := time.Since(start)
 
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warm message iteration %d error: %v\n", i, err)
 		}
+
+		allDurations = append(allDurations, elapsed)
 	}
 
 	_ = system.Root.StopFuture(pid).Wait()
 
-	return computeStats(durations)
+	// Discard warmup iterations
+	return computeStats(allDurations[warmup:])
 }
 
 // ---------------------------------------------------------------------------
@@ -350,28 +383,28 @@ func main() {
 	results := make(map[string]stats)
 
 	fmt.Fprintln(os.Stderr, "Running: ping_pong_1k")
-	results["ping_pong_1k"] = benchPingPong(system, 1_000, 1000)
+	results["ping_pong_1k"] = benchPingPong(system, 1_000, warmupStandard, iterPingPong1k)
 
 	fmt.Fprintln(os.Stderr, "Running: ping_pong_10k")
-	results["ping_pong_10k"] = benchPingPong(system, 10_000, 100)
+	results["ping_pong_10k"] = benchPingPong(system, 10_000, warmupStandard, iterPingPong10k)
 
 	fmt.Fprintln(os.Stderr, "Running: fan_out_10")
-	results["fan_out_10"] = benchFanOut(system, 10, 1000)
+	results["fan_out_10"] = benchFanOut(system, 10, warmupStandard, iterFanOut10)
 
 	fmt.Fprintln(os.Stderr, "Running: fan_out_100")
-	results["fan_out_100"] = benchFanOut(system, 100, 500)
+	results["fan_out_100"] = benchFanOut(system, 100, warmupStandard, iterFanOut100)
 
 	fmt.Fprintln(os.Stderr, "Running: fan_out_1000")
-	results["fan_out_1000"] = benchFanOut(system, 1000, 100)
+	results["fan_out_1000"] = benchFanOut(system, 1000, warmupStandard, iterFanOut1000)
 
-	fmt.Fprintln(os.Stderr, "Running: skynet")
-	results["skynet"] = benchSkynet(system, 10)
+	fmt.Fprintln(os.Stderr, "Running: skynet_1m")
+	results["skynet_1m"] = benchSkynet(system, warmupSkynet, iterSkynet)
 
 	fmt.Fprintln(os.Stderr, "Running: cold_activation")
-	results["cold_activation"] = benchColdActivation(system, 1000)
+	results["cold_activation"] = benchColdActivation(system, warmupStandard, iterColdActivation)
 
 	fmt.Fprintln(os.Stderr, "Running: warm_message")
-	results["warm_message"] = benchWarmMessage(system, 1000)
+	results["warm_message"] = benchWarmMessage(system, warmupStandard, iterWarmMessage)
 
 	output := map[string]interface{}{
 		"framework":  "protoactor-go",

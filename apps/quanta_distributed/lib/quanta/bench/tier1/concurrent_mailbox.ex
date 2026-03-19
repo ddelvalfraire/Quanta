@@ -35,7 +35,7 @@ defmodule Quanta.Bench.Tier1.ConcurrentMailbox do
 
     # Producers: each sends msgs_per_producer messages
     for _ <- 1..producers do
-      spawn(fn ->
+      spawn_link(fn ->
         for i <- 1..msgs_per_producer do
           send(consumer, {:msg, i})
         end

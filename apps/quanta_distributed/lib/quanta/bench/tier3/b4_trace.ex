@@ -11,7 +11,7 @@ defmodule Quanta.Bench.Tier3.B4Trace do
         {:ok, doc} = LoroEngine.doc_new()
 
         # 80K inserts + 20K map sets to simulate mixed editing
-        for i <- 0..79_999 do
+        for _i <- 0..79_999 do
           :ok = LoroEngine.text_insert(doc, "text", 0, "c")
         end
 

@@ -33,8 +33,8 @@ defmodule Quanta.Bench.Tier3.DeltaMerge do
         {:ok, a} = LoroEngine.doc_new_with_peer_id(100)
         {:ok, b} = LoroEngine.doc_new_with_peer_id(200)
 
-        for i <- 0..499, do: :ok = LoroEngine.text_insert(a, "text", 0, "a")
-        for i <- 0..499, do: :ok = LoroEngine.text_insert(b, "text", 0, "b")
+        for _i <- 0..499, do: :ok = LoroEngine.text_insert(a, "text", 0, "a")
+        for _i <- 0..499, do: :ok = LoroEngine.text_insert(b, "text", 0, "b")
 
         {:ok, snap_a} = LoroEngine.doc_export_snapshot(a)
         {:ok, snap_b} = LoroEngine.doc_export_snapshot(b)

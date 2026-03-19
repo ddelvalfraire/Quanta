@@ -48,8 +48,8 @@ object FanOut {
       val coordinator = system.actorOf(Props[Coordinator]())
       coordinator ! Go(workers, latch)
       latch.await()
-      system.stop(coordinator)
-      workers.foreach(system.stop)
+      // Actors are cleaned up when the ActorSystem shuts down.
+      // Stopping inside the timed block would inflate measurements.
     }
     BenchUtils.computeStats(times)
   }

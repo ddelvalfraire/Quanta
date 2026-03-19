@@ -14,7 +14,9 @@ defmodule Quanta.Bench.Tier2.WarmMessage do
   end
 
   defp scenarios do
-    actor = spawn_link(fn -> counter_loop(0) end)
+    # Use bare spawn (no link) so the actor survives if the calling process
+    # (scenarios/0) exits before benchmarks complete.
+    actor = spawn(fn -> counter_loop(0) end)
 
     %{
       "warm_single_message" => fn ->

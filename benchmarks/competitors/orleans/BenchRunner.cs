@@ -9,49 +9,63 @@ public static class BenchRunner
 {
     private static readonly double TicksPerMicrosecond = Stopwatch.Frequency / 1_000_000.0;
 
+    private const int WarmupStandard = 20;
+    private const int WarmupSkynet = 5;
+
     public static async Task RunAll(IGrainFactory grainFactory, TextWriter output)
     {
         var results = new Dictionary<string, BenchResult>();
 
         // --- Ping-pong 1K ---
-        results["ping_pong_1k"] = await RunBench("ping_pong_1k", 50, async () =>
+        results["ping_pong_1k"] = await RunBench("ping_pong_1k", WarmupStandard, 200, async () =>
         {
             var a = grainFactory.GetGrain<IPingPongGrain>(1);
             await a.Ping(1_000, /*partnerKey=*/ 2);
         });
 
         // --- Ping-pong 10K ---
-        results["ping_pong_10k"] = await RunBench("ping_pong_10k", 20, async () =>
+        results["ping_pong_10k"] = await RunBench("ping_pong_10k", WarmupStandard, 100, async () =>
         {
             var a = grainFactory.GetGrain<IPingPongGrain>(3);
             await a.Ping(10_000, /*partnerKey=*/ 4);
         });
 
         // --- Fan-out 10 ---
-        results["fan_out_10"] = await RunBench("fan_out_10", 100, async () =>
+        results["fan_out_10"] = await RunBench("fan_out_10", WarmupStandard, 200, async () =>
         {
             var g = grainFactory.GetGrain<IFanOutGrain>(10);
             await g.Broadcast(10);
         });
 
         // --- Fan-out 100 ---
-        results["fan_out_100"] = await RunBench("fan_out_100", 50, async () =>
+        results["fan_out_100"] = await RunBench("fan_out_100", WarmupStandard, 100, async () =>
         {
             var g = grainFactory.GetGrain<IFanOutGrain>(100);
             await g.Broadcast(100);
         });
 
         // --- Fan-out 1000 ---
-        results["fan_out_1000"] = await RunBench("fan_out_1000", 20, async () =>
+        results["fan_out_1000"] = await RunBench("fan_out_1000", WarmupStandard, 50, async () =>
         {
             var g = grainFactory.GetGrain<IFanOutGrain>(1000);
             await g.Broadcast(1_000);
         });
 
-        // --- Skynet 100K ---
-        results["skynet_100k"] = await RunBench("skynet_100k", 3, async () =>
+        // --- Skynet 1M ---
+        results["skynet_1m"] = await RunBench("skynet_1m", WarmupSkynet, 10, async () =>
         {
             var root = grainFactory.GetGrain<ISkynetGrain>(1);
+            var result = await root.Compute(0, 1_000_000, 10);
+            // Expected: sum of 0..999999 = 499999500000
+            if (result != 499_999_500_000L)
+                Console.Error.WriteLine($"[WARN] skynet_1m: expected 499999500000, got {result}");
+        });
+
+        // --- Skynet 100K (kept for comparison) ---
+        results["skynet_100k"] = await RunBench("skynet_100k", WarmupSkynet, 10, async () =>
+        {
+            // Use a different root key to avoid grain state collision with skynet_1m
+            var root = grainFactory.GetGrain<ISkynetGrain>(2);
             var result = await root.Compute(0, 100_000, 10);
             // Expected: sum of 0..99999 = 4999950000
             if (result != 4_999_950_000L)
@@ -59,10 +73,10 @@ public static class BenchRunner
         });
 
         // --- Cold activation ---
-        results["cold_activation"] = await RunColdActivation(grainFactory, 200);
+        results["cold_activation"] = await RunColdActivation(grainFactory, WarmupStandard, 1000);
 
         // --- Warm message ---
-        results["warm_message"] = await RunWarmMessage(grainFactory, 1000);
+        results["warm_message"] = await RunWarmMessage(grainFactory, WarmupStandard, 1000);
 
         var envelope = new BenchEnvelope
         {
@@ -74,11 +88,12 @@ public static class BenchRunner
         await output.WriteLineAsync(json);
     }
 
-    private static async Task<BenchResult> RunBench(string name, int iterations, Func<Task> action)
+    private static async Task<BenchResult> RunBench(string name, int warmup, int iterations, Func<Task> action)
     {
-        Console.Error.WriteLine($"[bench] {name}: warming up...");
+        Console.Error.WriteLine($"[bench] {name}: warming up ({warmup} iterations)...");
         // Warmup
-        await action();
+        for (int w = 0; w < warmup; w++)
+            await action();
 
         Console.Error.WriteLine($"[bench] {name}: running {iterations} iterations...");
         var timings = new double[iterations];
@@ -95,14 +110,24 @@ public static class BenchRunner
         return ComputeStats(iterations, timings);
     }
 
-    private static async Task<BenchResult> RunColdActivation(IGrainFactory grainFactory, int iterations)
+    private static async Task<BenchResult> RunColdActivation(IGrainFactory grainFactory, int warmup, int iterations)
     {
         const string name = "cold_activation";
-        Console.Error.WriteLine($"[bench] {name}: running {iterations} iterations...");
+        Console.Error.WriteLine($"[bench] {name}: warming up ({warmup} iterations)...");
 
+        var rng = new Random(42);
+
+        // Warmup
+        for (int w = 0; w < warmup; w++)
+        {
+            long warmKey = rng.NextInt64(1_000_000_000L, long.MaxValue);
+            var warmGrain = grainFactory.GetGrain<ICounterGrain>(warmKey);
+            await warmGrain.Increment();
+        }
+
+        Console.Error.WriteLine($"[bench] {name}: running {iterations} iterations...");
         var timings = new double[iterations];
         var sw = new Stopwatch();
-        var rng = new Random(42);
 
         for (int i = 0; i < iterations; i++)
         {
@@ -118,14 +143,18 @@ public static class BenchRunner
         return ComputeStats(iterations, timings);
     }
 
-    private static async Task<BenchResult> RunWarmMessage(IGrainFactory grainFactory, int iterations)
+    private static async Task<BenchResult> RunWarmMessage(IGrainFactory grainFactory, int warmup, int iterations)
     {
         const string name = "warm_message";
-        Console.Error.WriteLine($"[bench] {name}: warming up...");
+        Console.Error.WriteLine($"[bench] {name}: warming up ({warmup} iterations)...");
 
         // Pre-activate the grain
         var grain = grainFactory.GetGrain<ICounterGrain>(999_999);
         await grain.Increment();
+
+        // Warmup
+        for (int w = 0; w < warmup; w++)
+            await grain.Increment();
 
         Console.Error.WriteLine($"[bench] {name}: running {iterations} iterations...");
         var timings = new double[iterations];

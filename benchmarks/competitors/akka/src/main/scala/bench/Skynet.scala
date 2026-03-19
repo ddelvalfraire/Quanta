@@ -59,7 +59,8 @@ object Skynet {
       val root = system.actorOf(Props[SkynetActor]())
       root ! Start(collector, 0L, 1000000L)
       latch.await()
-      system.stop(collector)
+      // Collector is cleaned up when the ActorSystem shuts down.
+      // Stopping inside the timed block would inflate measurements.
     }
 
     // Sanity check: sum of 0..999999 = 499999500000

@@ -13,11 +13,11 @@ defmodule Quanta.Bench.Tier4.CrdtVsOt do
         {:ok, a} = LoroEngine.doc_new_with_peer_id(1)
         {:ok, b} = LoroEngine.doc_new_with_peer_id(2)
 
-        for i <- 0..div(@edit_count, 2) - 1 do
+        for _i <- 0..div(@edit_count, 2) - 1 do
           :ok = LoroEngine.text_insert(a, "text", 0, "a")
         end
 
-        for i <- 0..div(@edit_count, 2) - 1 do
+        for _i <- 0..div(@edit_count, 2) - 1 do
           :ok = LoroEngine.text_insert(b, "text", 0, "b")
         end
 
@@ -32,13 +32,13 @@ defmodule Quanta.Bench.Tier4.CrdtVsOt do
         true = val_a == val_b
       end,
       "ot_simulated_transform" => fn ->
-        # Simulate OT: sequential transform of @edit_count operations
-        # Each transform is an O(1) list operation (best-case OT)
-        doc = :array.new(@edit_count, default: 0)
-
-        Enum.reduce(0..(@edit_count - 1), doc, fn i, acc ->
-          :array.set(i, ?a + rem(i, 26), acc)
+        # Simulate OT: sequential transform of @edit_count operations.
+        # Uses iodata accumulator with O(1) appends — a fairer OT baseline
+        # than :array which has O(log n) access and immutable overhead.
+        Enum.reduce(0..(@edit_count - 1), [], fn i, acc ->
+          [acc | [?a + rem(i, 26)]]
         end)
+        |> IO.iodata_to_binary()
       end,
       "crdt_doc_size_overhead" => fn ->
         {:ok, doc} = LoroEngine.doc_new()

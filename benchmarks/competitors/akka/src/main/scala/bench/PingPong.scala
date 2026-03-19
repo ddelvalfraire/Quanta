@@ -45,8 +45,8 @@ object PingPong {
       val ping = system.actorOf(Props[PingActor]())
       ping ! Start(roundTrips, pong, latch)
       latch.await()
-      system.stop(ping)
-      system.stop(pong)
+      // Actors are cleaned up when the ActorSystem shuts down.
+      // Stopping inside the timed block would inflate measurements.
     }
     BenchUtils.computeStats(times)
   }

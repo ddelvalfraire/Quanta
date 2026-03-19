@@ -18,7 +18,7 @@ defmodule Quanta.Bench.Tier4.SteadyState500k do
         # Spawn actors, register in ETS, then round-robin message them
         reg = :ets.new(:bench_ss, [:set, :public])
 
-        pids =
+        _pids =
           for i <- 1..10_000 do
             pid =
               spawn_link(fn ->
