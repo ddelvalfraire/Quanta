@@ -1,0 +1,38 @@
+# Competitor framework services for Tier 4 differentiator benchmarks.
+# Usage: docker compose -f docker-compose.bench.yml up -d
+#
+# Each service runs a simple request/response workload that mirrors the
+# Quanta benchmark scenarios (mixed R/W, steady state, activation storm)
+# so results can be compared apples-to-apples.
+services:
+  # TODO: Build or pull a JVM image with the Akka benchmark harness
+  # TODO: Expose HTTP endpoint for triggering benchmark runs
+  akka:
+    image: openjdk:21-slim
+    command: ["echo", "Akka benchmark harness — not yet implemented"]
+    # ports:
+    #   - "8081:8080"
+    # volumes:
+    #   - ./benchmarks/competitors/akka:/app
+    # environment:
+    #   JAVA_OPTS: "-Xmx2g"
+
+  # TODO: Build or pull a .NET image with the Orleans benchmark harness
+  # TODO: Expose HTTP endpoint for triggering benchmark runs
+  orleans:
+    image: mcr.microsoft.com/dotnet/runtime:8.0
+    command: ["echo", "Orleans benchmark harness — not yet implemented"]
+    # ports:
+    #   - "8082:8080"
+    # volumes:
+    #   - ./benchmarks/competitors/orleans:/app
+
+  # TODO: Build or pull a Go image with the Proto.Actor benchmark harness
+  # TODO: Expose HTTP endpoint for triggering benchmark runs
+  proto-actor:
+    image: golang:1.22-alpine
+    command: ["echo", "Proto.Actor benchmark harness — not yet implemented"]
+    # ports:
+    #   - "8083:8080"
+    # volumes:
+    #   - ./benchmarks/competitors/protoactor:/app
