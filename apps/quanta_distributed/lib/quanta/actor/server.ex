@@ -34,7 +34,8 @@ defmodule Quanta.Actor.Server do
     events_since_snapshot: 0,
     named_timers: %{},
     pending_replies: %{},
-    message_count: 0
+    message_count: 0,
+    subscribers: %{}
   ]
 
   @type t :: %__MODULE__{
@@ -51,7 +52,8 @@ defmodule Quanta.Actor.Server do
           events_since_snapshot: non_neg_integer(),
           named_timers: %{String.t() => map()},
           pending_replies: %{String.t() => {GenServer.from(), reference()}},
-          message_count: non_neg_integer()
+          message_count: non_neg_integer(),
+          subscribers: %{pid() => {String.t(), reference()}}
         }
 
   def child_spec(opts) do
@@ -90,6 +92,21 @@ defmodule Quanta.Actor.Server do
   @spec force_passivate(pid()) :: :ok
   def force_passivate(pid) do
     GenServer.call(pid, :force_passivate)
+  end
+
+  @spec get_crdt_snapshot(pid()) :: {:ok, binary()} | {:error, :not_crdt | String.t()}
+  def get_crdt_snapshot(pid) do
+    GenServer.call(pid, :get_crdt_snapshot)
+  end
+
+  @spec subscribe(pid(), pid(), String.t()) :: :ok
+  def subscribe(pid, channel_pid, user_id) do
+    GenServer.call(pid, {:subscribe, channel_pid, user_id})
+  end
+
+  @spec unsubscribe(pid(), pid()) :: :ok
+  def unsubscribe(pid, channel_pid) do
+    GenServer.call(pid, {:unsubscribe, channel_pid})
   end
 
   @impl true
@@ -186,12 +203,41 @@ defmodule Quanta.Actor.Server do
   end
 
   @impl true
+  def handle_call(:get_crdt_snapshot, _from, state) do
+    if state.loro_doc do
+      case LoroEngine.doc_export_snapshot(state.loro_doc) do
+        {:ok, snapshot} -> {:reply, {:ok, snapshot}, state}
+        {:error, reason} -> {:reply, {:error, reason}, state}
+      end
+    else
+      {:reply, {:error, :not_crdt}, state}
+    end
+  end
+
+  @impl true
+  def handle_call({:subscribe, channel_pid, user_id}, _from, state) do
+    ref = Process.monitor(channel_pid)
+    subscribers = Map.put(state.subscribers, channel_pid, {user_id, ref})
+    state = %{state | subscribers: subscribers}
+    state = reset_idle_timer(state)
+    {:reply, :ok, state}
+  end
+
+  @impl true
+  def handle_call({:unsubscribe, channel_pid}, _from, state) do
+    state = remove_subscriber(state, channel_pid)
+    state = reset_idle_timer(state)
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_cast({:crdt_delta, delta_bytes, peer_id}, state) do
     case LoroEngine.doc_apply_delta(state.loro_doc, delta_bytes) do
       :ok ->
         {:ok, new_version} = LoroEngine.doc_version(state.loro_doc)
 
         CrdtOps.broadcast_update(state.actor_id, delta_bytes, peer_id)
+        broadcast_crdt_update(state, delta_bytes, peer_id)
 
         state = %{
           state
@@ -290,6 +336,17 @@ defmodule Quanta.Actor.Server do
   @impl true
   def handle_info({:subscriber_left, _user_id}, state) do
     {:noreply, reset_idle_timer(state)}
+  end
+
+  @impl true
+  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
+    if Map.has_key?(state.subscribers, pid) do
+      state = remove_subscriber(state, pid)
+      state = reset_idle_timer(state)
+      {:noreply, state}
+    else
+      {:noreply, state}
+    end
   end
 
   @impl true
@@ -481,8 +538,12 @@ defmodule Quanta.Actor.Server do
   end
 
   defp schedule_idle_timer(state) do
+    has_subscribers =
+      map_size(state.subscribers) > 0 or
+        Quanta.Actor.SubscriberTracker.any_subscribers?(state.actor_id)
+
     timeout =
-      if Quanta.Actor.SubscriberTracker.any_subscribers?(state.actor_id) do
+      if has_subscribers do
         state.manifest.lifecycle.idle_timeout_ms
       else
         state.manifest.lifecycle.idle_no_subscribers_timeout_ms
@@ -499,6 +560,27 @@ defmodule Quanta.Actor.Server do
     end
 
     schedule_idle_timer(state)
+  end
+
+  defp remove_subscriber(state, channel_pid) do
+    case Map.pop(state.subscribers, channel_pid) do
+      {nil, _} ->
+        state
+
+      {{_user_id, ref}, subscribers} ->
+        Process.demonitor(ref, [:flush])
+        %{state | subscribers: subscribers}
+    end
+  end
+
+  defp broadcast_crdt_update(state, delta_bytes, peer_id) do
+    msg = {:crdt_update, delta_bytes, peer_id}
+
+    for {pid, {_user_id, _ref}} <- state.subscribers do
+      send(pid, msg)
+    end
+
+    :ok
   end
 
   defp call_on_passivate(state) do

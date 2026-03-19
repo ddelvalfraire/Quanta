@@ -2,6 +2,7 @@ defmodule Quanta.Web.ActorSocket do
   use Phoenix.Socket
 
   channel "actor:*", Quanta.Web.ActorChannel
+  channel "crdt:*", Quanta.Web.CrdtChannel
   channel "pubsub:*", Quanta.Web.PubSubChannel
 
   @impl true

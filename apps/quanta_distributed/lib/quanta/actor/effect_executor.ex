@@ -188,6 +188,7 @@ defmodule Quanta.Actor.EffectExecutor do
           {:ok, new_version} = LoroEngine.doc_version(doc)
 
           CrdtOps.broadcast_update(context.actor_id, delta, nil)
+          notify_subscribers(state.subscribers, delta, nil)
 
           new_state = %{
             state
@@ -232,6 +233,16 @@ defmodule Quanta.Actor.EffectExecutor do
     String.to_existing_atom(string)
   rescue
     ArgumentError -> {:error, string}
+  end
+
+  defp notify_subscribers(subscribers, delta_bytes, peer_id) do
+    msg = {:crdt_update, delta_bytes, peer_id}
+
+    for {pid, {_user_id, _ref}} <- subscribers do
+      send(pid, msg)
+    end
+
+    :ok
   end
 
   # TODO: §22.1 requires `:send` via NATS to retry 3x with exponential backoff
