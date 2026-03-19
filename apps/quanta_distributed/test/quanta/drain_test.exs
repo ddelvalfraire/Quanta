@@ -118,7 +118,7 @@ defmodule Quanta.DrainTest do
       assert_received {[:quanta, :drain, :step_started], ^ref, %{}, %{node: _, step: :complete_in_flight}}
       assert_received {[:quanta, :drain, :step_started], ^ref, %{}, %{node: _, step: :ordered_passivation}}
       assert_received {[:quanta, :drain, :step_started], ^ref, %{}, %{node: _, step: :force_stop}}
-      assert_received {[:quanta, :drain, :completed], ^ref, %{duration_ms: _}, %{node: _, remaining: _}}
+      assert_received {[:quanta, :drain, :completed], ^ref, %{duration_ms: _, remaining: _}, %{node: _}}
     end
 
     test "calls broadcast_fn during complete_in_flight" do

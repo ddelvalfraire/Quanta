@@ -22,26 +22,24 @@ defmodule Quanta.Drain do
   @persistent_term_key {__MODULE__, :draining}
   @batch_size 1000
 
+  # Default total drain budget: 80s from start
+  @default_total_drain_budget_ms 80_000
   @default_complete_in_flight_delay_ms 2_000
   @default_ordered_passivation_delay_ms 8_000
-  @default_force_stop_delay_ms 70_000
 
   defstruct [:caller, :started_at, :step, :remaining_pids, :opts]
 
-  @doc "Returns true if the node is currently draining."
   @spec draining?() :: boolean()
   def draining? do
     :persistent_term.get(@persistent_term_key, false)
   end
 
   @doc """
-  Starts the drain process. Returns `{:ok, pid}` or `{:error, reason}`.
-
   ## Options
 
     * `:complete_in_flight_delay_ms` — delay before broadcasting drain (default 2s)
     * `:ordered_passivation_delay_ms` — delay after broadcast before passivation (default 8s)
-    * `:force_stop_delay_ms` — delay from passivation start to force stop (default 70s)
+    * `:force_stop_delay_ms` — absolute deadline from drain start for force stop (default computed as 80s - other delays)
     * `:broadcast_fn` — zero-arity function called during complete_in_flight to notify
       WebSocket clients (default: no-op)
   """
@@ -50,7 +48,6 @@ defmodule Quanta.Drain do
     GenServer.start(__MODULE__, {self(), opts}, name: __MODULE__)
   end
 
-  @doc "Blocks until drain is complete or timeout expires."
   @spec await(timeout()) :: :ok | :timeout
   def await(timeout \\ 95_000) do
     receive do
@@ -129,8 +126,9 @@ defmodule Quanta.Drain do
     state = %{state | step: :passivate_batch, remaining_pids: sorted}
     send(self(), :passivate_batch)
 
-    delay = Keyword.get(state.opts, :force_stop_delay_ms, @default_force_stop_delay_ms)
-    Process.send_after(self(), :force_stop, delay)
+    # Compute force_stop as absolute deadline from drain start
+    force_stop_delay = force_stop_remaining_ms(state)
+    Process.send_after(self(), :force_stop, force_stop_delay)
 
     {:noreply, state}
   end
@@ -178,22 +176,15 @@ defmodule Quanta.Drain do
       safely({:force_stop, pid}, fn -> GenServer.stop(pid, :normal, 5_000) end)
     end)
 
-    close_nats_connections()
+    Quanta.Nats.Core.close_all()
 
     duration_ms = System.monotonic_time(:millisecond) - state.started_at
 
     Quanta.Telemetry.emit(
       [:quanta, :drain, :completed],
-      %{duration_ms: duration_ms},
-      %{node: node(), remaining: length(remaining)}
+      %{duration_ms: duration_ms, remaining: length(remaining)},
+      %{node: node()}
     )
-
-    # Erase flag before notifying caller to avoid race with draining?() checks
-    try do
-      :persistent_term.erase(@persistent_term_key)
-    rescue
-      ArgumentError -> :ok
-    end
 
     send(state.caller, {:drain_complete, __MODULE__})
 
@@ -212,43 +203,16 @@ defmodule Quanta.Drain do
     ArgumentError -> :ok
   end
 
-  # Classification: lower priority number = passivate first
   defp classify_and_sort(pids) do
     pids
-    |> Enum.map(fn pid -> {classify(pid), pid} end)
+    |> Enum.map(fn pid -> {Server.drain_priority(pid), pid} end)
     |> Enum.sort_by(fn {priority, _pid} -> priority end)
   end
 
-  defp classify(pid) do
-    try do
-      case :sys.get_state(pid, 3_000) do
-        %{pending_replies: pr, named_timers: nt, subscribers: subs} ->
-          cond do
-            map_size(pr) > 0 -> 4
-            map_size(nt) > 0 -> 3
-            map_size(subs) > 0 -> 2
-            true -> 1
-          end
-
-        _ ->
-          1
-      end
-    catch
-      :exit, _ -> 0
-    end
-  end
-
-  defp close_nats_connections do
-    pool_size = Quanta.Nats.Core.pool_size()
-
-    for i <- 0..(pool_size - 1) do
-      conn = Quanta.Nats.Core.connection(i)
-
-      case Process.whereis(conn) do
-        nil -> :ok
-        pid -> safely({:stop_nats, i}, fn -> GenServer.stop(pid, :normal, 5_000) end)
-      end
-    end
+  defp force_stop_remaining_ms(state) do
+    elapsed = System.monotonic_time(:millisecond) - state.started_at
+    budget = Keyword.get(state.opts, :force_stop_delay_ms, @default_total_drain_budget_ms)
+    max(0, budget - elapsed)
   end
 
   defp safely(label, fun) do

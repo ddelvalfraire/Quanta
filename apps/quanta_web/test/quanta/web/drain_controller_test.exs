@@ -37,9 +37,9 @@ defmodule Quanta.Web.DrainControllerTest do
     :ok
   end
 
-  describe "GET /api/internal/drain" do
+  describe "POST /api/internal/drain" do
     test "returns 200 with status drained on completion", %{conn: conn} do
-      conn = get(conn, "/api/internal/drain")
+      conn = post(conn, "/api/internal/drain")
       assert json_response(conn, 200) == %{"status" => "drained"}
     end
   end

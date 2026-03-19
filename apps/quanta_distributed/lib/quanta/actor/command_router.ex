@@ -235,8 +235,11 @@ defmodule Quanta.Actor.CommandRouter do
     case Quanta.Cluster.Topology.ring() do
       {:ok, ring} ->
         key = ActorId.to_placement_key(actor_id)
-        {:ok, target} = ExHashRing.Ring.find_node(ring, key)
-        target
+
+        case ExHashRing.Ring.find_node(ring, key) do
+          {:ok, target} -> target
+          {:error, _} -> node()
+        end
 
       {:error, :not_ready} ->
         Logger.debug("Hash ring not ready, routing #{inspect(actor_id)} locally")

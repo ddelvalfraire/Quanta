@@ -64,21 +64,9 @@ defmodule Quanta.Cluster.Topology do
 
   @impl true
   def handle_call(:remove_self, _from, state) do
-    self_node = node()
-
-    if MapSet.member?(state.nodes, self_node) do
-      {:ok, _} = ExHashRing.Ring.remove_node(state.ring, self_node)
-      new_nodes = MapSet.delete(state.nodes, self_node)
-
-      Quanta.Telemetry.emit(
-        [:quanta, :cluster, :node_down],
-        %{count: MapSet.size(new_nodes)},
-        %{node: self_node}
-      )
-
-      {:reply, :ok, %{state | nodes: new_nodes}}
-    else
-      {:reply, :ok, state}
+    case do_remove_node(node(), state) do
+      {:ok, new_state} -> {:reply, :ok, new_state}
+      :noop -> {:reply, :ok, state}
     end
   end
 
@@ -104,21 +92,13 @@ defmodule Quanta.Cluster.Topology do
 
   @impl true
   def handle_info({:nodedown, node, _info}, state) do
-    if MapSet.member?(state.nodes, node) do
-      Logger.info("Node left cluster: #{node}")
-      {:ok, _} = ExHashRing.Ring.remove_node(state.ring, node)
+    case do_remove_node(node, state) do
+      {:ok, new_state} ->
+        Logger.info("Node left cluster: #{node}")
+        {:noreply, new_state}
 
-      new_nodes = MapSet.delete(state.nodes, node)
-
-      Quanta.Telemetry.emit(
-        [:quanta, :cluster, :node_down],
-        %{count: MapSet.size(new_nodes)},
-        %{node: node}
-      )
-
-      {:noreply, %{state | nodes: new_nodes}}
-    else
-      {:noreply, state}
+      :noop ->
+        {:noreply, state}
     end
   end
 
@@ -130,5 +110,22 @@ defmodule Quanta.Cluster.Topology do
     :persistent_term.erase(@persistent_term_key)
   rescue
     ArgumentError -> :ok
+  end
+
+  defp do_remove_node(target_node, state) do
+    if MapSet.member?(state.nodes, target_node) do
+      {:ok, _} = ExHashRing.Ring.remove_node(state.ring, target_node)
+      new_nodes = MapSet.delete(state.nodes, target_node)
+
+      Quanta.Telemetry.emit(
+        [:quanta, :cluster, :node_down],
+        %{count: MapSet.size(new_nodes)},
+        %{node: target_node}
+      )
+
+      {:ok, %{state | nodes: new_nodes}}
+    else
+      :noop
+    end
   end
 end

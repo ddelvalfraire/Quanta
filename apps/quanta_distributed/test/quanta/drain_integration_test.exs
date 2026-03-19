@@ -145,8 +145,8 @@ defmodule Quanta.DrainIntegrationTest do
     assert_received {[:quanta, :drain, :step_started], ^ref, %{},
                      %{node: _, step: :force_stop}}
 
-    assert_received {[:quanta, :drain, :completed], ^ref, %{duration_ms: total_ms},
-                     %{node: _, remaining: _}}
+    assert_received {[:quanta, :drain, :completed], ^ref, %{duration_ms: total_ms, remaining: _},
+                     %{node: _}}
 
     assert total_ms > 0
   end
