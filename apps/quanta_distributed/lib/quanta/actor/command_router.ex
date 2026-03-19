@@ -6,11 +6,9 @@ defmodule Quanta.Actor.CommandRouter do
   load-balanced across nodes. When NATS is unavailable (or in HTTP-only mode),
   `route/3` can be called directly.
 
-  Routing algorithm:
-    1. Look up manifest via ManifestRegistry
-    2. Check rate limits
-    3. Find actor in Syn registry (or activate via DynSup)
-    4. Deliver message via GenServer.call
+  In a multi-node cluster, consults the hash ring to forward activation
+  to the owning node. Duplicate activations from fallback are safe because
+  Syn conflict resolution + NATS KV fencing deduplicate them.
   """
 
   use GenServer
@@ -22,6 +20,8 @@ defmodule Quanta.Actor.CommandRouter do
 
   @nats_subject "quanta.*.cmd.*.*"
   @queue_group "quanta-cmd-router"
+  @default_max_actors 1_000_000
+  @ensure_active_rpc_timeout 10_000
 
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -64,19 +64,21 @@ defmodule Quanta.Actor.CommandRouter do
         {:ok, pid}
 
       :not_found ->
-        max_actors = Application.get_env(:quanta_distributed, :max_actors_per_node, 1_000_000)
+        target = safe_target_node(actor_id)
 
-        if DynSup.count_actors() >= max_actors do
-          {:error, :node_at_capacity}
+        if target == node() do
+          ensure_active_locally(actor_id)
         else
-          with {:manifest, {:ok, manifest}} <-
-                 {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
-               {:resolve, {:ok, module}} <-
-                 {:resolve, Quanta.ModuleResolver.resolve(manifest)} do
-            start_actor(actor_id, module)
-          else
-            {:manifest, :error} -> {:error, :actor_type_not_found}
-            {:resolve, {:error, reason}} -> {:error, reason}
+          case :rpc.call(target, __MODULE__, :ensure_active_local, [actor_id], @ensure_active_rpc_timeout) do
+            {:badrpc, reason} ->
+              Logger.warning(
+                "RPC ensure_active to #{target} failed: #{inspect(reason)}, falling back to local"
+              )
+
+              ensure_active_locally(actor_id)
+
+            result ->
+              result
           end
         end
     end
@@ -103,6 +105,38 @@ defmodule Quanta.Actor.CommandRouter do
     end
   end
 
+  @doc false
+  def route_local(%ActorId{} = actor_id, %Envelope{} = envelope, timeout) do
+    with {:manifest, {:ok, manifest}} <-
+           {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
+         {:rate, :ok} <- {:rate, RateLimit.check(actor_id, manifest)} do
+      case Registry.lookup(actor_id) do
+        {:ok, pid} -> deliver(pid, envelope, timeout)
+        :not_found -> activate_locally_and_deliver(actor_id, manifest, envelope, timeout)
+      end
+    else
+      {:manifest, :error} ->
+        {:error, :actor_type_not_found}
+
+      {:rate, {:error, :rate_limited, _retry_after}} ->
+        :telemetry.execute(
+          [:quanta, :rate_limit, :rejected],
+          %{},
+          %{actor_id: actor_id}
+        )
+
+        {:error, :rate_limited}
+    end
+  end
+
+  @doc false
+  def ensure_active_local(%ActorId{} = actor_id) do
+    case Registry.lookup(actor_id) do
+      {:ok, pid} -> {:ok, pid}
+      :not_found -> ensure_active_locally(actor_id)
+    end
+  end
+
   defp find_and_deliver(actor_id, manifest, envelope, timeout) do
     case Registry.lookup(actor_id) do
       {:ok, pid} ->
@@ -114,11 +148,27 @@ defmodule Quanta.Actor.CommandRouter do
   end
 
   defp activate_and_deliver(actor_id, manifest, envelope, timeout) do
-    max_actors = Application.get_env(:quanta_distributed, :max_actors_per_node, 1_000_000)
+    target = safe_target_node(actor_id)
 
-    if DynSup.count_actors() >= max_actors do
-      {:error, :node_at_capacity}
+    if target == node() do
+      activate_locally_and_deliver(actor_id, manifest, envelope, timeout)
     else
+      case :rpc.call(target, __MODULE__, :route_local, [actor_id, envelope, timeout], timeout) do
+        {:badrpc, reason} ->
+          Logger.warning(
+            "RPC route to #{target} failed: #{inspect(reason)}, falling back to local"
+          )
+
+          activate_locally_and_deliver(actor_id, manifest, envelope, timeout)
+
+        result ->
+          result
+      end
+    end
+  end
+
+  defp activate_locally_and_deliver(actor_id, manifest, envelope, timeout) do
+    with :ok <- check_capacity() do
       case Quanta.ModuleResolver.resolve(manifest) do
         {:error, :module_not_configured} ->
           {:error, :module_not_configured}
@@ -159,6 +209,43 @@ defmodule Quanta.Actor.CommandRouter do
 
   defp deliver(pid, envelope, timeout) do
     Server.send_message(pid, envelope, timeout)
+  end
+
+  defp ensure_active_locally(actor_id) do
+    with :ok <- check_capacity(),
+         {:manifest, {:ok, manifest}} <-
+           {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
+         {:resolve, {:ok, module}} <-
+           {:resolve, Quanta.ModuleResolver.resolve(manifest)} do
+      start_actor(actor_id, module)
+    else
+      {:error, :node_at_capacity} -> {:error, :node_at_capacity}
+      {:manifest, :error} -> {:error, :actor_type_not_found}
+      {:resolve, {:error, reason}} -> {:error, reason}
+    end
+  end
+
+  defp safe_target_node(actor_id) do
+    case Quanta.Cluster.Topology.ring() do
+      {:ok, ring} ->
+        key = ActorId.to_placement_key(actor_id)
+        {:ok, target} = ExHashRing.Ring.find_node(ring, key)
+        target
+
+      {:error, :not_ready} ->
+        Logger.debug("Hash ring not ready, routing #{inspect(actor_id)} locally")
+        node()
+    end
+  end
+
+  defp check_capacity do
+    max = Application.get_env(:quanta_distributed, :max_actors_per_node, @default_max_actors)
+
+    if DynSup.count_actors() >= max do
+      {:error, :node_at_capacity}
+    else
+      :ok
+    end
   end
 
   @impl true
