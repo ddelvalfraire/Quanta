@@ -5,6 +5,7 @@ mod codec;
 mod wasm_runtime;
 mod nats_jetstream;
 mod loro_engine;
+mod ephemeral_store;
 mod nats;
 
 use rustler::Env;
@@ -22,6 +23,7 @@ fn load(env: Env, info: rustler::Term) -> bool {
         && env.register::<resources::ComponentResource>().is_ok()
         && env.register::<resources::LinkerResource>().is_ok()
         && env.register::<resources::LoroDocResource>().is_ok()
+        && env.register::<resources::EphemeralStoreResource>().is_ok()
         && nats::load(env, info)
 }
 

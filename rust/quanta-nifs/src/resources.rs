@@ -28,3 +28,6 @@ pub struct LoroDocInner {
     pub doc: loro::LoroDoc,
     pub text_styles: HashMap<String, loro::StyleConfig>,
 }
+
+pub struct EphemeralStoreResource(pub Mutex<loro::awareness::EphemeralStore>);
+impl Resource for EphemeralStoreResource {}
