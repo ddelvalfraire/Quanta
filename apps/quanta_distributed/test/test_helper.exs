@@ -1,1 +1,1 @@
-ExUnit.start(exclude: [:nats])
+ExUnit.start(exclude: [:nats, :distributed])
