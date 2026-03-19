@@ -41,6 +41,13 @@ defmodule Quanta.Telemetry do
   * `[:quanta, :broadway, :success]` — batch of messages successfully processed
   * `[:quanta, :broadway, :failed]` — batch of messages that failed processing
 
+  ### Drain protocol
+
+  * `[:quanta, :drain, :started]` — drain initiated on this node
+  * `[:quanta, :drain, :step_started]` — a drain phase began (metadata: `step`)
+  * `[:quanta, :drain, :batch_passivated]` — batch of actors passivated (measurements: `count`, `duration_ms`)
+  * `[:quanta, :drain, :completed]` — drain finished (measurements: `duration_ms`, metadata: `remaining`)
+
   ## Future events (declared, not yet instrumented)
 
   * `[:quanta, :wasm, :call, :start | :stop | :exception]` — T06
