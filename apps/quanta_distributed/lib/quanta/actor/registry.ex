@@ -56,6 +56,22 @@ defmodule Quanta.Actor.Registry do
   @spec cluster_count() :: non_neg_integer()
   def cluster_count, do: :syn.registry_count(@scope)
 
+  @doc "Marks a local actor as draining in its registry metadata."
+  @spec mark_draining(Quanta.ActorId.t()) :: {:ok, {pid(), map()}} | {:error, term()}
+  def mark_draining(%Quanta.ActorId{} = actor_id) do
+    update_meta(actor_id, &Map.put(&1, :draining, true))
+  end
+
+  @doc "Returns all `{actor_id, pid, meta}` tuples registered on the local node."
+  @spec local_actor_ids() :: [{Quanta.ActorId.t(), pid(), map()}]
+  def local_actor_ids do
+    table = :syn_backbone.get_table_name(:syn_registry_by_name, @scope)
+
+    :ets.select(table, [
+      {{:"$1", :"$2", :"$3", :_, :_, node()}, [], [{{:"$1", :"$2", :"$3"}}]}
+    ])
+  end
+
   @spec deregister(Quanta.ActorId.t()) :: :ok
   def deregister(%Quanta.ActorId{} = actor_id) do
     case :syn.unregister(@scope, actor_id) do

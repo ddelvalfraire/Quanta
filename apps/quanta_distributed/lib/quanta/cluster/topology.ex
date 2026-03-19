@@ -22,6 +22,12 @@ defmodule Quanta.Cluster.Topology do
     GenServer.call(__MODULE__, :healthy?)
   end
 
+  @doc "Removes the current node from the hash ring and emits node_down telemetry."
+  @spec remove_self() :: :ok
+  def remove_self do
+    GenServer.call(__MODULE__, :remove_self)
+  end
+
   @spec ring() :: {:ok, pid()} | {:error, :not_ready}
   def ring do
     case :persistent_term.get(@persistent_term_key, nil) do
@@ -54,6 +60,26 @@ defmodule Quanta.Cluster.Topology do
   @impl true
   def handle_call(:healthy?, _from, state) do
     {:reply, MapSet.size(state.nodes) >= state.min_nodes, state}
+  end
+
+  @impl true
+  def handle_call(:remove_self, _from, state) do
+    self_node = node()
+
+    if MapSet.member?(state.nodes, self_node) do
+      {:ok, _} = ExHashRing.Ring.remove_node(state.ring, self_node)
+      new_nodes = MapSet.delete(state.nodes, self_node)
+
+      Quanta.Telemetry.emit(
+        [:quanta, :cluster, :node_down],
+        %{count: MapSet.size(new_nodes)},
+        %{node: self_node}
+      )
+
+      {:reply, :ok, %{state | nodes: new_nodes}}
+    else
+      {:reply, :ok, state}
+    end
   end
 
   @impl true

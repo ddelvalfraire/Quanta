@@ -28,6 +28,12 @@ defmodule Quanta.Actor.CommandRouter do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
+  @doc "Unsubscribe from the NATS command subject, stopping ingress of new commands."
+  @spec unsubscribe() :: :ok
+  def unsubscribe do
+    GenServer.call(__MODULE__, :unsubscribe)
+  end
+
   @doc "Route a message to an actor. Works without NATS (HTTP-only mode)."
   @spec route(ActorId.t(), Envelope.t(), pos_integer()) ::
           {:ok, binary()} | {:ok, :no_reply} | {:error, term()}
@@ -245,6 +251,16 @@ defmodule Quanta.Actor.CommandRouter do
       {:error, :node_at_capacity}
     else
       :ok
+    end
+  end
+
+  @impl true
+  def handle_call(:unsubscribe, _from, state) do
+    if state.subscription do
+      Quanta.Nats.Core.unsubscribe(state.subscription)
+      {:reply, :ok, %{state | subscription: nil}}
+    else
+      {:reply, :ok, state}
     end
   end
 
