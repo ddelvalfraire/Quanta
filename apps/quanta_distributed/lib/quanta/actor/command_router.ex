@@ -52,6 +52,31 @@ defmodule Quanta.Actor.CommandRouter do
   end
 
   @doc """
+  Look up an actor, activating it if not already running.
+
+  Skips rate limits — this is for establishing a channel connection,
+  not delivering a message.
+  """
+  @spec ensure_active(ActorId.t()) :: {:ok, pid()} | {:error, term()}
+  def ensure_active(%ActorId{} = actor_id) do
+    case Registry.lookup(actor_id) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      :not_found ->
+        with {:manifest, {:ok, manifest}} <-
+               {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
+             {:resolve, {:ok, module}} <-
+               {:resolve, Quanta.ModuleResolver.resolve(manifest)} do
+          start_actor(actor_id, module)
+        else
+          {:manifest, :error} -> {:error, :actor_type_not_found}
+          {:resolve, {:error, reason}} -> {:error, reason}
+        end
+    end
+  end
+
+  @doc """
   Parse a NATS command subject into an ActorId.
 
   Expected format: `quanta.{namespace}.cmd.{type}.{id}`
@@ -99,18 +124,25 @@ defmodule Quanta.Actor.CommandRouter do
   end
 
   defp start_and_deliver(actor_id, module, envelope, timeout) do
+    case start_actor(actor_id, module) do
+      {:ok, pid} -> deliver(pid, envelope, timeout)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp start_actor(actor_id, module) do
     opts = [actor_id: actor_id, module: module]
 
     case DynSup.start_actor(actor_id, opts) do
       {:ok, pid} ->
-        deliver(pid, envelope, timeout)
+        {:ok, pid}
 
       {:error, {:already_started, pid}} ->
-        deliver(pid, envelope, timeout)
+        {:ok, pid}
 
       {:error, {:already_registered, _actor_id}} ->
         case Registry.lookup(actor_id) do
-          {:ok, pid} -> deliver(pid, envelope, timeout)
+          {:ok, pid} -> {:ok, pid}
           :not_found -> {:error, :activation_race_lost}
         end
 

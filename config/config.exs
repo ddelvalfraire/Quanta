@@ -3,6 +3,7 @@ import Config
 config :quanta_web, Quanta.Web.Endpoint,
   url: [host: "localhost"],
   render_errors: [formats: [json: Quanta.Web.ErrorJSON]],
+  pubsub_server: Quanta.Web.PubSub,
   server: false
 
 config :phoenix, :json_library, Jason
