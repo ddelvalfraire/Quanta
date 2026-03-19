@@ -243,6 +243,15 @@ defmodule Quanta.Web.CrdtChannelTest do
       refute_push "ephemeral_update", %{}, 200
     end
 
+    test "ro scope silently drops ephemeral updates" do
+      {:ok, socket} = connect(Quanta.Web.ActorSocket, %{"token" => @ro_key})
+      {:ok, _reply, socket} = subscribe_and_join(socket, "crdt:test:crdt_doc:eph-ro", %{})
+
+      push(socket, "ephemeral_update", %{"key" => "user:x", "value" => Base.encode64("data")})
+
+      refute_push "ephemeral_update", %{}, 200
+    end
+
     test "invalid base64 is silently dropped" do
       topic = "crdt:test:crdt_doc:eph-bad64"
 

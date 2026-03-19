@@ -212,7 +212,7 @@ defmodule Quanta.Actor.Server do
     )
 
     call_on_passivate(state)
-    cleanup_crdt(state)
+    # NIF EphemeralStore is reference-counted; no manual cleanup needed
     Registry.deregister(state.actor_id)
     {:stop, :normal, :ok, state}
   end
@@ -322,7 +322,7 @@ defmodule Quanta.Actor.Server do
     )
 
     call_on_passivate(state)
-    cleanup_crdt(state)
+    # NIF EphemeralStore is reference-counted; no manual cleanup needed
     Registry.deregister(state.actor_id)
     {:stop, :normal, state}
   end
@@ -367,13 +367,7 @@ defmodule Quanta.Actor.Server do
 
   @impl true
   def handle_info({:subscriber_left, user_id}, state) do
-    if state.ephemeral_store do
-      key = "user:#{user_id}"
-      :ok = EphemeralStore.delete(state.ephemeral_store, key)
-      {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
-      broadcast_ephemeral(state, encoded, nil)
-    end
-
+    cleanup_ephemeral_for_user(state, user_id)
     {:noreply, reset_idle_timer(state)}
   end
 
@@ -608,15 +602,9 @@ defmodule Quanta.Actor.Server do
 
       {{user_id, ref}, subscribers} ->
         Process.demonitor(ref, [:flush])
-
-        if state.ephemeral_store do
-          key = "user:#{user_id}"
-          :ok = EphemeralStore.delete(state.ephemeral_store, key)
-          {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
-          broadcast_ephemeral(%{state | subscribers: subscribers}, encoded, nil)
-        end
-
-        %{state | subscribers: subscribers}
+        state = %{state | subscribers: subscribers}
+        cleanup_ephemeral_for_user(state, user_id)
+        state
     end
   end
 
@@ -628,6 +616,15 @@ defmodule Quanta.Actor.Server do
     end
 
     :ok
+  end
+
+  defp cleanup_ephemeral_for_user(state, user_id) do
+    if state.ephemeral_store do
+      key = "user:#{user_id}"
+      :ok = EphemeralStore.delete(state.ephemeral_store, key)
+      {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
+      broadcast_ephemeral(state, encoded, nil)
+    end
   end
 
   defp broadcast_ephemeral(state, encoded_bytes, sender_pid) do
@@ -656,10 +653,6 @@ defmodule Quanta.Actor.Server do
     end
   end
 
-  defp cleanup_crdt(_state) do
-    # NIF EphemeralStore is reference-counted, no manual cleanup needed
-    :ok
-  end
 
   defp handle_init_failure(state, error, stacktrace) do
     actor_id = state.actor_id
