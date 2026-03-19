@@ -4,6 +4,7 @@ defmodule QuantaWeb.Application do
   @impl true
   def start(_type, _args) do
     children = [
+      {Phoenix.PubSub, name: Quanta.Web.PubSub},
       {Quanta.Web.Endpoint, []}
     ]
 
