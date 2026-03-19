@@ -6,8 +6,10 @@ defmodule Quanta.Actor.SubscriberTracker do
         false
 
       mod ->
-        topic = "actor:#{actor_id.namespace}:#{actor_id.type}:#{actor_id.id}"
-        mod.subscriber_count(topic) > 0
+        suffix = "#{actor_id.namespace}:#{actor_id.type}:#{actor_id.id}"
+
+        mod.subscriber_count("actor:" <> suffix) > 0 or
+          mod.subscriber_count("crdt:" <> suffix) > 0
     end
   end
 end
