@@ -19,6 +19,9 @@ defmodule Quanta.Supervisor do
 
     topologies = Application.get_env(:libcluster, :topologies, [])
 
+    # :pg scope for CRDT pub/sub — T27 channel processes join groups here
+    :pg.start(Quanta.Actor.CrdtPubSub)
+
     children = [
       {Cluster.Supervisor, [topologies, [name: Quanta.ClusterSupervisor]]},
       Quanta.Cluster.Topology,
