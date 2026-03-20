@@ -65,6 +65,26 @@ pub enum FieldType {
 }
 
 impl FieldType {
+    pub fn from_byte(byte: u8, variant_count: u16) -> Option<Self> {
+        match byte {
+            0 => Some(FieldType::Bool),
+            1 => Some(FieldType::U8),
+            2 => Some(FieldType::S8),
+            3 => Some(FieldType::U16),
+            4 => Some(FieldType::S16),
+            5 => Some(FieldType::U32),
+            6 => Some(FieldType::S32),
+            7 => Some(FieldType::U64),
+            8 => Some(FieldType::S64),
+            9 => Some(FieldType::F32),
+            10 => Some(FieldType::F64),
+            11 => Some(FieldType::String),
+            12 => Some(FieldType::Enum(variant_count)),
+            13 => Some(FieldType::Flags(variant_count)),
+            _ => None,
+        }
+    }
+
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
@@ -164,6 +184,16 @@ impl Priority {
     pub fn as_byte(&self) -> u8 {
         *self as u8
     }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Priority::Critical),
+            1 => Some(Priority::High),
+            2 => Some(Priority::Medium),
+            3 => Some(Priority::Low),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +209,15 @@ impl PredictionMode {
             PredictionMode::None => 0,
             PredictionMode::InputReplay => 1,
             PredictionMode::Cosmetic => 2,
+        }
+    }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(PredictionMode::None),
+            1 => Some(PredictionMode::InputReplay),
+            2 => Some(PredictionMode::Cosmetic),
+            _ => None,
         }
     }
 }
@@ -198,6 +237,15 @@ impl SmoothingMode {
             SmoothingMode::SnapLerp => 2,
         }
     }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(SmoothingMode::Lerp),
+            1 => Some(SmoothingMode::Snap),
+            2 => Some(SmoothingMode::SnapLerp),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,6 +261,15 @@ impl InterpolationMode {
             InterpolationMode::None => 0,
             InterpolationMode::Linear => 1,
             InterpolationMode::Hermite => 2,
+        }
+    }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(InterpolationMode::None),
+            1 => Some(InterpolationMode::Linear),
+            2 => Some(InterpolationMode::Hermite),
+            _ => None,
         }
     }
 }
