@@ -38,10 +38,7 @@ defmodule Mix.Tasks.Bench.Competitor do
         |> Map.merge(run_activation())
     }
 
-    path = Path.join([File.cwd!(), "benchmarks", "results", "quanta.json"])
-    File.mkdir_p!(Path.dirname(path))
-    File.write!(path, Jason.encode!(results, pretty: true))
-    IO.puts("Results written to #{path}")
+    IO.puts(Jason.encode!(results))
   end
 
   # ---------------------------------------------------------------------------
@@ -49,7 +46,16 @@ defmodule Mix.Tasks.Bench.Competitor do
   # ---------------------------------------------------------------------------
 
   defp register_bench_actor! do
-    manifest = %Manifest{version: "1", namespace: @namespace, type: @type_name}
+    manifest = %Manifest{
+      version: "1",
+      namespace: @namespace,
+      type: @type_name,
+      rate_limits: %Quanta.Manifest.RateLimits{
+        messages_per_second: 10_000_000,
+        messages_per_second_type: 10_000_000
+      }
+    }
+
     :ok = ManifestRegistry.put(manifest)
 
     prev = Application.get_env(:quanta_distributed, :actor_modules, %{})
@@ -57,7 +63,7 @@ defmodule Mix.Tasks.Bench.Competitor do
     Application.put_env(
       :quanta_distributed,
       :actor_modules,
-      Map.put(prev, {@namespace, @type_name}, Quanta.Test.Actors.Counter)
+      Map.put(prev, {@namespace, @type_name}, Quanta.Bench.BenchCounter)
     )
   end
 

@@ -4,7 +4,9 @@
 # Results written to benchmarks/results/<framework>.json
 services:
   quanta:
-    build: ./benchmarks/competitors/quanta
+    build:
+      context: .
+      dockerfile: benchmarks/competitors/quanta/Dockerfile
     cpus: 4
     mem_limit: 4g
     volumes:

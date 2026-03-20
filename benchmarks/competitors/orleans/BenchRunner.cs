@@ -51,15 +51,21 @@ public static class BenchRunner
             await g.Broadcast(1_000);
         });
 
-        // --- Skynet 1M ---
-        results["skynet_1m"] = await RunBench("skynet_1m", WarmupSkynet, 10, async () =>
+        // --- Skynet 1M (may timeout — Orleans grain activation overhead is high at 1M) ---
+        try
         {
-            var root = grainFactory.GetGrain<ISkynetGrain>(1);
-            var result = await root.Compute(0, 1_000_000, 10);
-            // Expected: sum of 0..999999 = 499999500000
-            if (result != 499_999_500_000L)
-                Console.Error.WriteLine($"[WARN] skynet_1m: expected 499999500000, got {result}");
-        });
+            results["skynet_1m"] = await RunBench("skynet_1m", WarmupSkynet, 10, async () =>
+            {
+                var root = grainFactory.GetGrain<ISkynetGrain>(1);
+                var result = await root.Compute(0, 1_000_000, 10);
+                if (result != 499_999_500_000L)
+                    Console.Error.WriteLine($"[WARN] skynet_1m: expected 499999500000, got {result}");
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[SKIP] skynet_1m: {ex.GetType().Name} — {ex.Message}");
+        }
 
         // --- Skynet 100K (kept for comparison) ---
         results["skynet_100k"] = await RunBench("skynet_100k", WarmupSkynet, 10, async () =>
