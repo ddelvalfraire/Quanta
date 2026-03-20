@@ -31,6 +31,41 @@ defmodule Quanta.Nifs.SchemaCompilerTest do
   }
   """
 
+  @three_group_wit """
+  record entity-state {
+      /// @quanta:field_group(spatial)
+      /// @quanta:priority(critical)
+      pos-x: f32,
+      /// @quanta:field_group(spatial)
+      /// @quanta:priority(critical)
+      pos-y: f32,
+      /// @quanta:field_group(spatial)
+      /// @quanta:priority(critical)
+      pos-z: f32,
+      /// @quanta:field_group(combat)
+      /// @quanta:priority(high)
+      health: u16,
+      /// @quanta:field_group(combat)
+      /// @quanta:priority(high)
+      mana: u16,
+      /// @quanta:field_group(combat)
+      /// @quanta:priority(high)
+      damage: u8,
+      /// @quanta:field_group(combat)
+      /// @quanta:priority(high)
+      armor: u8,
+      /// @quanta:field_group(inventory)
+      /// @quanta:priority(low)
+      slot1: u8,
+      /// @quanta:field_group(inventory)
+      /// @quanta:priority(low)
+      slot2: u8,
+      /// @quanta:field_group(inventory)
+      /// @quanta:priority(low)
+      slot3: u8,
+  }
+  """
+
   describe "compile/2" do
     test "returns reference and empty warnings for minimal schema" do
       assert {:ok, ref, warnings} = SchemaCompiler.compile(@minimal_wit, "my-state")
@@ -83,6 +118,17 @@ defmodule Quanta.Nifs.SchemaCompilerTest do
       {:ok, ref, _} = SchemaCompiler.compile(@minimal_wit, "my-state")
       {:ok, <<"QSCH", format_ver, _rest::binary>>} = SchemaCompiler.export(ref)
       assert format_ver == 1
+    end
+
+    test "export includes group count for multi-group schema" do
+      {:ok, ref, _} = SchemaCompiler.compile(@three_group_wit, "entity-state")
+      {:ok, binary} = SchemaCompiler.export(ref)
+
+      <<"QSCH", _format_ver, _schema_ver, field_count::big-16, group_count, _rest::binary>> =
+        binary
+
+      assert field_count == 10
+      assert group_count == 3
     end
   end
 end
