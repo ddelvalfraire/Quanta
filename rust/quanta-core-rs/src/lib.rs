@@ -3,6 +3,8 @@
 //! Provides binary-compatible type definitions used by both
 //! the NIF crate and the standalone realtime server.
 
+pub mod schema;
+
 use std::fmt;
 
 /// KV snapshot header size in bytes: js_seq(8) + state_version(2) + nonce(8).

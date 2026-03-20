@@ -7,6 +7,7 @@ mod nats_jetstream;
 mod loro_engine;
 mod ephemeral_store;
 mod nats;
+mod schema_compiler;
 
 use rustler::Env;
 
@@ -24,6 +25,7 @@ fn load(env: Env, info: rustler::Term) -> bool {
         && env.register::<resources::LinkerResource>().is_ok()
         && env.register::<resources::LoroDocResource>().is_ok()
         && env.register::<resources::EphemeralStoreResource>().is_ok()
+        && env.register::<resources::CompiledSchemaResource>().is_ok()
         && nats::load(env, info)
 }
 
