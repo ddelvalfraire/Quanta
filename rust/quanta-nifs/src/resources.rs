@@ -31,3 +31,6 @@ pub struct LoroDocInner {
 
 pub struct EphemeralStoreResource(pub Mutex<loro::awareness::EphemeralStore>);
 impl Resource for EphemeralStoreResource {}
+
+pub struct CompiledSchemaResource(pub quanta_core_rs::schema::CompiledSchema);
+impl Resource for CompiledSchemaResource {}

@@ -337,4 +337,13 @@ defmodule Quanta.Nifs.Native do
   @spec ephemeral_store_apply_encoded(store :: reference(), bytes :: binary()) ::
           :ok | {:error, String.t()}
   def ephemeral_store_apply_encoded(_store, _bytes), do: :erlang.nif_error(:nif_not_loaded)
+
+  # --- Schema Compiler ---
+
+  @spec schema_compile(wit_source :: String.t(), type_name :: String.t()) ::
+          {:ok, reference(), [String.t()]} | {:error, String.t()}
+  def schema_compile(_wit_source, _type_name), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec schema_export(schema :: reference()) :: {:ok, binary()}
+  def schema_export(_schema), do: :erlang.nif_error(:nif_not_loaded)
 end
