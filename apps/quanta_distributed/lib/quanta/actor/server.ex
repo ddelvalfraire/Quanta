@@ -8,7 +8,7 @@ defmodule Quanta.Actor.Server do
 
   use GenServer
 
-  alias Quanta.Actor.{CrdtOps, EffectExecutor, ManifestRegistry, Registry}
+  alias Quanta.Actor.{CrdtOps, DynSup, EffectExecutor, ManifestRegistry, Registry}
   alias Quanta.Envelope
   alias Quanta.Nifs.{EphemeralStore, LoroEngine}
 
@@ -19,6 +19,8 @@ defmodule Quanta.Actor.Server do
   @mailbox_critical_threshold 10_000
   @init_attempts_table :quanta_actor_init_attempts
   @ephemeral_ttl_ms 30_000
+  @message_event [:quanta, :actor, :message, :stop]
+  @activate_event [:quanta, :actor, :activate, :stop]
 
   defstruct [
     :actor_id,
@@ -35,7 +37,11 @@ defmodule Quanta.Actor.Server do
     named_timers: %{},
     pending_replies: %{},
     message_count: 0,
-    subscribers: %{}
+    subscribers: %{},
+    rate_count: 0,
+    rate_window: 0,
+    rate_limit: 1_000,
+    last_active_at: 0
   ]
 
   @type t :: %__MODULE__{
@@ -53,7 +59,11 @@ defmodule Quanta.Actor.Server do
           named_timers: %{String.t() => map()},
           pending_replies: %{String.t() => {GenServer.from(), reference()}},
           message_count: non_neg_integer(),
-          subscribers: %{pid() => {String.t(), reference()}}
+          subscribers: %{pid() => {String.t(), reference()}},
+          rate_count: non_neg_integer(),
+          rate_window: integer(),
+          rate_limit: pos_integer(),
+          last_active_at: integer()
         }
 
   def child_spec(opts) do
@@ -128,6 +138,7 @@ defmodule Quanta.Actor.Server do
   def init(opts) do
     actor_id = Keyword.fetch!(opts, :actor_id)
     module = Keyword.fetch!(opts, :module)
+    manifest = Keyword.get(opts, :manifest)
 
     Process.flag(:message_queue_data, :off_heap)
 
@@ -139,7 +150,8 @@ defmodule Quanta.Actor.Server do
           actor_id: actor_id.id
         )
 
-        {:ok, %__MODULE__{actor_id: actor_id, module: module}, {:continue, :load_state}}
+        {:ok, %__MODULE__{actor_id: actor_id, module: module},
+         {:continue, {:load_state, manifest}}}
 
       {:error, :already_registered} ->
         {:stop, {:already_registered, actor_id}}
@@ -147,7 +159,11 @@ defmodule Quanta.Actor.Server do
   end
 
   @impl true
-  def handle_continue(:load_state, state) do
+  def handle_continue({:load_state, manifest}, state) when not is_nil(manifest) do
+    activate(state, manifest)
+  end
+
+  def handle_continue({:load_state, _nil}, state) do
     case ManifestRegistry.get(state.actor_id.namespace, state.actor_id.type) do
       {:ok, manifest} ->
         activate(state, manifest)
@@ -160,13 +176,14 @@ defmodule Quanta.Actor.Server do
 
   @impl true
   def handle_call({:message, envelope}, from, state) do
-    case check_mailbox(state) do
-      level when level in [:shedding, :critical] ->
+    case dispatch_with_backpressure(state, envelope) do
+      {:rate_limited, state} ->
+        {:reply, {:error, :rate_limited}, state}
+
+      {:overloaded, state} ->
         {:reply, {:error, :overloaded}, state}
 
-      _ ->
-        {reply, state, stop?, sent_ids} = dispatch_message(state, envelope)
-
+      {:ok, reply, state, stop?, sent_ids} ->
         cond do
           stop? && reply -> {:stop, :normal, reply, state}
           stop? -> {:stop, :normal, {:ok, :no_reply}, state}
@@ -291,7 +308,7 @@ defmodule Quanta.Actor.Server do
 
         state =
           if pending_from && reply do
-            GenServer.reply(pending_from, reply)
+            reply_to_caller(pending_from, reply)
             cancel_pending_replies_for(pending_from, state)
           else
             state
@@ -314,15 +331,24 @@ defmodule Quanta.Actor.Server do
 
   @impl true
   def handle_info(:passivate, state) do
-    :telemetry.execute(
-      [:quanta, :actor, :passivate],
-      %{},
-      %{actor_id: state.actor_id, reason: :idle}
-    )
+    idle_ms = idle_timeout_ms(state)
+    elapsed_ms = System.convert_time_unit(System.monotonic_time() - state.last_active_at, :native, :millisecond)
 
-    call_on_passivate(state)
-    Registry.deregister(state.actor_id)
-    {:stop, :normal, state}
+    if elapsed_ms >= idle_ms do
+      :telemetry.execute(
+        [:quanta, :actor, :passivate],
+        %{},
+        %{actor_id: state.actor_id, reason: :idle}
+      )
+
+      call_on_passivate(state)
+      Registry.deregister(state.actor_id)
+      {:stop, :normal, state}
+    else
+      remaining = idle_ms - elapsed_ms
+      ref = Process.send_after(self(), :passivate, remaining)
+      {:noreply, %{state | idle_timer_ref: ref}}
+    end
   end
 
   @impl true
@@ -358,7 +384,7 @@ defmodule Quanta.Actor.Server do
         {:noreply, state}
 
       {{from, _timer_ref}, pending_replies} ->
-        GenServer.reply(from, {:error, :actor_timeout})
+        reply_to_caller(from, {:error, :actor_timeout})
         {:noreply, %{state | pending_replies: pending_replies}}
     end
   end
@@ -381,28 +407,50 @@ defmodule Quanta.Actor.Server do
   end
 
   @impl true
+  def handle_info({:"$quanta_msg", ref, from, envelope}, state) do
+    case dispatch_with_backpressure(state, envelope) do
+      {:rate_limited, state} ->
+        send(from, {:"$quanta_reply", ref, {:error, :rate_limited}})
+        {:noreply, state}
+
+      {:overloaded, state} ->
+        send(from, {:"$quanta_reply", ref, {:error, :overloaded}})
+        {:noreply, state}
+
+      {:ok, reply, state, stop?, sent_ids} ->
+        if reply == nil and sent_ids != [] do
+          state = stash_quanta_pending_replies({from, ref}, sent_ids, state)
+          if stop?, do: {:stop, :normal, state}, else: {:noreply, state}
+        else
+          result = reply || {:ok, :no_reply}
+          send(from, {:"$quanta_reply", ref, result})
+          if stop?, do: {:stop, :normal, state}, else: {:noreply, state}
+        end
+    end
+  end
+
+  @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
   end
 
   defp activate(state, manifest) do
-    state = %{state | manifest: manifest}
-    meta = %{actor_id: state.actor_id}
+    state = %{state | manifest: manifest, rate_limit: manifest.rate_limits.messages_per_second}
+    t0 = System.monotonic_time()
 
     try do
       state =
-        :telemetry.span([:quanta, :actor, :activate], meta, fn ->
-          state =
-            case manifest.state.kind do
-              {:crdt, _type} -> activate_crdt(state)
-              _ -> activate_standard(state)
-            end
+        case manifest.state.kind do
+          {:crdt, _type} -> activate_crdt(state)
+          _ -> activate_standard(state)
+        end
 
-          state = schedule_idle_timer(state)
-          clear_init_failures(state.actor_id)
+      state = schedule_idle_timer(state)
+      clear_init_failures(state.actor_id)
 
-          {state, meta}
-        end)
+      :telemetry.execute(@activate_event,
+        %{duration: System.monotonic_time() - t0},
+        %{actor_id: state.actor_id})
 
       {:noreply, state}
     rescue
@@ -444,24 +492,55 @@ defmodule Quanta.Actor.Server do
     process_init_effects(init_effects, state)
   end
 
-  defp dispatch_message(state, envelope) do
-    Logger.metadata(message_id: envelope.message_id)
-    state = reset_idle_timer(state)
-    meta = %{actor_id: state.actor_id, message_id: envelope.message_id}
+  defp dispatch_with_backpressure(state, envelope) do
+    now_s = System.monotonic_time(:second)
 
-    :telemetry.span([:quanta, :actor, :message], meta, fn ->
+    state =
+      if state.rate_window != now_s,
+        do: %{state | rate_window: now_s, rate_count: 0},
+        else: state
+
+    cond do
+      state.rate_count >= state.rate_limit ->
+        :telemetry.execute(
+          [:quanta, :rate_limit, :rejected],
+          %{},
+          %{actor_id: state.actor_id}
+        )
+
+        {:rate_limited, state}
+
+      check_mailbox(state) in [:shedding, :critical] ->
+        {:overloaded, state}
+
+      true ->
+        state = %{state | rate_count: state.rate_count + 1}
+        {reply, state, stop?, sent_ids} = dispatch_message(state, envelope)
+        {:ok, reply, state, stop?, sent_ids}
+    end
+  end
+
+  defp dispatch_message(state, envelope) do
+    t0 = System.monotonic_time()
+    state = %{state | last_active_at: t0}
+
+    result =
       if state.loro_doc do
-        dispatch_crdt_message(state, envelope, meta)
+        dispatch_crdt_message(state, envelope)
       else
         {new_state, effects} = state.module.handle_message(state.state_data, envelope)
         state = %{state | state_data: new_state, message_count: state.message_count + 1}
-        result = process_effects(effects, state, envelope)
-        {result, meta}
+        process_effects(effects, state, envelope)
       end
-    end)
+
+    duration = System.monotonic_time() - t0
+    :telemetry.execute(@message_event, %{duration: duration},
+      %{actor_id: state.actor_id, message_id: envelope.message_id})
+
+    result
   end
 
-  defp dispatch_crdt_message(state, envelope, meta) do
+  defp dispatch_crdt_message(state, envelope) do
     snapshot_json =
       case CrdtOps.encode_value_as_json(state.loro_doc) do
         {:ok, json} -> json
@@ -470,8 +549,7 @@ defmodule Quanta.Actor.Server do
 
     {_state, effects} = state.module.handle_message(snapshot_json, envelope)
     state = %{state | message_count: state.message_count + 1}
-    result = process_effects(effects, state, envelope)
-    {result, meta}
+    process_effects(effects, state, envelope)
   end
 
   defp process_init_effects(effects, state) do
@@ -536,6 +614,18 @@ defmodule Quanta.Actor.Server do
     end)
   end
 
+  defp stash_quanta_pending_replies({pid, ref}, sent_ids, state) do
+    stash_pending_replies({:quanta_direct, pid, ref}, sent_ids, state)
+  end
+
+  defp reply_to_caller({:quanta_direct, pid, ref}, reply) do
+    send(pid, {:"$quanta_reply", ref, reply})
+  end
+
+  defp reply_to_caller(from, reply) do
+    GenServer.reply(from, reply)
+  end
+
   defp pop_pending_reply(envelope, state) do
     case envelope.correlation_id do
       nil ->
@@ -568,19 +658,21 @@ defmodule Quanta.Actor.Server do
     %{state | pending_replies: to_keep}
   end
 
-  defp schedule_idle_timer(state) do
+  defp idle_timeout_ms(state) do
     has_subscribers =
       map_size(state.subscribers) > 0 or
         Quanta.Actor.SubscriberTracker.any_subscribers?(state.actor_id)
 
-    timeout =
-      if has_subscribers do
-        state.manifest.lifecycle.idle_timeout_ms
-      else
-        state.manifest.lifecycle.idle_no_subscribers_timeout_ms
-      end
+    if has_subscribers do
+      state.manifest.lifecycle.idle_timeout_ms
+    else
+      state.manifest.lifecycle.idle_no_subscribers_timeout_ms
+    end
+  end
 
-    ref = Process.send_after(self(), :passivate, timeout)
+  defp schedule_idle_timer(state) do
+    state = %{state | last_active_at: System.monotonic_time()}
+    ref = Process.send_after(self(), :passivate, idle_timeout_ms(state))
     %{state | idle_timer_ref: ref}
   end
 

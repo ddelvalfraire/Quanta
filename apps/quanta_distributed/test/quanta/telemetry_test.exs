@@ -74,9 +74,8 @@ defmodule Quanta.TelemetryTest do
 
   describe "message dispatch span" do
     @tag :telemetry
-    test "emits start and stop events" do
+    test "emits stop event with duration" do
       attach("msg-span", [
-        [:quanta, :actor, :message, :start],
         [:quanta, :actor, :message, :stop]
       ])
 
@@ -84,32 +83,27 @@ defmodule Quanta.TelemetryTest do
       {:ok, pid} = start_actor(actor_id)
       Server.send_message(pid, Envelope.new(payload: "get"))
 
-      assert_receive {:telemetry, [:quanta, :actor, :message, :start], %{system_time: _},
+      assert_receive {:telemetry, [:quanta, :actor, :message, :stop], %{duration: d},
                        %{actor_id: ^actor_id}}
-
-      assert_receive {:telemetry, [:quanta, :actor, :message, :stop], %{duration: _},
-                       %{actor_id: ^actor_id}}
+                     when is_integer(d)
     after
       :telemetry.detach("msg-span")
     end
   end
 
-  describe "activation span" do
+  describe "activation event" do
     @tag :telemetry
-    test "emits start and stop events" do
+    test "emits stop event with duration" do
       attach("activate-span", [
-        [:quanta, :actor, :activate, :start],
         [:quanta, :actor, :activate, :stop]
       ])
 
       actor_id = make_actor_id("tel-activate-1")
       {:ok, _pid} = start_actor(actor_id)
 
-      assert_receive {:telemetry, [:quanta, :actor, :activate, :start], %{system_time: _},
+      assert_receive {:telemetry, [:quanta, :actor, :activate, :stop], %{duration: d},
                        %{actor_id: ^actor_id}}
-
-      assert_receive {:telemetry, [:quanta, :actor, :activate, :stop], %{duration: _},
-                       %{actor_id: ^actor_id}}
+                     when is_integer(d)
     after
       :telemetry.detach("activate-span")
     end

@@ -20,8 +20,15 @@ defmodule Quanta.Actor.DynSup do
     }
   end
 
+  @counter_key :quanta_actor_counter
+
   @spec start_link(any()) :: :ignore | {:error, any()} | {:ok, pid()}
   def start_link(_opts) do
+    case :persistent_term.get(@counter_key, nil) do
+      nil -> :persistent_term.put(@counter_key, :atomics.new(1, signed: true))
+      ref -> :atomics.put(ref, 1, 0)
+    end
+
     PartitionSupervisor.start_link(
       child_spec:
         DynamicSupervisor.child_spec(
@@ -34,6 +41,18 @@ defmodule Quanta.Actor.DynSup do
     )
   end
 
+  @spec increment_count() :: :ok
+  def increment_count do
+    :atomics.add(:persistent_term.get(@counter_key), 1, 1)
+    :ok
+  end
+
+  @spec decrement_count() :: :ok
+  def decrement_count do
+    :atomics.sub(:persistent_term.get(@counter_key), 1, 1)
+    :ok
+  end
+
   @spec start_actor(Quanta.ActorId.t(), keyword()) ::
           {:ok, pid()} | {:error, {:already_started, pid()} | term()}
   def start_actor(%Quanta.ActorId{} = actor_id, opts) do
@@ -42,10 +61,31 @@ defmodule Quanta.Actor.DynSup do
         {Quanta.Actor.Server, Keyword.put(opts, :actor_id, actor_id)}
       end)
 
-    DynamicSupervisor.start_child(
-      {:via, PartitionSupervisor, {__MODULE__, actor_id}},
-      child_spec
-    )
+    case DynamicSupervisor.start_child(
+           {:via, PartitionSupervisor, {__MODULE__, actor_id}},
+           child_spec
+         ) do
+      {:ok, pid} ->
+        track_actor(pid)
+        {:ok, pid}
+
+      other ->
+        other
+    end
+  end
+
+  defp track_actor(pid) do
+    ref = :persistent_term.get(@counter_key)
+    :atomics.add(ref, 1, 1)
+
+    spawn(fn ->
+      mon = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^mon, :process, ^pid, _reason} ->
+          :atomics.sub(ref, 1, 1)
+      end
+    end)
   end
 
   @spec stop_actor(pid()) :: :ok
@@ -53,6 +93,13 @@ defmodule Quanta.Actor.DynSup do
     GenServer.stop(pid, :normal)
   end
 
+  @doc "Fast actor count using atomic counter. May drift slightly on crashes."
+  @spec count_actors_fast() :: non_neg_integer()
+  def count_actors_fast do
+    max(:atomics.get(:persistent_term.get(@counter_key), 1), 0)
+  end
+
+  @doc "Exact actor count by traversing all supervisor partitions. Slower but accurate."
   @spec count_actors() :: non_neg_integer()
   def count_actors do
     __MODULE__
