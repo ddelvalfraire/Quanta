@@ -346,4 +346,11 @@ defmodule Quanta.Nifs.Native do
 
   @spec schema_export(schema :: reference()) :: {:ok, binary()}
   def schema_export(_schema), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec schema_import(bytes :: binary()) :: {:ok, reference()} | {:error, String.t()}
+  def schema_import(_bytes), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec schema_check_compatibility(old :: reference(), new :: reference()) ::
+          {:ok, :identical | :compatible | :incompatible, String.t()}
+  def schema_check_compatibility(_old, _new), do: :erlang.nif_error(:nif_not_loaded)
 end
