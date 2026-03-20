@@ -16,6 +16,7 @@ use layout::LayoutResult;
 pub fn compile_schema(
     wit_source: &str,
     type_name: &str,
+    opts: &CompileOptions,
 ) -> Result<(CompiledSchema, Vec<SchemaWarning>), SchemaError> {
     let parsed_fields = parser::parse_wit_record(wit_source, type_name)?;
 
@@ -25,7 +26,7 @@ pub fn compile_schema(
         total_bits,
         bitmask_byte_count,
         warnings,
-    } = layout::compute_layout(&parsed_fields)?;
+    } = layout::compute_layout(&parsed_fields, opts)?;
 
     let schema = CompiledSchema {
         version: 1,
@@ -45,7 +46,8 @@ mod tests {
     #[test]
     fn compile_minimal() {
         let wit = "record my-state {\n    alive: bool,\n}";
-        let (schema, warnings) = compile_schema(wit, "my-state").unwrap();
+        let (schema, warnings) =
+            compile_schema(wit, "my-state", &CompileOptions::default()).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(schema.fields.len(), 1);
         assert_eq!(schema.fields[0].name, "alive");
@@ -57,21 +59,21 @@ mod tests {
     #[test]
     fn compile_error_on_missing_type() {
         let wit = "record other {\n    x: u32,\n}";
-        let err = compile_schema(wit, "player-state").unwrap_err();
+        let err = compile_schema(wit, "player-state", &CompileOptions::default()).unwrap_err();
         assert!(matches!(err, SchemaError::TypeNotFound(_)));
     }
 
     #[test]
     fn compile_error_on_string_without_skip_delta() {
         let wit = "record my-state {\n    name: string,\n}";
-        let err = compile_schema(wit, "my-state").unwrap_err();
+        let err = compile_schema(wit, "my-state", &CompileOptions::default()).unwrap_err();
         assert!(matches!(err, SchemaError::StringWithoutSkipDelta { .. }));
     }
 
     #[test]
     fn compile_warning_on_quantize_without_clamp() {
         let wit = "record my-state {\n    /// @quanta:quantize(0.01)\n    x: f32,\n}";
-        let (_, warnings) = compile_schema(wit, "my-state").unwrap();
+        let (_, warnings) = compile_schema(wit, "my-state", &CompileOptions::default()).unwrap();
         assert!(warnings
             .iter()
             .any(|w| matches!(w, SchemaWarning::QuantizeWithoutClamp { .. })));
@@ -204,7 +206,10 @@ record player-state {
 }
 "#;
 
-        let (schema, warnings) = compile_schema(wit, "player-state").unwrap();
+        let opts = CompileOptions {
+            prediction_enabled: true,
+        };
+        let (schema, warnings) = compile_schema(wit, "player-state", &opts).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(schema.fields.len(), 20);
 
@@ -218,6 +223,15 @@ record player-state {
         assert!(field("pos-x").quantization.is_some());
         assert_eq!(field("pos-x").prediction, PredictionMode::InputReplay);
         assert_eq!(field("pos-x").interpolation, InterpolationMode::Linear);
+        // Unannotated smoothing defaults to Snap
+        assert_eq!(
+            field("pos-x").smoothing,
+            SmoothingParams {
+                mode: SmoothingMode::Snap,
+                duration_ms: 0,
+                max_distance: 0.0,
+            }
+        );
 
         // yaw: quantize(0.01) + clamp(-3.15, 3.15) -> 10 bits
         assert_eq!(field("yaw").bit_width, 10);

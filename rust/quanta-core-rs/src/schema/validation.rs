@@ -3,6 +3,7 @@ use super::types::*;
 
 pub fn validate_field(
     field: &ParsedField,
+    opts: &CompileOptions,
     warnings: &mut Vec<SchemaWarning>,
 ) -> Result<(), SchemaError> {
     let ann = &field.annotations;
@@ -74,7 +75,33 @@ pub fn validate_field(
         }
     }
 
-    // --- Warnings ---
+    // smooth(lerp|snap_lerp) on non-numeric -> error
+    if let Some(ref sp) = ann.smoothing {
+        if (sp.mode == SmoothingMode::Lerp || sp.mode == SmoothingMode::SnapLerp)
+            && !ft.is_numeric()
+        {
+            return Err(SchemaError::SmoothLerpOnNonNumeric {
+                field: name.clone(),
+            });
+        }
+    }
+
+    if let Some(pred) = ann.prediction {
+        if pred != PredictionMode::None {
+            // predict on non-numeric -> warning (collect before potential error)
+            if !ft.is_numeric() {
+                warnings.push(SchemaWarning::PredictOnNonNumeric {
+                    field: name.clone(),
+                });
+            }
+            // predict without prediction enabled -> error
+            if !opts.prediction_enabled {
+                return Err(SchemaError::PredictionNotEnabled {
+                    field: name.clone(),
+                });
+            }
+        }
+    }
 
     if ann.quantize_precision.is_some() && ann.clamp.is_none() {
         warnings.push(SchemaWarning::QuantizeWithoutClamp {
@@ -116,7 +143,7 @@ mod tests {
         ann.quantize_precision = Some(0.01);
         let field = make_field("flag", FieldType::Bool, ann);
         let mut warnings = Vec::new();
-        let err = validate_field(&field, &mut warnings).unwrap_err();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
         assert!(matches!(err, SchemaError::QuantizeOnNonNumeric { .. }));
     }
 
@@ -126,7 +153,7 @@ mod tests {
         ann.interpolation = Some(InterpolationMode::Linear);
         let field = make_field("flag", FieldType::Bool, ann);
         let mut warnings = Vec::new();
-        let err = validate_field(&field, &mut warnings).unwrap_err();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
         assert!(matches!(err, SchemaError::InterpolateOnNonNumeric { .. }));
     }
 
@@ -136,7 +163,7 @@ mod tests {
         ann.interpolation = Some(InterpolationMode::None);
         let field = make_field("flag", FieldType::Bool, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &mut warnings).unwrap();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
     }
 
     #[test]
@@ -145,7 +172,7 @@ mod tests {
         ann.quantize_precision = Some(0.0);
         let field = make_field("x", FieldType::F32, ann);
         let mut warnings = Vec::new();
-        let err = validate_field(&field, &mut warnings).unwrap_err();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
         assert!(matches!(err, SchemaError::PrecisionNotPositive { .. }));
     }
 
@@ -155,7 +182,7 @@ mod tests {
         ann.quantize_precision = Some(-0.5);
         let field = make_field("x", FieldType::F32, ann);
         let mut warnings = Vec::new();
-        let err = validate_field(&field, &mut warnings).unwrap_err();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
         assert!(matches!(err, SchemaError::PrecisionNotPositive { .. }));
     }
 
@@ -165,7 +192,7 @@ mod tests {
         ann.clamp = Some((10.0, 5.0));
         let field = make_field("x", FieldType::F32, ann);
         let mut warnings = Vec::new();
-        let err = validate_field(&field, &mut warnings).unwrap_err();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
         assert!(matches!(err, SchemaError::ClampMinGeMax { .. }));
     }
 
@@ -175,7 +202,7 @@ mod tests {
         ann.clamp = Some((5.0, 5.0));
         let field = make_field("x", FieldType::F32, ann);
         let mut warnings = Vec::new();
-        let err = validate_field(&field, &mut warnings).unwrap_err();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
         assert!(matches!(err, SchemaError::ClampMinGeMax { .. }));
     }
 
@@ -184,7 +211,7 @@ mod tests {
         let ann = FieldAnnotations::default();
         let field = make_field("name", FieldType::String, ann);
         let mut warnings = Vec::new();
-        let err = validate_field(&field, &mut warnings).unwrap_err();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
         assert!(matches!(err, SchemaError::StringWithoutSkipDelta { .. }));
     }
 
@@ -194,7 +221,7 @@ mod tests {
         ann.skip_delta = true;
         let field = make_field("name", FieldType::String, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &mut warnings).unwrap();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
     }
 
     #[test]
@@ -203,7 +230,7 @@ mod tests {
         ann.quantize_precision = Some(0.01);
         let field = make_field("x", FieldType::F32, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &mut warnings).unwrap();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
         assert_eq!(warnings.len(), 1);
         assert!(matches!(
             &warnings[0],
@@ -217,7 +244,7 @@ mod tests {
         ann.clamp = Some((-100.0, 100.0));
         let field = make_field("x", FieldType::F32, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &mut warnings).unwrap();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
         assert_eq!(warnings.len(), 1);
         assert!(matches!(
             &warnings[0],
@@ -231,7 +258,7 @@ mod tests {
         ann.clamp = Some((0.0, 100.0));
         let field = make_field("hp", FieldType::U16, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &mut warnings).unwrap();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
         assert!(warnings.is_empty());
     }
 
@@ -244,7 +271,7 @@ mod tests {
         });
         let field = make_field("x", FieldType::U32, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &mut warnings).unwrap();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
         assert_eq!(warnings.len(), 1);
         assert!(matches!(
             &warnings[0],
@@ -257,7 +284,7 @@ mod tests {
         let ann = FieldAnnotations::default();
         let field = make_field("bits", FieldType::Flags(256), ann);
         let mut warnings = Vec::new();
-        let err = validate_field(&field, &mut warnings).unwrap_err();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
         assert!(matches!(err, SchemaError::ParseError(_)));
     }
 
@@ -268,7 +295,88 @@ mod tests {
         ann.clamp = Some((-10000.0, 10000.0));
         let field = make_field("x", FieldType::F32, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &mut warnings).unwrap();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn smooth_lerp_on_non_numeric_is_error() {
+        let mut ann = FieldAnnotations::default();
+        ann.smoothing = Some(SmoothingParams {
+            mode: SmoothingMode::Lerp,
+            duration_ms: 100,
+            max_distance: 0.0,
+        });
+        let field = make_field("flag", FieldType::Bool, ann);
+        let mut warnings = Vec::new();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
+        assert!(matches!(err, SchemaError::SmoothLerpOnNonNumeric { .. }));
+    }
+
+    #[test]
+    fn smooth_snap_lerp_on_non_numeric_is_error() {
+        let mut ann = FieldAnnotations::default();
+        ann.smoothing = Some(SmoothingParams {
+            mode: SmoothingMode::SnapLerp,
+            duration_ms: 100,
+            max_distance: 5.0,
+        });
+        let field = make_field("flag", FieldType::Bool, ann);
+        let mut warnings = Vec::new();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
+        assert!(matches!(err, SchemaError::SmoothLerpOnNonNumeric { .. }));
+    }
+
+    #[test]
+    fn smooth_snap_on_non_numeric_is_ok() {
+        let mut ann = FieldAnnotations::default();
+        ann.smoothing = Some(SmoothingParams {
+            mode: SmoothingMode::Snap,
+            duration_ms: 0,
+            max_distance: 0.0,
+        });
+        let field = make_field("flag", FieldType::Bool, ann);
+        let mut warnings = Vec::new();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
+    }
+
+    #[test]
+    fn predict_without_prediction_enabled_is_error() {
+        let mut ann = FieldAnnotations::default();
+        ann.prediction = Some(PredictionMode::InputReplay);
+        let field = make_field("x", FieldType::F32, ann);
+        let mut warnings = Vec::new();
+        let err = validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap_err();
+        assert!(matches!(err, SchemaError::PredictionNotEnabled { .. }));
+    }
+
+    #[test]
+    fn predict_with_prediction_enabled_is_ok() {
+        let mut ann = FieldAnnotations::default();
+        ann.prediction = Some(PredictionMode::InputReplay);
+        let field = make_field("x", FieldType::F32, ann);
+        let mut warnings = Vec::new();
+        validate_field(&field, &CompileOptions { prediction_enabled: true }, &mut warnings).unwrap();
+    }
+
+    #[test]
+    fn predict_none_without_prediction_enabled_is_ok() {
+        let mut ann = FieldAnnotations::default();
+        ann.prediction = Some(PredictionMode::None);
+        let field = make_field("x", FieldType::F32, ann);
+        let mut warnings = Vec::new();
+        validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
+    }
+
+    #[test]
+    fn predict_on_non_numeric_is_warning() {
+        let mut ann = FieldAnnotations::default();
+        ann.prediction = Some(PredictionMode::Cosmetic);
+        let field = make_field("flag", FieldType::Bool, ann);
+        let mut warnings = Vec::new();
+        validate_field(&field, &CompileOptions { prediction_enabled: true }, &mut warnings).unwrap();
+        assert!(warnings
+            .iter()
+            .any(|w| matches!(w, SchemaWarning::PredictOnNonNumeric { .. })));
     }
 }

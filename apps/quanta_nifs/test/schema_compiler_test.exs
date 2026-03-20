@@ -31,7 +31,50 @@ defmodule Quanta.Nifs.SchemaCompilerTest do
   }
   """
 
-  describe "compile/2" do
+  @predict_wit """
+  record my-state {
+      /// @quanta:predict(input_replay)
+      x: f32,
+  }
+  """
+
+  @predict_non_numeric_wit """
+  record my-state {
+      /// @quanta:predict(cosmetic)
+      alive: bool,
+  }
+  """
+
+  @smooth_lerp_non_numeric_wit """
+  record my-state {
+      /// @quanta:smooth(lerp, 100)
+      alive: bool,
+  }
+  """
+
+  @smooth_modes_wit """
+  record my-state {
+      /// @quanta:smooth(lerp, 100)
+      x: f32,
+      /// @quanta:smooth(snap)
+      y: f32,
+      /// @quanta:smooth(snap_lerp, 150, 5.0)
+      z: f32,
+  }
+  """
+
+  @predict_modes_wit """
+  record my-state {
+      /// @quanta:predict(none)
+      a: f32,
+      /// @quanta:predict(input_replay)
+      b: f32,
+      /// @quanta:predict(cosmetic)
+      c: f32,
+  }
+  """
+
+  describe "compile/3" do
     test "returns reference and empty warnings for minimal schema" do
       assert {:ok, ref, warnings} = SchemaCompiler.compile(@minimal_wit, "my-state")
       assert is_reference(ref)
@@ -61,6 +104,47 @@ defmodule Quanta.Nifs.SchemaCompilerTest do
       assert is_reference(ref)
       assert warnings == []
     end
+
+    test "predict(input_replay) without prediction_enabled returns error" do
+      assert {:error, msg} = SchemaCompiler.compile(@predict_wit, "my-state", false)
+      assert msg =~ "prediction enabled"
+    end
+
+    test "predict(input_replay) with prediction_enabled succeeds" do
+      assert {:ok, _ref, _warnings} = SchemaCompiler.compile(@predict_wit, "my-state", true)
+    end
+
+    test "predict on non-numeric returns warning" do
+      assert {:ok, _ref, warnings} =
+               SchemaCompiler.compile(@predict_non_numeric_wit, "my-state", true)
+
+      assert Enum.any?(warnings, &String.contains?(&1, "predict on non-numeric"))
+    end
+
+    test "smooth(lerp) on non-numeric returns error" do
+      assert {:error, msg} = SchemaCompiler.compile(@smooth_lerp_non_numeric_wit, "my-state")
+      assert msg =~ "non-numeric"
+    end
+
+    test "all 3 predict modes compile with prediction_enabled" do
+      assert {:ok, _ref, warnings} =
+               SchemaCompiler.compile(@predict_modes_wit, "my-state", true)
+
+      assert warnings == []
+    end
+
+    test "all 3 smooth modes compile" do
+      assert {:ok, _ref, warnings} = SchemaCompiler.compile(@smooth_modes_wit, "my-state")
+      assert warnings == []
+    end
+
+    test "defaults: no annotation gives predict(none) and smooth(snap)" do
+      assert {:ok, ref, _warnings} = SchemaCompiler.compile(@minimal_wit, "my-state")
+      assert {:ok, binary} = SchemaCompiler.export(ref)
+      # The binary should contain smoothing data (has_smoothing flag set)
+      assert is_binary(binary)
+      assert byte_size(binary) > 14
+    end
   end
 
   describe "export/1" do
@@ -82,7 +166,14 @@ defmodule Quanta.Nifs.SchemaCompilerTest do
     test "export contains correct format version" do
       {:ok, ref, _} = SchemaCompiler.compile(@minimal_wit, "my-state")
       {:ok, <<"QSCH", format_ver, _rest::binary>>} = SchemaCompiler.export(ref)
-      assert format_ver == 1
+      assert format_ver == 2
+    end
+
+    test "export includes prediction metadata" do
+      {:ok, ref, _} = SchemaCompiler.compile(@predict_wit, "my-state", true)
+      assert {:ok, binary} = SchemaCompiler.export(ref)
+      assert <<"QSCH", _rest::binary>> = binary
+      assert byte_size(binary) > 14
     end
   end
 end
