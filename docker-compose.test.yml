@@ -1,0 +1,59 @@
+# 3-node NATS cluster + Toxiproxy for integration/chaos tests
+# Usage: docker compose -f docker-compose.test.yml up -d
+services:
+  nats-1:
+    image: nats:2.11-alpine
+    command: >
+      --name nats-1
+      --cluster_name quanta-test
+      --port 4222
+      --cluster nats://0.0.0.0:6222
+      --routes nats-route://nats-2:6222,nats-route://nats-3:6222
+      --jetstream --store_dir /data
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - nats-cluster
+
+  nats-2:
+    image: nats:2.11-alpine
+    command: >
+      --name nats-2
+      --cluster_name quanta-test
+      --port 4222
+      --cluster nats://0.0.0.0:6222
+      --routes nats-route://nats-1:6222,nats-route://nats-3:6222
+      --jetstream --store_dir /data
+    ports:
+      - "4223:4222"
+    networks:
+      - nats-cluster
+
+  nats-3:
+    image: nats:2.11-alpine
+    command: >
+      --name nats-3
+      --cluster_name quanta-test
+      --port 4222
+      --cluster nats://0.0.0.0:6222
+      --routes nats-route://nats-1:6222,nats-route://nats-2:6222
+      --jetstream --store_dir /data
+    ports:
+      - "4224:4222"
+    networks:
+      - nats-cluster
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.12.0
+    ports:
+      - "8474:8474"   # API
+      - "14222:14222" # proxy → nats-1
+      - "14223:14223" # proxy → nats-2
+      - "14224:14224" # proxy → nats-3
+    networks:
+      - nats-cluster
+
+networks:
+  nats-cluster:
+    driver: bridge

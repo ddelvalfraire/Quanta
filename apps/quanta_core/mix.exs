@@ -24,7 +24,8 @@ defmodule QuantaCore.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:yaml_elixir, "~> 2.12"}
+      {:yaml_elixir, "~> 2.12"},
+      {:propcheck, "~> 1.4", only: :test}
     ]
   end
 end

@@ -1,0 +1,36 @@
+# Apples-to-apples competitor benchmarks.
+# All services: same cpus (4), same memory (4GB), same Docker VM.
+# Usage: docker compose -f docker-compose.bench.yml run --rm <service>
+# Results written to benchmarks/results/<framework>.json
+services:
+  quanta:
+    build:
+      context: .
+      dockerfile: benchmarks/competitors/quanta/Dockerfile
+    cpus: 4
+    mem_limit: 4g
+    volumes:
+      - ./benchmarks/results:/results
+
+  akka:
+    build: ./benchmarks/competitors/akka
+    cpus: 4
+    mem_limit: 4g
+    volumes:
+      - ./benchmarks/results:/results
+    environment:
+      JAVA_OPTS: "-Xmx3500m -XX:+UseZGC"
+
+  orleans:
+    build: ./benchmarks/competitors/orleans
+    cpus: 4
+    mem_limit: 4g
+    volumes:
+      - ./benchmarks/results:/results
+
+  protoactor:
+    build: ./benchmarks/competitors/protoactor
+    cpus: 4
+    mem_limit: 4g
+    volumes:
+      - ./benchmarks/results:/results

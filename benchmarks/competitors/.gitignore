@@ -1,0 +1,7 @@
+# Build artifacts
+akka/project/target/
+akka/project/project/target/
+akka/target/
+protoactor/go.sum
+orleans/bin/
+orleans/obj/

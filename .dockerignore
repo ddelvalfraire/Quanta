@@ -1,0 +1,8 @@
+_build/
+deps/
+rust/target/
+.git/
+.claude/
+benchmarks/results/
+benchmarks/competitors/akka/project/target/
+benchmarks/competitors/akka/target/

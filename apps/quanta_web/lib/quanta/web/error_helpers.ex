@@ -8,6 +8,7 @@ defmodule Quanta.Web.ErrorHelpers do
     actor_type_not_found: {404, "actor type not found"},
     actor_timeout: {408, "actor timeout"},
     rate_limited: {429, "rate limited"},
+    overloaded: {503, "server overloaded"},
     node_at_capacity: {503, "node at capacity"},
     module_not_configured: {503, "actor module not configured"},
     invalid_actor_id: {400, "invalid actor id"},

@@ -38,22 +38,40 @@ defmodule Quanta.Actor.CommandRouter do
   @spec route(ActorId.t(), Envelope.t(), pos_integer()) ::
           {:ok, binary()} | {:ok, :no_reply} | {:error, term()}
   def route(%ActorId{} = actor_id, %Envelope{} = envelope, timeout \\ 30_000) do
-    with {:manifest, {:ok, manifest}} <-
-           {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
-         {:rate, :ok} <- {:rate, RateLimit.check(actor_id, manifest)} do
-      find_and_deliver(actor_id, manifest, envelope, timeout)
-    else
-      {:manifest, :error} ->
-        {:error, :actor_type_not_found}
+    case Registry.lookup(actor_id) do
+      {:ok, pid} ->
+        ref = make_ref()
+        send(pid, {:"$quanta_msg", ref, self(), envelope})
 
-      {:rate, {:error, :rate_limited, _retry_after}} ->
-        :telemetry.execute(
-          [:quanta, :rate_limit, :rejected],
-          %{},
-          %{actor_id: actor_id}
-        )
+        receive do
+          {:"$quanta_reply", ^ref, result} -> result
+        after
+          timeout -> {:error, :actor_timeout}
+        end
 
-        {:error, :rate_limited}
+      :not_found ->
+        with {:manifest, {:ok, manifest}} <-
+               {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
+             {:rate, :ok} <- {:rate, RateLimit.check(actor_id, manifest)},
+             {:resolve, {:ok, module}} <-
+               {:resolve, Quanta.ModuleResolver.resolve(manifest)} do
+          activate_and_deliver(actor_id, module, manifest, envelope, timeout)
+        else
+          {:manifest, :error} ->
+            {:error, :actor_type_not_found}
+
+          {:resolve, {:error, :module_not_configured}} ->
+            {:error, :module_not_configured}
+
+          {:rate, {:error, :rate_limited, _retry_after}} ->
+            :telemetry.execute(
+              [:quanta, :rate_limit, :rejected],
+              %{},
+              %{actor_id: actor_id}
+            )
+
+            {:error, :rate_limited}
+        end
     end
   end
 
@@ -115,14 +133,19 @@ defmodule Quanta.Actor.CommandRouter do
   def route_local(%ActorId{} = actor_id, %Envelope{} = envelope, timeout) do
     with {:manifest, {:ok, manifest}} <-
            {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
-         {:rate, :ok} <- {:rate, RateLimit.check(actor_id, manifest)} do
+         {:rate, :ok} <- {:rate, RateLimit.check(actor_id, manifest)},
+         {:resolve, {:ok, module}} <-
+           {:resolve, Quanta.ModuleResolver.resolve(manifest)} do
       case Registry.lookup(actor_id) do
-        {:ok, pid} -> deliver(pid, envelope, timeout)
-        :not_found -> activate_locally_and_deliver(actor_id, manifest, envelope, timeout)
+        {:ok, pid} -> Server.send_message(pid, envelope, timeout)
+        :not_found -> activate_local(actor_id, module, manifest, envelope, timeout)
       end
     else
       {:manifest, :error} ->
         {:error, :actor_type_not_found}
+
+      {:resolve, {:error, :module_not_configured}} ->
+        {:error, :module_not_configured}
 
       {:rate, {:error, :rate_limited, _retry_after}} ->
         :telemetry.execute(
@@ -143,21 +166,11 @@ defmodule Quanta.Actor.CommandRouter do
     end
   end
 
-  defp find_and_deliver(actor_id, manifest, envelope, timeout) do
-    case Registry.lookup(actor_id) do
-      {:ok, pid} ->
-        deliver(pid, envelope, timeout)
-
-      :not_found ->
-        activate_and_deliver(actor_id, manifest, envelope, timeout)
-    end
-  end
-
-  defp activate_and_deliver(actor_id, manifest, envelope, timeout) do
+  defp activate_and_deliver(actor_id, module, manifest, envelope, timeout) do
     target = safe_target_node(actor_id)
 
     if target == node() do
-      activate_locally_and_deliver(actor_id, manifest, envelope, timeout)
+      activate_local(actor_id, module, manifest, envelope, timeout)
     else
       case :rpc.call(target, __MODULE__, :route_local, [actor_id, envelope, timeout], timeout) do
         {:badrpc, reason} ->
@@ -165,7 +178,7 @@ defmodule Quanta.Actor.CommandRouter do
             "RPC route to #{target} failed: #{inspect(reason)}, falling back to local"
           )
 
-          activate_locally_and_deliver(actor_id, manifest, envelope, timeout)
+          activate_local(actor_id, module, manifest, envelope, timeout)
 
         result ->
           result
@@ -173,27 +186,28 @@ defmodule Quanta.Actor.CommandRouter do
     end
   end
 
-  defp activate_locally_and_deliver(actor_id, manifest, envelope, timeout) do
+  defp activate_local(actor_id, module, manifest, envelope, timeout) do
     with :ok <- check_capacity() do
-      case Quanta.ModuleResolver.resolve(manifest) do
-        {:error, :module_not_configured} ->
-          {:error, :module_not_configured}
-
-        {:ok, module} ->
-          start_and_deliver(actor_id, module, envelope, timeout)
+      case start_actor(actor_id, module, manifest) do
+        {:ok, pid} -> deliver_direct(pid, envelope, timeout)
+        {:error, reason} -> {:error, reason}
       end
     end
   end
 
-  defp start_and_deliver(actor_id, module, envelope, timeout) do
-    case start_actor(actor_id, module) do
-      {:ok, pid} -> deliver(pid, envelope, timeout)
-      {:error, reason} -> {:error, reason}
+  defp deliver_direct(pid, envelope, timeout) do
+    ref = make_ref()
+    send(pid, {:"$quanta_msg", ref, self(), envelope})
+
+    receive do
+      {:"$quanta_reply", ^ref, result} -> result
+    after
+      timeout -> {:error, :actor_timeout}
     end
   end
 
-  defp start_actor(actor_id, module) do
-    opts = [actor_id: actor_id, module: module]
+  defp start_actor(actor_id, module, manifest) do
+    opts = [actor_id: actor_id, module: module, manifest: manifest]
 
     case DynSup.start_actor(actor_id, opts) do
       {:ok, pid} ->
@@ -213,17 +227,13 @@ defmodule Quanta.Actor.CommandRouter do
     end
   end
 
-  defp deliver(pid, envelope, timeout) do
-    Server.send_message(pid, envelope, timeout)
-  end
-
   defp ensure_active_locally(actor_id) do
     with :ok <- check_capacity(),
          {:manifest, {:ok, manifest}} <-
            {:manifest, ManifestRegistry.get(actor_id.namespace, actor_id.type)},
          {:resolve, {:ok, module}} <-
            {:resolve, Quanta.ModuleResolver.resolve(manifest)} do
-      start_actor(actor_id, module)
+      start_actor(actor_id, module, manifest)
     else
       {:error, :node_at_capacity} -> {:error, :node_at_capacity}
       {:manifest, :error} -> {:error, :actor_type_not_found}
@@ -250,7 +260,7 @@ defmodule Quanta.Actor.CommandRouter do
   defp check_capacity do
     max = Application.get_env(:quanta_distributed, :max_actors_per_node, @default_max_actors)
 
-    if DynSup.count_actors() >= max do
+    if DynSup.count_actors_fast() >= max do
       {:error, :node_at_capacity}
     else
       :ok

@@ -35,7 +35,15 @@ defmodule QuantaDistributed.MixProject do
       {:syn, "~> 3.4"},
       {:telemetry, "~> 1.3"},
       {:libcluster, "~> 3.5"},
-      {:ex_hash_ring, "~> 7.0"}
+      {:ex_hash_ring, "~> 7.0"},
+      # Test
+      {:propcheck, "~> 1.4", only: :test},
+      {:local_cluster, "~> 2.0", only: :test},
+      {:schism, "~> 1.0", only: :test},
+      {:toxiproxy_ex, "~> 2.0", only: :test},
+      # Bench
+      {:benchee, "~> 1.3", only: :dev},
+      {:benchee_json, "~> 1.0", only: :dev}
     ]
   end
 end
