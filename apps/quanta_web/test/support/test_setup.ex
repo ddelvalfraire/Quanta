@@ -21,6 +21,9 @@ defmodule Quanta.Web.TestSetup do
 
     Quanta.RateLimit.init()
 
+    Quanta.SchemaEvolution.create_table()
+    Quanta.SchemaEvolution.reset_table()
+
     :ok =
       Quanta.Actor.ManifestRegistry.put(%Quanta.Manifest{
         version: "1",
