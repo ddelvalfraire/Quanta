@@ -38,6 +38,9 @@ Thumbs.db
 # Benchmark results (generated)
 benchmarks/results/
 
+# PropCheck artifacts
+propcheck.ctex
+
 # Claude Code
 CLAUDE.md
 .claude/
