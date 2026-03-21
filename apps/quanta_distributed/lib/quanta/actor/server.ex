@@ -10,7 +10,7 @@ defmodule Quanta.Actor.Server do
 
   alias Quanta.Actor.{CrdtOps, DynSup, EffectExecutor, ManifestRegistry, Registry}
   alias Quanta.Envelope
-  alias Quanta.Nifs.{EphemeralStore, LoroEngine}
+  alias Quanta.Nifs.{DeltaEncoder, EphemeralStore, LoroEngine}
 
   require Logger
 
@@ -32,6 +32,7 @@ defmodule Quanta.Actor.Server do
     :loro_doc,
     :ephemeral_store,
     :last_version,
+    :compiled_schema,
     status: :activating,
     events_since_snapshot: 0,
     named_timers: %{},
@@ -54,6 +55,7 @@ defmodule Quanta.Actor.Server do
           loro_doc: reference() | nil,
           ephemeral_store: reference() | nil,
           last_version: binary() | nil,
+          compiled_schema: reference() | nil,
           status: :activating | :active,
           events_since_snapshot: non_neg_integer(),
           named_timers: %{String.t() => map()},
@@ -377,6 +379,7 @@ defmodule Quanta.Actor.Server do
         {new_state, effects} = state.module.handle_timer(state.state_data, name)
         state = %{state | state_data: new_state}
         {_reply, state, stop?, _sent_ids} = process_effects(effects, state, envelope)
+        state = quantize_state_or_rollback(state)
         if stop?, do: {:stop, :normal, state}, else: {:noreply, state}
     end
   end
@@ -534,7 +537,10 @@ defmodule Quanta.Actor.Server do
       else
         {new_state, effects} = state.module.handle_message(state.state_data, envelope)
         state = %{state | state_data: new_state, message_count: state.message_count + 1}
-        process_effects(effects, state, envelope)
+
+        {reply, state, stop?, sent_ids} = process_effects(effects, state, envelope)
+        state = quantize_state_or_rollback(state)
+        {reply, state, stop?, sent_ids}
       end
 
     duration = System.monotonic_time() - t0
@@ -729,6 +735,20 @@ defmodule Quanta.Actor.Server do
     end
 
     :ok
+  end
+
+  defp quantize_state_or_rollback(%{compiled_schema: nil} = state), do: state
+
+  defp quantize_state_or_rollback(%{compiled_schema: schema, state_data: data} = state) do
+    case DeltaEncoder.quantize_state(schema, data) do
+      {:ok, quantized} ->
+        %{state | state_data: quantized}
+
+      {:error, reason} ->
+        Logger.warning("Quantize failed for #{inspect(state.actor_id)}: #{inspect(reason)}")
+        # Intentionally keeping previous state_data unchanged
+        state
+    end
   end
 
   defp call_on_passivate(state) do

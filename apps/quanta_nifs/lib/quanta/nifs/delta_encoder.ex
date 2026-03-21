@@ -30,4 +30,11 @@ defmodule Quanta.Nifs.DeltaEncoder do
       when is_reference(schema) and is_list(values) do
     Native.delta_encode_state(schema, values)
   end
+
+  @spec quantize_state(reference(), binary()) ::
+          {:ok, binary()} | {:error, term()}
+  def quantize_state(schema, state_bytes)
+      when is_reference(schema) and is_binary(state_bytes) do
+    Native.delta_quantize_state(schema, state_bytes)
+  end
 end
