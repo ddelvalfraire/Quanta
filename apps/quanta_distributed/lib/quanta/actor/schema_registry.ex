@@ -11,12 +11,6 @@ defmodule Quanta.Actor.SchemaRegistry do
   @hash_bytes 32
   @default_max_versions 10
 
-  @doc """
-  Store a compiled schema. Idempotent when content matches.
-
-  Returns `{:error, :immutability_violation, detail}` if the same
-  version is stored with different content.
-  """
   @spec store(String.t(), String.t(), pos_integer(), String.t(), binary()) ::
           :ok | {:error, :immutability_violation, String.t()} | {:error, String.t()}
   def store(namespace, type, version, wit_source, compiled_bytes) do
