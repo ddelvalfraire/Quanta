@@ -76,7 +76,7 @@ defmodule Quanta.Actor.SchemaRegistry do
 
   defp bucket_name(namespace), do: "quanta_#{namespace}_schemas"
 
-  defp key(type, version), do: "#{type}:#{version}"
+  defp key(type, version), do: "#{type}.#{version}"
 
   defp max_versions do
     Application.get_env(:quanta_distributed, :schema_registry_max_versions, @default_max_versions)

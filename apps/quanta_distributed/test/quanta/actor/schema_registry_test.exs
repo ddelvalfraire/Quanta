@@ -170,7 +170,7 @@ defmodule Quanta.Actor.SchemaRegistryTest do
       assert :ok = SchemaRegistry.store(@namespace, @type_name, 1, @wit_source, @compiled_bytes)
 
       bucket = "quanta_#{@namespace}_schemas"
-      key = "#{@type_name}:1"
+      key = "#{@type_name}.1"
       expected_hash = :crypto.hash(:sha256, @wit_source)
       compiled = @compiled_bytes
 
