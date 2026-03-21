@@ -12,7 +12,9 @@ defmodule Quanta.Actor.SchemaEvolution do
   """
 
   use GenServer
+  require Logger
 
+  alias Quanta.Actor.SchemaRegistry
   alias Quanta.Nifs.SchemaCompiler
 
   @table __MODULE__
@@ -71,8 +73,8 @@ defmodule Quanta.Actor.SchemaEvolution do
 
   defp do_check_deploy(manifest, wit_source, type_name, prev_version, table) do
     with {:ok, new_ref, _warnings} <- compile_or_error(wit_source, type_name) do
-      previous_bytes = lookup_cached(table, manifest.namespace, manifest.type)
-      check_and_cache(manifest, new_ref, previous_bytes, prev_version, table)
+      previous_bytes = lookup_cached(table, manifest.namespace, manifest.type, manifest.state.version)
+      check_and_cache(manifest, wit_source, new_ref, previous_bytes, prev_version, table)
     end
   end
 
@@ -83,20 +85,20 @@ defmodule Quanta.Actor.SchemaEvolution do
     end
   end
 
-  defp check_and_cache(manifest, new_ref, nil, _prev_version, table) do
-    cache_schema(table, manifest.namespace, manifest.type, new_ref)
+  defp check_and_cache(manifest, wit_source, new_ref, nil, _prev_version, table) do
+    cache_schema(table, manifest, wit_source, new_ref)
   end
 
-  defp check_and_cache(manifest, new_ref, previous_bytes, prev_version, table) do
+  defp check_and_cache(manifest, wit_source, new_ref, previous_bytes, prev_version, table) do
     with {:ok, old_ref} <- import_or_error(previous_bytes),
          {:ok, result, details} <- compatibility_or_error(old_ref, new_ref) do
       case result do
         r when r in [:identical, :compatible] ->
-          cache_schema(table, manifest.namespace, manifest.type, new_ref)
+          cache_schema(table, manifest, wit_source, new_ref)
 
         :incompatible ->
           if manifest.state.version > (prev_version || 0) do
-            cache_schema(table, manifest.namespace, manifest.type, new_ref)
+            cache_schema(table, manifest, wit_source, new_ref)
           else
             {:error,
              "schema incompatible: #{details}. Increment state.version to acknowledge."}
@@ -119,16 +121,33 @@ defmodule Quanta.Actor.SchemaEvolution do
     end
   end
 
-  defp cache_schema(table, namespace, type, schema_ref) do
+  defp cache_schema(table, manifest, wit_source, schema_ref) do
     {:ok, bytes} = SchemaCompiler.export(schema_ref)
-    :ets.insert(table, {{namespace, type}, bytes})
-    :ok
+    :ets.insert(table, {{manifest.namespace, manifest.type}, bytes})
+
+    case SchemaRegistry.store(manifest.namespace, manifest.type, manifest.state.version, wit_source, bytes) do
+      :ok ->
+        :ok
+
+      {:error, :immutability_violation, detail} ->
+        {:error, "immutability violation: #{detail}"}
+
+      {:error, reason} ->
+        Logger.warning("SchemaRegistry.store failed (non-fatal): #{inspect(reason)}")
+        :ok
+    end
   end
 
-  defp lookup_cached(table, namespace, type) do
+  defp lookup_cached(table, namespace, type, version) do
     case :ets.lookup(table, {namespace, type}) do
-      [{_key, bytes}] -> bytes
-      [] -> nil
+      [{_key, bytes}] ->
+        bytes
+
+      [] ->
+        case SchemaRegistry.fetch(namespace, type, version) do
+          {:ok, bytes} -> bytes
+          {:error, _} -> nil
+        end
     end
   end
 end
