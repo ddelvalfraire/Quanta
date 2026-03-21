@@ -73,9 +73,9 @@ jobs:
       - name: Install npm dependencies
         run: npm install
 
-      - name: TypeScript type-check (delta-decoder)
+      - name: Build delta-decoder TypeScript
         working-directory: packages/delta-decoder
-        run: npx tsc --noEmit
+        run: npx tsc
 
       - name: TypeScript type-check (client)
         working-directory: packages/client
