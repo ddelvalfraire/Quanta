@@ -3,8 +3,6 @@ defmodule QuantaWeb.Application do
 
   @impl true
   def start(_type, _args) do
-    Quanta.SchemaEvolution.create_table()
-
     children = [
       {Phoenix.PubSub, name: Quanta.Web.PubSub},
       Quanta.Web.Presence,

@@ -27,6 +27,7 @@ defmodule Quanta.Supervisor do
       Quanta.Wasm.EngineManager,
       Quanta.Wasm.ModuleRegistry,
       Quanta.Actor.ManifestRegistry,
+      Quanta.Actor.SchemaEvolution,
       Quanta.Nats.CoreSupervisor,
       Quanta.Nats.JetStream.Connection,
       Quanta.Broadway.PipelineSupervisor,

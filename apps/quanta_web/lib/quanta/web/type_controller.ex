@@ -5,7 +5,7 @@ defmodule Quanta.Web.TypeController do
 
   alias Quanta.Actor.ManifestRegistry
   alias Quanta.Manifest
-  alias Quanta.SchemaEvolution
+  alias Quanta.Actor.SchemaEvolution
 
   plug Quanta.Web.Plugs.RequireScope, :admin when action in [:deploy]
   plug Quanta.Web.Plugs.RequireScope, :ro when action in [:list_types]

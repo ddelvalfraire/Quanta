@@ -96,32 +96,7 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn minimal_schema() -> CompiledSchema {
-        CompiledSchema {
-            version: 1,
-            fields: vec![FieldMeta {
-                name: "alive".to_string(),
-                field_type: FieldType::Bool,
-                bit_width: 1,
-                bit_offset: 0,
-                group_index: 0,
-                quantization: None,
-                prediction: PredictionMode::None,
-                smoothing: None,
-                interpolation: InterpolationMode::None,
-                skip_delta: false,
-            }],
-            field_groups: vec![FieldGroup {
-                name: "default".to_string(),
-                priority: Priority::Medium,
-                max_tick_rate: 0,
-                bitmask_range: (0, 1),
-            }],
-            total_bits: 1,
-            bitmask_byte_count: 1,
-        }
-    }
+    use crate::schema::types::test_fixtures::minimal_schema;
 
     #[test]
     fn magic_bytes() {
@@ -177,52 +152,8 @@ mod tests {
 
     #[test]
     fn roundtrip_determinism_with_quantization_and_smoothing() {
-        let schema = CompiledSchema {
-            version: 1,
-            fields: vec![
-                FieldMeta {
-                    name: "x".to_string(),
-                    field_type: FieldType::F32,
-                    bit_width: 21,
-                    bit_offset: 0,
-                    group_index: 0,
-                    quantization: Some(QuantizationParams {
-                        min: -10000.0,
-                        max: 10000.0,
-                        precision: 0.01,
-                        num_values: 2_000_001,
-                        mask: (1u64 << 21) - 1,
-                    }),
-                    prediction: PredictionMode::InputReplay,
-                    smoothing: Some(SmoothingParams {
-                        mode: SmoothingMode::Lerp,
-                        params: vec![0.1],
-                    }),
-                    interpolation: InterpolationMode::Linear,
-                    skip_delta: false,
-                },
-                FieldMeta {
-                    name: "alive".to_string(),
-                    field_type: FieldType::Bool,
-                    bit_width: 1,
-                    bit_offset: 21,
-                    group_index: 0,
-                    quantization: None,
-                    prediction: PredictionMode::None,
-                    smoothing: None,
-                    interpolation: InterpolationMode::None,
-                    skip_delta: false,
-                },
-            ],
-            field_groups: vec![FieldGroup {
-                name: "default".to_string(),
-                priority: Priority::Medium,
-                max_tick_rate: 0,
-                bitmask_range: (0, 2),
-            }],
-            total_bits: 22,
-            bitmask_byte_count: 1,
-        };
+        use crate::schema::types::test_fixtures::schema_with_quantization_and_smoothing;
+        let schema = schema_with_quantization_and_smoothing();
         let bytes1 = export_schema(&schema);
         let bytes2 = export_schema(&schema);
         assert_eq!(bytes1, bytes2);

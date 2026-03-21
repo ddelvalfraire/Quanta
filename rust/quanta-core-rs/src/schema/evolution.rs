@@ -74,6 +74,12 @@ impl<'a> Reader<'a> {
 
     fn read_string(&mut self) -> Result<String, SchemaError> {
         let len = self.read_u16()? as usize;
+        if len > MAX_STRING_LEN {
+            return Err(SchemaError::ParseError(format!(
+                "string length {} exceeds maximum {}",
+                len, MAX_STRING_LEN
+            )));
+        }
         if self.pos + len > self.data.len() {
             return Err(SchemaError::ParseError(
                 "unexpected end of data reading string".into(),
@@ -86,6 +92,8 @@ impl<'a> Reader<'a> {
         Ok(s)
     }
 }
+
+const MAX_STRING_LEN: usize = 4096;
 
 /// Import a `CompiledSchema` from the QSCH binary format produced by `export_schema`.
 pub fn import_schema(bytes: &[u8]) -> Result<CompiledSchema, SchemaError> {
@@ -160,14 +168,11 @@ fn parse_field(r: &mut Reader) -> Result<FieldMeta, SchemaError> {
         let max = r.read_f64()?;
         let precision = r.read_f64()?;
 
-        let raw = ((max - min) / precision).floor();
-        if !raw.is_finite() || raw < 0.0 || raw >= u64::MAX as f64 {
-            return Err(SchemaError::ParseError(format!(
+        let (num_values, bits) = quantize_bits(precision, min, max).ok_or_else(|| {
+            SchemaError::ParseError(format!(
                 "invalid quantization range for field {name}: min={min}, max={max}, precision={precision}"
-            )));
-        }
-        let num_values = raw as u64 + 1;
-        let bits = ceil_log2_u64(num_values);
+            ))
+        })?;
         let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
         Some(QuantizationParams {
             min,
@@ -199,10 +204,10 @@ fn parse_field(r: &mut Reader) -> Result<FieldMeta, SchemaError> {
     // Enum(3) with bit_width=2 imports as Enum(4). This does not affect compatibility
     // checks which compare the full FieldType (including variant count).
     let variant_count = match type_byte {
-        12 => {
+        12 /* Enum */ => {
             if bit_width == 0 { 1 } else { 1u16 << bit_width }
         }
-        13 => bit_width as u16,
+        13 /* Flags */ => bit_width as u16,
         _ => 0,
     };
 
@@ -324,121 +329,7 @@ pub fn check_schema_compatibility(
 mod tests {
     use super::*;
     use crate::schema::export::export_schema;
-
-    fn minimal_schema() -> CompiledSchema {
-        CompiledSchema {
-            version: 1,
-            fields: vec![FieldMeta {
-                name: "alive".to_string(),
-                field_type: FieldType::Bool,
-                bit_width: 1,
-                bit_offset: 0,
-                group_index: 0,
-                quantization: None,
-                prediction: PredictionMode::None,
-                smoothing: None,
-                interpolation: InterpolationMode::None,
-                skip_delta: false,
-            }],
-            field_groups: vec![FieldGroup {
-                name: "default".to_string(),
-                priority: Priority::Medium,
-                max_tick_rate: 0,
-                bitmask_range: (0, 1),
-            }],
-            total_bits: 1,
-            bitmask_byte_count: 1,
-        }
-    }
-
-    fn two_field_schema() -> CompiledSchema {
-        CompiledSchema {
-            version: 1,
-            fields: vec![
-                FieldMeta {
-                    name: "alive".to_string(),
-                    field_type: FieldType::Bool,
-                    bit_width: 1,
-                    bit_offset: 0,
-                    group_index: 0,
-                    quantization: None,
-                    prediction: PredictionMode::None,
-                    smoothing: None,
-                    interpolation: InterpolationMode::None,
-                    skip_delta: false,
-                },
-                FieldMeta {
-                    name: "health".to_string(),
-                    field_type: FieldType::U16,
-                    bit_width: 16,
-                    bit_offset: 1,
-                    group_index: 0,
-                    quantization: None,
-                    prediction: PredictionMode::None,
-                    smoothing: None,
-                    interpolation: InterpolationMode::None,
-                    skip_delta: false,
-                },
-            ],
-            field_groups: vec![FieldGroup {
-                name: "default".to_string(),
-                priority: Priority::Medium,
-                max_tick_rate: 0,
-                bitmask_range: (0, 2),
-            }],
-            total_bits: 17,
-            bitmask_byte_count: 1,
-        }
-    }
-
-    fn schema_with_quantization_and_smoothing() -> CompiledSchema {
-        CompiledSchema {
-            version: 1,
-            fields: vec![
-                FieldMeta {
-                    name: "x".to_string(),
-                    field_type: FieldType::F32,
-                    bit_width: 21,
-                    bit_offset: 0,
-                    group_index: 0,
-                    quantization: Some(QuantizationParams {
-                        min: -10000.0,
-                        max: 10000.0,
-                        precision: 0.01,
-                        num_values: 2_000_001,
-                        mask: (1u64 << 21) - 1,
-                    }),
-                    prediction: PredictionMode::InputReplay,
-                    smoothing: Some(SmoothingParams {
-                        mode: SmoothingMode::Lerp,
-                        params: vec![0.1],
-                    }),
-                    interpolation: InterpolationMode::Linear,
-                    skip_delta: false,
-                },
-                FieldMeta {
-                    name: "alive".to_string(),
-                    field_type: FieldType::Bool,
-                    bit_width: 1,
-                    bit_offset: 21,
-                    group_index: 0,
-                    quantization: None,
-                    prediction: PredictionMode::None,
-                    smoothing: None,
-                    interpolation: InterpolationMode::None,
-                    skip_delta: false,
-                },
-            ],
-            field_groups: vec![FieldGroup {
-                name: "default".to_string(),
-                priority: Priority::Medium,
-                max_tick_rate: 0,
-                bitmask_range: (0, 2),
-            }],
-            total_bits: 22,
-            bitmask_byte_count: 1,
-        }
-    }
+    use crate::schema::types::test_fixtures::*;
 
     // --- import_schema tests ---
 
