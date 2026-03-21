@@ -1,0 +1,20 @@
+{
+  "name": "@quanta/client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@quanta/delta-decoder": "0.1.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4"
+  }
+}
