@@ -2,7 +2,7 @@ import { loadDecoder } from "@quanta/delta-decoder";
 import type { QuantaDecoder } from "@quanta/delta-decoder";
 import { ActorChannel } from "./actor-channel.js";
 import { SchemaCache } from "./schema-cache.js";
-import type { ClientOptions, JoinOptions } from "./types.js";
+import type { JoinOptions } from "./types.js";
 
 /**
  * Top-level Quanta client.
@@ -12,16 +12,12 @@ import type { ClientOptions, JoinOptions } from "./types.js";
  * Phoenix Channel connection and wire up events to ActorChannel methods.
  */
 export class QuantaClient {
-  readonly url: string;
-  readonly token: string;
   readonly schemas: SchemaCache;
 
   private decoder: QuantaDecoder | null = null;
   private channels = new Map<string, ActorChannel>();
 
-  constructor(opts: ClientOptions) {
-    this.url = opts.url;
-    this.token = opts.token;
+  constructor() {
     this.schemas = new SchemaCache();
   }
 
@@ -50,6 +46,10 @@ export class QuantaClient {
   ): ActorChannel {
     if (!this.decoder) {
       throw new Error("QuantaClient.connect() must be called before joinActor()");
+    }
+
+    if (!opts.schemaBytes) {
+      throw new Error("schemaBytes required in JoinOptions (server-side schema delivery not yet implemented)");
     }
 
     const schemaKey = `${namespace}:${actorType}`;

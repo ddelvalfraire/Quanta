@@ -30,6 +30,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
+            ~/.cargo/bin
             ~/.cargo/registry
             ~/.cargo/git
             rust/quanta-wasm-decoder/target
@@ -37,7 +38,7 @@ jobs:
           restore-keys: wasm-${{ runner.os }}-
 
       - name: Install wasm-pack
-        run: cargo install wasm-pack --locked
+        run: command -v wasm-pack || cargo install wasm-pack --locked
 
       - name: Run native tests (quanta-core-rs)
         working-directory: rust
@@ -46,6 +47,10 @@ jobs:
       - name: Run native tests (quanta-wasm-decoder)
         working-directory: rust/quanta-wasm-decoder
         run: cargo test
+
+      - name: Run WASM browser tests
+        working-directory: rust/quanta-wasm-decoder
+        run: wasm-pack test --headless --chrome
 
       - name: Build WASM (release)
         working-directory: rust/quanta-wasm-decoder

@@ -6,7 +6,7 @@ use quanta_core_rs::delta::encoder::{compute_delta, quantize, write_state};
 use quanta_core_rs::schema::export::export_schema;
 use quanta_core_rs::schema::types::test_fixtures::*;
 
-use quanta_wasm_decoder::{create_schema, decode_state, encode_state, wasm_apply_delta};
+use quanta_wasm_decoder::{create_schema, decode_state, encode_state, apply_delta};
 
 fn schema_bytes_two_field() -> Vec<u8> {
     export_schema(&two_field_schema())
@@ -38,7 +38,7 @@ fn apply_delta_two_field_roundtrip() {
     let new = write_state(&schema, &[0, 65535]);
     let delta = compute_delta(&schema, &old, &new, None).unwrap();
 
-    let result = wasm_apply_delta(&handle, &old, &delta).unwrap();
+    let result = apply_delta(&handle, &old, &delta).unwrap();
     assert_eq!(result, new);
 }
 
@@ -48,7 +48,7 @@ fn apply_empty_delta_returns_current() {
     let handle = create_schema(&schema_bytes_two_field()).unwrap();
     let state = write_state(&schema, &[1, 42]);
 
-    let result = wasm_apply_delta(&handle, &state, &[]).unwrap();
+    let result = apply_delta(&handle, &state, &[]).unwrap();
     assert_eq!(result, state);
 }
 
@@ -65,7 +65,7 @@ fn apply_delta_quantized_roundtrip() {
     let new = write_state(&schema, &[new_x, 0]);
     let delta = compute_delta(&schema, &old, &new, None).unwrap();
 
-    let result = wasm_apply_delta(&handle, &old, &delta).unwrap();
+    let result = apply_delta(&handle, &old, &delta).unwrap();
     assert_eq!(result, new);
 }
 

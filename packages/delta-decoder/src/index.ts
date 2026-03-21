@@ -6,36 +6,19 @@
  * a `QuantaDecoder` interface for working with binary delta state.
  */
 
-// Re-export the SchemaHandle type from the WASM module's generated typings.
-// At runtime this is an opaque wasm-bindgen handle; callers only need the type.
 export type { SchemaHandle } from "../wasm/quanta_wasm_decoder.js";
+
+type SchemaHandle = import("../wasm/quanta_wasm_decoder.js").SchemaHandle;
 
 /** Decoded state: a record of field names to their JS-native values. */
 export type DecodedState = Record<string, number | boolean>;
 
 /** Interface wrapping the raw WASM exports into an ergonomic API. */
 export interface QuantaDecoder {
-  /** Parse QSCH binary bytes into a reusable SchemaHandle. */
-  createSchema(bytes: Uint8Array): import("../wasm/quanta_wasm_decoder.js").SchemaHandle;
-
-  /** Apply a binary delta to the current state, returning new state bytes. */
-  applyDelta(
-    schema: import("../wasm/quanta_wasm_decoder.js").SchemaHandle,
-    state: Uint8Array,
-    delta: Uint8Array,
-  ): Uint8Array;
-
-  /** Decode packed state bytes into a JS object `{ fieldName: value }`. */
-  decodeState(
-    schema: import("../wasm/quanta_wasm_decoder.js").SchemaHandle,
-    state: Uint8Array,
-  ): DecodedState;
-
-  /** Encode a JS object `{ fieldName: value }` into packed state bytes. */
-  encodeState(
-    schema: import("../wasm/quanta_wasm_decoder.js").SchemaHandle,
-    stateObj: DecodedState,
-  ): Uint8Array;
+  createSchema(bytes: Uint8Array): SchemaHandle;
+  applyDelta(schema: SchemaHandle, state: Uint8Array, delta: Uint8Array): Uint8Array;
+  decodeState(schema: SchemaHandle, state: Uint8Array): DecodedState;
+  encodeState(schema: SchemaHandle, stateObj: DecodedState): Uint8Array;
 }
 
 let cached: QuantaDecoder | null = null;
@@ -57,7 +40,7 @@ export async function loadDecoder(): Promise<QuantaDecoder> {
     const decoder: QuantaDecoder = {
       createSchema: (bytes) => wasm.create_schema(bytes),
       applyDelta: (schema, state, delta) =>
-        wasm.wasm_apply_delta(schema, state, delta),
+        wasm.apply_delta(schema, state, delta),
       decodeState: (schema, state) =>
         wasm.decode_state(schema, state) as DecodedState,
       encodeState: (schema, stateObj) =>

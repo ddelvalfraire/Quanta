@@ -52,20 +52,23 @@ export class SchemaCache {
     this.removeBytes(key);
   }
 
-  /** Clear all cached schemas. */
+  /** Clear all cached schemas and their localStorage entries. */
   clear(): void {
-    for (const handle of this.handles.values()) {
+    for (const [key, handle] of this.handles) {
       handle.free();
+      this.removeBytes(key);
     }
     this.handles.clear();
   }
 
   private persistBytes(key: string, bytes: Uint8Array): void {
     try {
-      localStorage.setItem(
-        this.storagePrefix + key,
-        btoa(String.fromCharCode(...bytes)),
-      );
+      const CHUNK = 8192;
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += CHUNK) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+      }
+      localStorage.setItem(this.storagePrefix + key, btoa(binary));
     } catch {
       // localStorage may be unavailable (SSR, quota exceeded)
     }

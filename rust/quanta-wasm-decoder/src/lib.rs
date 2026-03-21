@@ -1,12 +1,12 @@
 use wasm_bindgen::prelude::*;
 
 use quanta_core_rs::delta::encoder::{
-    apply_delta, dequantize, quantize_field, read_state, sign_extend, write_state,
+    self as core_encoder, dequantize, field_is_active, quantize_field, read_state, sign_extend,
+    write_state,
 };
 use quanta_core_rs::schema::evolution::import_schema;
-use quanta_core_rs::schema::{CompiledSchema, FieldType};
+use quanta_core_rs::schema::{CompiledSchema, FieldMeta, FieldType};
 
-/// Opaque handle wrapping a parsed CompiledSchema.
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct SchemaHandle {
@@ -15,26 +15,22 @@ pub struct SchemaHandle {
 
 #[wasm_bindgen]
 impl SchemaHandle {
-    /// Number of fields in the schema.
     #[wasm_bindgen(getter)]
     pub fn field_count(&self) -> usize {
         self.schema.fields.len()
     }
 
-    /// Schema version byte.
     #[wasm_bindgen(getter)]
     pub fn version(&self) -> u8 {
         self.schema.version
     }
 
-    /// Total state size in bits.
     #[wasm_bindgen(getter)]
     pub fn total_bits(&self) -> u32 {
         self.schema.total_bits
     }
 }
 
-/// Parse QSCH binary bytes into a reusable SchemaHandle.
 #[wasm_bindgen]
 pub fn create_schema(bytes: &[u8]) -> Result<SchemaHandle, JsError> {
     let schema = import_schema(bytes).map_err(|e| JsError::new(&e.to_string()))?;
@@ -43,12 +39,13 @@ pub fn create_schema(bytes: &[u8]) -> Result<SchemaHandle, JsError> {
 
 /// Apply a binary delta to the current state, returning the new state bytes.
 #[wasm_bindgen]
-pub fn wasm_apply_delta(
+pub fn apply_delta(
     handle: &SchemaHandle,
     state: &[u8],
     delta: &[u8],
 ) -> Result<Vec<u8>, JsError> {
-    apply_delta(&handle.schema, state, delta).map_err(|e| JsError::new(&e.to_string()))
+    core_encoder::apply_delta(&handle.schema, state, delta)
+        .map_err(|e| JsError::new(&e.to_string()))
 }
 
 /// Decode packed state bytes into a JS object `{ fieldName: value, ... }`.
@@ -67,7 +64,7 @@ pub fn decode_state(handle: &SchemaHandle, state: &[u8]) -> Result<JsValue, JsEr
     let obj = js_sys::Object::new();
 
     for (i, field) in schema.fields.iter().enumerate() {
-        if field.skip_delta || field.bit_width == 0 {
+        if !field_is_active(field) {
             continue;
         }
 
@@ -94,7 +91,7 @@ pub fn encode_state(handle: &SchemaHandle, state_obj: JsValue) -> Result<Vec<u8>
     let mut values = vec![0u64; schema.fields.len()];
 
     for (i, field) in schema.fields.iter().enumerate() {
-        if field.skip_delta || field.bit_width == 0 {
+        if !field_is_active(field) {
             continue;
         }
 
@@ -112,8 +109,7 @@ pub fn encode_state(handle: &SchemaHandle, state_obj: JsValue) -> Result<Vec<u8>
     Ok(write_state(schema, &values))
 }
 
-/// Convert a raw u64 value to JS, matching the NIF's decode_value_to_term.
-fn decode_value(field: &quanta_core_rs::schema::FieldMeta, value: u64) -> JsValue {
+fn decode_value(field: &FieldMeta, value: u64) -> JsValue {
     if let Some(ref params) = field.quantization {
         return JsValue::from_f64(dequantize(value, params));
     }
@@ -135,42 +131,40 @@ fn decode_value(field: &quanta_core_rs::schema::FieldMeta, value: u64) -> JsValu
     }
 }
 
-/// Convert a JS value to raw u64, matching the NIF's encode_term_to_value.
-fn encode_value(
-    field: &quanta_core_rs::schema::FieldMeta,
-    js_val: &JsValue,
-) -> Result<u64, JsError> {
+fn expect_f64(field: &FieldMeta, js_val: &JsValue) -> Result<f64, JsError> {
+    js_val
+        .as_f64()
+        .ok_or_else(|| JsError::new(&format!("expected number for field '{}'", field.name)))
+}
+
+fn encode_value(field: &FieldMeta, js_val: &JsValue) -> Result<u64, JsError> {
     if let Some(ref params) = field.quantization {
-        let f = js_val
-            .as_f64()
-            .ok_or_else(|| JsError::new(&format!("expected number for quantized field '{}'", field.name)))?;
+        let f = js_val.as_f64().ok_or_else(|| {
+            JsError::new(&format!(
+                "expected number for quantized field '{}'",
+                field.name
+            ))
+        })?;
         return quantize_field(f, params, &field.name).map_err(|e| JsError::new(&e.to_string()));
     }
 
     match field.field_type {
         FieldType::Bool => {
-            let b = js_val.as_bool().unwrap_or_else(|| {
-                // Fallback: treat truthy numbers as true
-                js_val.as_f64().map(|n| n != 0.0).unwrap_or(false)
-            });
+            let b = js_val
+                .as_bool()
+                .ok_or_else(|| JsError::new(&format!("expected boolean for field '{}'", field.name)))?;
             Ok(b as u64)
         }
         FieldType::F32 => {
-            let f = js_val
-                .as_f64()
-                .ok_or_else(|| JsError::new(&format!("expected number for field '{}'", field.name)))?;
+            let f = expect_f64(field, js_val)?;
             Ok((f as f32).to_bits() as u64)
         }
         FieldType::F64 => {
-            let f = js_val
-                .as_f64()
-                .ok_or_else(|| JsError::new(&format!("expected number for field '{}'", field.name)))?;
+            let f = expect_f64(field, js_val)?;
             Ok(f.to_bits())
         }
         _ => {
-            let f = js_val
-                .as_f64()
-                .ok_or_else(|| JsError::new(&format!("expected number for field '{}'", field.name)))?;
+            let f = expect_f64(field, js_val)?;
             let i = f as i64;
             let mask = if field.bit_width >= 64 {
                 u64::MAX
@@ -212,7 +206,7 @@ mod tests {
         let new = write_state(&schema, &[1, 200]);
         let delta = compute_delta(&schema, &old, &new, None).unwrap();
 
-        let result = wasm_apply_delta(&handle, &old, &delta).unwrap();
+        let result = apply_delta(&handle, &old, &delta).unwrap();
         assert_eq!(result, new);
     }
 
@@ -222,7 +216,7 @@ mod tests {
         let handle = roundtrip_schema(&schema);
         let state = write_state(&schema, &[1, 100]);
 
-        let result = wasm_apply_delta(&handle, &state, &[]).unwrap();
+        let result = apply_delta(&handle, &state, &[]).unwrap();
         assert_eq!(result, state);
     }
 
@@ -239,7 +233,7 @@ mod tests {
         let new = write_state(&schema, &[new_x, 0]);
         let delta = compute_delta(&schema, &old, &new, None).unwrap();
 
-        let result = wasm_apply_delta(&handle, &old, &delta).unwrap();
+        let result = apply_delta(&handle, &old, &delta).unwrap();
         assert_eq!(result, new);
     }
 

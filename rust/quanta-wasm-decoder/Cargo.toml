@@ -16,6 +16,8 @@ serde-wasm-bindgen = "0.6"
 quanta-core-rs = { path = "../quanta-core-rs", features = ["test-support"] }
 wasm-bindgen-test = "0.3"
 
+# wasm-opt disabled: bundled binary crashes on macOS/CI (wasm-pack 0.14).
+# Release build with opt-level=z + LTO achieves 30KB gzipped without it.
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = false
 

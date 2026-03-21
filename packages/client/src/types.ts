@@ -1,19 +1,9 @@
 import type { DecodedState, SchemaHandle } from "@quanta/delta-decoder";
 
-/** Connection options for QuantaClient. */
-export interface ClientOptions {
-  /** WebSocket URL, e.g. "wss://example.com/socket/websocket" */
-  url: string;
-  /** Auth token sent as a socket param. */
-  token: string;
-}
-
 /** Options for joining an actor channel. */
 export interface JoinOptions {
-  /** QSCH schema bytes. Required until server-side schema delivery is implemented. */
-  schemaBytes: Uint8Array;
-  /** Optional params sent with the join message. */
-  params?: Record<string, unknown>;
+  /** QSCH schema bytes. Optional once server-side schema delivery is implemented. */
+  schemaBytes?: Uint8Array;
 }
 
 /** Events emitted by an ActorChannel. */
