@@ -4,7 +4,7 @@ use super::types::*;
 pub const MAGIC: &[u8; 4] = b"QSCH";
 
 /// Current format version.
-pub const FORMAT_VERSION: u8 = 1;
+pub const FORMAT_VERSION: u8 = 2;
 
 /// Export a CompiledSchema to deterministic big-endian binary format.
 ///
@@ -39,16 +39,13 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
         buf.extend_from_slice(&field.bit_offset.to_be_bytes());
         buf.push(field.group_index);
 
-        // flags: bit 0 = skip_delta, bit 1 = has_quantization, bit 2 = has_smoothing
+        // flags: bit 0 = skip_delta, bit 1 = has_quantization
         let mut flags: u8 = 0;
         if field.skip_delta {
             flags |= 0x01;
         }
         if field.quantization.is_some() {
             flags |= 0x02;
-        }
-        if field.smoothing.is_some() {
-            flags |= 0x04;
         }
         buf.push(flags);
 
@@ -62,14 +59,10 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
             buf.extend_from_slice(&qp.precision.to_be_bytes());
         }
 
-        // Optional smoothing params
-        if let Some(ref sp) = field.smoothing {
-            buf.push(sp.mode.as_byte());
-            buf.push(sp.params.len() as u8);
-            for p in &sp.params {
-                buf.extend_from_slice(&p.to_be_bytes());
-            }
-        }
+        // Smoothing params (always present)
+        buf.push(field.smoothing.mode.as_byte());
+        buf.extend_from_slice(&field.smoothing.duration_ms.to_be_bytes());
+        buf.extend_from_slice(&field.smoothing.max_distance.to_be_bytes());
     }
 
     // Groups
@@ -101,7 +94,11 @@ mod tests {
                 group_index: 0,
                 quantization: None,
                 prediction: PredictionMode::None,
-                smoothing: None,
+                smoothing: SmoothingParams {
+                    mode: SmoothingMode::Snap,
+                    duration_ms: 0,
+                    max_distance: 0.0,
+                },
                 interpolation: InterpolationMode::None,
                 skip_delta: false,
             }],
@@ -125,7 +122,7 @@ mod tests {
     #[test]
     fn format_version() {
         let bytes = export_schema(&minimal_schema());
-        assert_eq!(bytes[4], FORMAT_VERSION);
+        assert_eq!(bytes[4], 2);
     }
 
     #[test]
@@ -269,10 +266,11 @@ mod tests {
                         mask: (1u64 << 21) - 1,
                     }),
                     prediction: PredictionMode::InputReplay,
-                    smoothing: Some(SmoothingParams {
+                    smoothing: SmoothingParams {
                         mode: SmoothingMode::Lerp,
-                        params: vec![0.1],
-                    }),
+                        duration_ms: 100,
+                        max_distance: 0.0,
+                    },
                     interpolation: InterpolationMode::Linear,
                     skip_delta: false,
                 },
@@ -284,7 +282,11 @@ mod tests {
                     group_index: 0,
                     quantization: None,
                     prediction: PredictionMode::None,
-                    smoothing: None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
                     interpolation: InterpolationMode::None,
                     skip_delta: false,
                 },

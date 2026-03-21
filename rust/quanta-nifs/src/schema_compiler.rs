@@ -11,9 +11,17 @@ mod atoms {
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn schema_compile<'a>(env: Env<'a>, wit_source: String, type_name: String) -> Term<'a> {
+fn schema_compile<'a>(
+    env: Env<'a>,
+    wit_source: String,
+    type_name: String,
+    prediction_enabled: bool,
+) -> Term<'a> {
     crate::macros::nif_safe!(env, {
-        match schema::compile_schema(&wit_source, &type_name) {
+        let opts = schema::CompileOptions {
+            prediction_enabled,
+        };
+        match schema::compile_schema(&wit_source, &type_name, &opts) {
             Ok((compiled, warnings)) => {
                 let resource = ResourceArc::new(CompiledSchemaResource(compiled));
                 let warning_terms: Vec<Term> =

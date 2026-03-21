@@ -340,9 +340,13 @@ defmodule Quanta.Nifs.Native do
 
   # --- Schema Compiler ---
 
-  @spec schema_compile(wit_source :: String.t(), type_name :: String.t()) ::
-          {:ok, reference(), [String.t()]} | {:error, String.t()}
-  def schema_compile(_wit_source, _type_name), do: :erlang.nif_error(:nif_not_loaded)
+  @spec schema_compile(
+          wit_source :: String.t(),
+          type_name :: String.t(),
+          prediction_enabled :: boolean()
+        ) :: {:ok, reference(), [String.t()]} | {:error, String.t()}
+  def schema_compile(_wit_source, _type_name, _prediction_enabled),
+    do: :erlang.nif_error(:nif_not_loaded)
 
   @spec schema_export(schema :: reference()) :: {:ok, binary()}
   def schema_export(_schema), do: :erlang.nif_error(:nif_not_loaded)
