@@ -298,4 +298,146 @@ record player-state {
         assert_eq!(bytes1, bytes2);
         assert_eq!(&bytes1[0..4], b"QSCH");
     }
+
+    #[test]
+    fn compile_three_group_bitmask_ranges() {
+        let wit = r#"
+record entity-state {
+    /// @quanta:field_group(spatial)
+    /// @quanta:priority(critical)
+    pos-x: f32,
+
+    /// @quanta:field_group(spatial)
+    /// @quanta:priority(critical)
+    pos-y: f32,
+
+    /// @quanta:field_group(spatial)
+    /// @quanta:priority(critical)
+    pos-z: f32,
+
+    /// @quanta:field_group(combat)
+    /// @quanta:priority(high)
+    health: u16,
+
+    /// @quanta:field_group(combat)
+    /// @quanta:priority(high)
+    mana: u16,
+
+    /// @quanta:field_group(combat)
+    /// @quanta:priority(high)
+    damage: u8,
+
+    /// @quanta:field_group(combat)
+    /// @quanta:priority(high)
+    armor: u8,
+
+    /// @quanta:field_group(inventory)
+    /// @quanta:priority(low)
+    slot1: u8,
+
+    /// @quanta:field_group(inventory)
+    /// @quanta:priority(low)
+    slot2: u8,
+
+    /// @quanta:field_group(inventory)
+    /// @quanta:priority(low)
+    slot3: u8,
+}
+"#;
+
+        let (schema, warnings) = compile_schema(wit, "entity-state").unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(schema.fields.len(), 10);
+
+        // Groups sorted: critical → high → low
+        assert_eq!(schema.field_groups.len(), 3);
+        assert_eq!(schema.field_groups[0].name, "spatial");
+        assert_eq!(schema.field_groups[0].priority, Priority::Critical);
+        assert_eq!(schema.field_groups[1].name, "combat");
+        assert_eq!(schema.field_groups[1].priority, Priority::High);
+        assert_eq!(schema.field_groups[2].name, "inventory");
+        assert_eq!(schema.field_groups[2].priority, Priority::Low);
+
+        // Bitmask ranges: 3 spatial, 4 combat, 3 inventory
+        assert_eq!(schema.field_groups[0].bitmask_range, (0, 3));
+        assert_eq!(schema.field_groups[1].bitmask_range, (3, 7));
+        assert_eq!(schema.field_groups[2].bitmask_range, (7, 10));
+
+        // Field bit_offsets respect group ordering (spatial fields come first)
+        let field = |name: &str| schema.fields.iter().find(|f| f.name == name).unwrap();
+        assert!(field("pos-x").bit_offset < field("health").bit_offset);
+        assert!(field("health").bit_offset < field("slot1").bit_offset);
+    }
+
+    #[test]
+    fn compile_ungrouped_fields_in_default_group() {
+        let wit = r#"
+record entity-state {
+    /// @quanta:field_group(alpha)
+    /// @quanta:priority(high)
+    f1: u8,
+
+    /// @quanta:field_group(alpha)
+    /// @quanta:priority(high)
+    f2: u8,
+
+    f3: bool,
+
+    f4: u16,
+
+    f5: u8,
+
+    /// @quanta:field_group(zeta)
+    /// @quanta:priority(low)
+    f6: u8,
+}
+"#;
+
+        let (schema, _) = compile_schema(wit, "entity-state").unwrap();
+
+        // Sorted: alpha(high) → default(medium) → zeta(low)
+        assert_eq!(schema.field_groups.len(), 3);
+        assert_eq!(schema.field_groups[0].name, "alpha");
+        assert_eq!(schema.field_groups[0].priority, Priority::High);
+        assert_eq!(schema.field_groups[1].name, "default");
+        assert_eq!(schema.field_groups[1].priority, Priority::Medium);
+        assert_eq!(schema.field_groups[2].name, "zeta");
+        assert_eq!(schema.field_groups[2].priority, Priority::Low);
+
+        // Bitmask ranges: 2 alpha, 3 default, 1 zeta
+        assert_eq!(schema.field_groups[0].bitmask_range, (0, 2));
+        assert_eq!(schema.field_groups[1].bitmask_range, (2, 5));
+        assert_eq!(schema.field_groups[2].bitmask_range, (5, 6));
+
+        // Ungrouped fields have group_index pointing to "default"
+        let field = |name: &str| schema.fields.iter().find(|f| f.name == name).unwrap();
+        assert_eq!(field("f3").group_index, 1);
+        assert_eq!(field("f4").group_index, 1);
+        assert_eq!(field("f5").group_index, 1);
+    }
+
+    #[test]
+    fn compile_group_priority_from_highest_field() {
+        let wit = r#"
+record entity-state {
+    /// @quanta:field_group(mixed)
+    /// @quanta:priority(low)
+    a: u8,
+
+    /// @quanta:field_group(mixed)
+    /// @quanta:priority(high)
+    b: u8,
+
+    /// @quanta:field_group(mixed)
+    c: u8,
+}
+"#;
+
+        let (schema, _) = compile_schema(wit, "entity-state").unwrap();
+
+        // Group adopts highest priority (High) from field "b"
+        assert_eq!(schema.field_groups.len(), 1);
+        assert_eq!(schema.field_groups[0].name, "mixed");
+        assert_eq!(schema.field_groups[0].priority, Priority::High);
+    }
 }

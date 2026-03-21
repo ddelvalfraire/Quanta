@@ -105,7 +105,7 @@ pub fn compute_layout(
     }
 
     let total_bits = current_bit_offset;
-    let bitmask_byte_count = ((fields.len() + 7) / 8) as u8;
+    let bitmask_byte_count = fields.len().div_ceil(8) as u8;
 
     Ok(LayoutResult {
         fields,
