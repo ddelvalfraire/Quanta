@@ -1,0 +1,20 @@
+{
+  "name": "@quanta/delta-decoder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "wasm"
+  ],
+  "scripts": {
+    "build:wasm": "cd ../../rust/quanta-wasm-decoder && PATH=\"$HOME/.cargo/bin:$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH\" wasm-pack build --target web --release --out-dir ../../packages/delta-decoder/wasm",
+    "build:ts": "tsc",
+    "build": "npm run build:wasm && npm run build:ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.4"
+  }
+}

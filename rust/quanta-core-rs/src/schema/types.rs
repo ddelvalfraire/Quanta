@@ -460,7 +460,7 @@ mod tests {
 }
 
 /// Shared test fixtures for schema tests.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_fixtures {
     use super::*;
 

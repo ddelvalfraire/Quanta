@@ -1,0 +1,82 @@
+name: WASM Build & Test
+
+on:
+  push:
+    paths:
+      - "rust/quanta-core-rs/**"
+      - "rust/quanta-wasm-decoder/**"
+      - "packages/**"
+      - ".github/workflows/wasm.yml"
+  pull_request:
+    paths:
+      - "rust/quanta-core-rs/**"
+      - "rust/quanta-wasm-decoder/**"
+      - "packages/**"
+      - ".github/workflows/wasm.yml"
+
+jobs:
+  wasm-build:
+    name: Build & Test WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/quanta-wasm-decoder/target
+          key: wasm-${{ runner.os }}-${{ hashFiles('rust/quanta-wasm-decoder/Cargo.lock') }}
+          restore-keys: wasm-${{ runner.os }}-
+
+      - name: Install wasm-pack
+        run: command -v wasm-pack || cargo install wasm-pack --locked
+
+      - name: Run native tests (quanta-core-rs)
+        working-directory: rust
+        run: cargo test
+
+      - name: Run native tests (quanta-wasm-decoder)
+        working-directory: rust/quanta-wasm-decoder
+        run: cargo test
+
+      - name: Run WASM browser tests
+        working-directory: rust/quanta-wasm-decoder
+        run: wasm-pack test --headless --chrome
+
+      - name: Build WASM (release)
+        working-directory: rust/quanta-wasm-decoder
+        run: wasm-pack build --target web --release --out-dir ../../packages/delta-decoder/wasm
+
+      - name: Check WASM gzipped size < 50KB
+        run: |
+          SIZE=$(gzip -c packages/delta-decoder/wasm/quanta_wasm_decoder_bg.wasm | wc -c)
+          echo "Gzipped WASM size: ${SIZE} bytes"
+          if [ "$SIZE" -gt 51200 ]; then
+            echo "::error::WASM gzipped size ${SIZE} exceeds 50KB limit"
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build delta-decoder TypeScript
+        working-directory: packages/delta-decoder
+        run: npx tsc
+
+      - name: TypeScript type-check (client)
+        working-directory: packages/client
+        run: npx tsc --noEmit

@@ -1,7 +1,7 @@
 use super::{BitReader, BitWriter, DeltaError, DeltaHeader, FieldBitmask, HEADER_SIZE};
 use crate::schema::{CompiledSchema, FieldMeta, FieldType, QuantizationParams};
 
-fn field_is_active(field: &FieldMeta) -> bool {
+pub fn field_is_active(field: &FieldMeta) -> bool {
     !field.skip_delta && field.bit_width > 0
 }
 
