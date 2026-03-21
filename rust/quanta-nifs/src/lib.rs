@@ -8,6 +8,7 @@ mod loro_engine;
 mod ephemeral_store;
 mod nats;
 mod schema_compiler;
+mod delta_encoder;
 
 use rustler::Env;
 
