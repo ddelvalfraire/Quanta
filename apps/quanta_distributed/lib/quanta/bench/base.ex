@@ -45,12 +45,24 @@ defmodule Quanta.Bench.Base do
     warmup = Keyword.get(opts, :warmup, 2)
     time = Keyword.get(opts, :time, 5)
 
-    Benchee.run(scenarios,
+    benchee_opts = [
       warmup: warmup,
       time: time,
       formatters: formatters(tier),
       print: [configuration: false]
-    )
+    ]
+
+    forwarded = [:memory_time, :parallel]
+
+    benchee_opts =
+      Enum.reduce(forwarded, benchee_opts, fn key, acc ->
+        case Keyword.fetch(opts, key) do
+          {:ok, val} -> Keyword.put(acc, key, val)
+          :error -> acc
+        end
+      end)
+
+    Benchee.run(scenarios, benchee_opts)
 
     :ok
   end
