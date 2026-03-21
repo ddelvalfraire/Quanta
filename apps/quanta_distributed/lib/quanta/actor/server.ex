@@ -9,8 +9,9 @@ defmodule Quanta.Actor.Server do
   use GenServer
 
   alias Quanta.Actor.{CrdtOps, DynSup, EffectExecutor, ManifestRegistry, Registry}
+  alias Quanta.Actor.SchemaEvolution
   alias Quanta.Envelope
-  alias Quanta.Nifs.{DeltaEncoder, EphemeralStore, LoroEngine}
+  alias Quanta.Nifs.{DeltaEncoder, EphemeralStore, LoroEngine, SchemaCompiler}
 
   require Logger
 
@@ -32,6 +33,9 @@ defmodule Quanta.Actor.Server do
     :loro_doc,
     :ephemeral_store,
     :last_version,
+    :schema_ref,
+    :schema_bytes,
+    :schema_version,
     :compiled_schema,
     status: :activating,
     events_since_snapshot: 0,
@@ -42,7 +46,8 @@ defmodule Quanta.Actor.Server do
     rate_count: 0,
     rate_window: 0,
     rate_limit: 1_000,
-    last_active_at: 0
+    last_active_at: 0,
+    delta_seq: 0
   ]
 
   @type t :: %__MODULE__{
@@ -55,6 +60,9 @@ defmodule Quanta.Actor.Server do
           loro_doc: reference() | nil,
           ephemeral_store: reference() | nil,
           last_version: binary() | nil,
+          schema_ref: reference() | nil,
+          schema_bytes: binary() | nil,
+          schema_version: pos_integer() | nil,
           compiled_schema: reference() | nil,
           status: :activating | :active,
           events_since_snapshot: non_neg_integer(),
@@ -65,7 +73,8 @@ defmodule Quanta.Actor.Server do
           rate_count: non_neg_integer(),
           rate_window: integer(),
           rate_limit: pos_integer(),
-          last_active_at: integer()
+          last_active_at: integer(),
+          delta_seq: non_neg_integer()
         }
 
   def child_spec(opts) do
@@ -128,6 +137,12 @@ defmodule Quanta.Actor.Server do
   @spec get_crdt_snapshot(pid()) :: {:ok, binary()} | {:error, :not_crdt | String.t()}
   def get_crdt_snapshot(pid) do
     GenServer.call(pid, :get_crdt_snapshot)
+  end
+
+  @spec get_schema_info(pid()) ::
+          {:ok, reference(), binary(), pos_integer()} | {:error, :no_schema}
+  def get_schema_info(pid) do
+    GenServer.call(pid, :get_schema_info)
   end
 
   @spec subscribe(pid(), pid(), String.t()) :: :ok
@@ -237,6 +252,15 @@ defmodule Quanta.Actor.Server do
     call_on_passivate(state)
     Registry.deregister(state.actor_id)
     {:stop, :normal, :ok, state}
+  end
+
+  @impl true
+  def handle_call(:get_schema_info, _from, state) do
+    if state.schema_ref do
+      {:reply, {:ok, state.schema_ref, state.schema_bytes, state.schema_version}, state}
+    else
+      {:reply, {:error, :no_schema}, state}
+    end
   end
 
   @impl true
@@ -376,9 +400,10 @@ defmodule Quanta.Actor.Server do
             metadata: %{"timer_name" => name}
           )
 
+        prev_state_data = state.state_data
         {new_state, effects} = state.module.handle_timer(state.state_data, name)
         state = %{state | state_data: new_state}
-        {_reply, state, stop?, _sent_ids} = process_effects(effects, state, envelope)
+        {_reply, state, stop?, _sent_ids} = process_effects(effects, state, envelope, prev_state_data)
         state = quantize_state_or_rollback(state)
         if stop?, do: {:stop, :normal, state}, else: {:noreply, state}
     end
@@ -477,6 +502,7 @@ defmodule Quanta.Actor.Server do
         activated_at: System.monotonic_time()
     }
 
+    state = maybe_load_schema(state)
     process_init_effects(init_effects, state)
   end
 
@@ -497,6 +523,43 @@ defmodule Quanta.Actor.Server do
 
     {_state_data, init_effects} = state.module.init(<<>>)
     process_init_effects(init_effects, state)
+  end
+
+  defp maybe_load_schema(state) do
+    case state.manifest.state.kind do
+      {kind, _} when kind in [:schematized, :authoritative] ->
+        ns = state.actor_id.namespace
+        type = state.actor_id.type
+        version = state.manifest.state.version
+
+        cached_bytes = SchemaEvolution.get_cached_schema(ns, type)
+
+        schema_bytes =
+          if cached_bytes do
+            cached_bytes
+          else
+            case Quanta.Actor.SchemaRegistry.fetch(ns, type, version) do
+              {:ok, bytes} -> bytes
+              {:error, _} -> nil
+            end
+          end
+
+        if schema_bytes do
+          case SchemaCompiler.import_schema(schema_bytes) do
+            {:ok, ref} ->
+              %{state | schema_ref: ref, schema_bytes: schema_bytes, schema_version: version}
+
+            {:error, reason} ->
+              Logger.warning("Failed to import schema for #{inspect(state.actor_id)}: #{reason}")
+              state
+          end
+        else
+          state
+        end
+
+      _ ->
+        state
+    end
   end
 
   defp dispatch_with_backpressure(state, envelope) do
@@ -535,10 +598,10 @@ defmodule Quanta.Actor.Server do
       if state.loro_doc do
         dispatch_crdt_message(state, envelope)
       else
+        prev_state_data = state.state_data
         {new_state, effects} = state.module.handle_message(state.state_data, envelope)
         state = %{state | state_data: new_state, message_count: state.message_count + 1}
-
-        {reply, state, stop?, sent_ids} = process_effects(effects, state, envelope)
+        {reply, state, stop?, sent_ids} = process_effects(effects, state, envelope, prev_state_data)
         state = quantize_state_or_rollback(state)
         {reply, state, stop?, sent_ids}
       end
@@ -598,12 +661,13 @@ defmodule Quanta.Actor.Server do
     end)
   end
 
-  defp process_effects(effects, state, envelope) do
+  defp process_effects(effects, state, envelope, prev_state_data \\ nil) do
     context = %{
       actor_id: state.actor_id,
       envelope: envelope,
       manifest: state.manifest,
-      server_state: state
+      server_state: state,
+      prev_state_data: prev_state_data
     }
 
     case EffectExecutor.execute(effects, context) do

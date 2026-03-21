@@ -48,6 +48,11 @@ defmodule Quanta.Actor.SchemaEvolution do
   end
 
   @doc false
+  def put_cached_schema(namespace, type, bytes) do
+    GenServer.call(__MODULE__, {:put_cache, namespace, type, bytes})
+  end
+
+  @doc false
   def reset_table do
     GenServer.call(__MODULE__, :reset)
   end
@@ -64,6 +69,11 @@ defmodule Quanta.Actor.SchemaEvolution do
   def handle_call({:check_deploy, manifest, wit_source, type_name, prev_version}, _from, table) do
     result = do_check_deploy(manifest, wit_source, type_name, prev_version, table)
     {:reply, result, table}
+  end
+
+  def handle_call({:put_cache, namespace, type, bytes}, _from, table) do
+    :ets.insert(table, {{namespace, type}, bytes})
+    {:reply, :ok, table}
   end
 
   def handle_call(:reset, _from, table) do

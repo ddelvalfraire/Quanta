@@ -31,6 +31,13 @@ defmodule Quanta.Nifs.DeltaEncoder do
     Native.delta_encode_state(schema, values)
   end
 
+  @spec changed_fields(reference(), binary()) ::
+          {:ok, [String.t()]} | {:error, term()}
+  def changed_fields(schema, delta)
+      when is_reference(schema) and is_binary(delta) do
+    Native.delta_changed_fields(schema, delta)
+  end
+
   @spec quantize_state(reference(), binary()) ::
           {:ok, binary()} | {:error, term()}
   def quantize_state(schema, state_bytes)
