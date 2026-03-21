@@ -357,4 +357,27 @@ defmodule Quanta.Nifs.Native do
   @spec schema_check_compatibility(old :: reference(), new :: reference()) ::
           {:ok, :identical | :compatible | :incompatible, String.t()}
   def schema_check_compatibility(_old, _new), do: :erlang.nif_error(:nif_not_loaded)
+
+  # --- Delta Encoder ---
+
+  @spec delta_compute(
+          schema :: reference(),
+          old_state :: binary(),
+          new_state :: binary(),
+          group_mask_or_nil :: binary() | nil
+        ) :: {:ok, binary()} | {:error, String.t()}
+  def delta_compute(_schema, _old_state, _new_state, _group_mask_or_nil),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec delta_apply(schema :: reference(), current_state :: binary(), delta :: binary()) ::
+          {:ok, binary()} | {:error, atom() | String.t()}
+  def delta_apply(_schema, _current_state, _delta), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec delta_decode_state(schema :: reference(), state :: binary()) ::
+          {:ok, map()} | {:error, String.t()}
+  def delta_decode_state(_schema, _state), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec delta_encode_state(schema :: reference(), values :: [term()]) ::
+          {:ok, binary()} | {:error, String.t()}
+  def delta_encode_state(_schema, _values), do: :erlang.nif_error(:nif_not_loaded)
 end
