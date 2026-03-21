@@ -1,5 +1,6 @@
 pub mod annotations;
 pub mod bitwidth;
+pub mod evolution;
 pub mod export;
 pub mod layout;
 pub mod parser;
@@ -345,7 +346,7 @@ record entity-state {
 }
 "#;
 
-        let (schema, warnings) = compile_schema(wit, "entity-state").unwrap();
+        let (schema, warnings) = compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(schema.fields.len(), 10);
 
@@ -393,7 +394,7 @@ record entity-state {
 }
 "#;
 
-        let (schema, _) = compile_schema(wit, "entity-state").unwrap();
+        let (schema, _) = compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
 
         // Sorted: alpha(high) → default(medium) → zeta(low)
         assert_eq!(schema.field_groups.len(), 3);
@@ -433,7 +434,7 @@ record entity-state {
 }
 "#;
 
-        let (schema, _) = compile_schema(wit, "entity-state").unwrap();
+        let (schema, _) = compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
 
         // Group adopts highest priority (High) from field "b"
         assert_eq!(schema.field_groups.len(), 1);

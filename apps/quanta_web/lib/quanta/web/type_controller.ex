@@ -5,6 +5,7 @@ defmodule Quanta.Web.TypeController do
 
   alias Quanta.Actor.ManifestRegistry
   alias Quanta.Manifest
+  alias Quanta.Actor.SchemaEvolution
 
   plug Quanta.Web.Plugs.RequireScope, :admin when action in [:deploy]
   plug Quanta.Web.Plugs.RequireScope, :ro when action in [:list_types]
@@ -30,17 +31,19 @@ defmodule Quanta.Web.TypeController do
         error_response(conn, :wasm_not_available)
 
       upload = conn.body_params["manifest"] ->
-        deploy_manifest(conn, upload, ns, type)
+        wit_upload = conn.body_params["wit"]
+        deploy_manifest(conn, upload, wit_upload, ns, type)
 
       true ->
         error_response(conn, 400, "missing manifest part")
     end
   end
 
-  defp deploy_manifest(conn, %Plug.Upload{path: path}, ns, type) do
+  defp deploy_manifest(conn, %Plug.Upload{path: path}, wit_upload, ns, type) do
     with {:ok, yaml} <- File.read(path),
          {:ok, manifest} <- Manifest.parse_yaml(yaml),
          :ok <- validate_route_match(manifest, ns, type),
+         :ok <- check_schema_evolution(manifest, wit_upload, ns, type),
          :ok <- ManifestRegistry.put(manifest) do
       json(conn, %{
         namespace: manifest.namespace,
@@ -56,6 +59,30 @@ defmodule Quanta.Web.TypeController do
 
       {:error, reason} ->
         error_response(conn, reason)
+    end
+  end
+
+  defp check_schema_evolution(manifest, wit_upload, ns, type) do
+    case {manifest.state.kind, wit_upload} do
+      {{:schematized, type_name}, %Plug.Upload{path: wit_path}} ->
+        case File.read(wit_path) do
+          {:ok, wit_source} ->
+            prev_version = get_previous_state_version(ns, type)
+            SchemaEvolution.check_deploy(manifest, wit_source, type_name, prev_version)
+
+          {:error, posix} ->
+            {:error, "failed to read WIT upload: #{posix}"}
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp get_previous_state_version(ns, type) do
+    case ManifestRegistry.get(ns, type) do
+      {:ok, prev} -> prev.state.version
+      :error -> nil
     end
   end
 

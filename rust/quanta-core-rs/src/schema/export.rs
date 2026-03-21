@@ -6,6 +6,14 @@ pub const MAGIC: &[u8; 4] = b"QSCH";
 /// Current format version.
 pub const FORMAT_VERSION: u8 = 2;
 
+/// Per-field flag bits (shared between export and import).
+pub const FLAG_SKIP_DELTA: u8 = 0x01;
+pub const FLAG_HAS_QUANTIZATION: u8 = 0x02;
+pub const FLAG_HAS_SMOOTHING: u8 = 0x04;
+
+/// Maximum field count we accept on import (defense-in-depth).
+pub const MAX_FIELD_COUNT: u16 = 4096;
+
 /// Export a CompiledSchema to deterministic big-endian binary format.
 ///
 /// Layout:
@@ -39,14 +47,15 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
         buf.extend_from_slice(&field.bit_offset.to_be_bytes());
         buf.push(field.group_index);
 
-        // flags: bit 0 = skip_delta, bit 1 = has_quantization
         let mut flags: u8 = 0;
         if field.skip_delta {
-            flags |= 0x01;
+            flags |= FLAG_SKIP_DELTA;
         }
         if field.quantization.is_some() {
-            flags |= 0x02;
+            flags |= FLAG_HAS_QUANTIZATION;
         }
+        // Smoothing is always present; set the flag for import compatibility.
+        flags |= FLAG_HAS_SMOOTHING;
         buf.push(flags);
 
         buf.push(field.prediction.as_byte());
@@ -82,36 +91,7 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn minimal_schema() -> CompiledSchema {
-        CompiledSchema {
-            version: 1,
-            fields: vec![FieldMeta {
-                name: "alive".to_string(),
-                field_type: FieldType::Bool,
-                bit_width: 1,
-                bit_offset: 0,
-                group_index: 0,
-                quantization: None,
-                prediction: PredictionMode::None,
-                smoothing: SmoothingParams {
-                    mode: SmoothingMode::Snap,
-                    duration_ms: 0,
-                    max_distance: 0.0,
-                },
-                interpolation: InterpolationMode::None,
-                skip_delta: false,
-            }],
-            field_groups: vec![FieldGroup {
-                name: "default".to_string(),
-                priority: Priority::Medium,
-                max_tick_rate: 0,
-                bitmask_range: (0, 1),
-            }],
-            total_bits: 1,
-            bitmask_byte_count: 1,
-        }
-    }
+    use crate::schema::types::test_fixtures::*;
 
     #[test]
     fn magic_bytes() {
@@ -178,7 +158,11 @@ mod tests {
                     group_index: 0,
                     quantization: None,
                     prediction: PredictionMode::None,
-                    smoothing: None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
                     interpolation: InterpolationMode::None,
                     skip_delta: false,
                 },
@@ -190,7 +174,11 @@ mod tests {
                     group_index: 1,
                     quantization: None,
                     prediction: PredictionMode::None,
-                    smoothing: None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
                     interpolation: InterpolationMode::None,
                     skip_delta: false,
                 },
@@ -215,9 +203,9 @@ mod tests {
 
         let bytes = export_schema(&schema);
 
-        // Per-field size (no quant/smooth): 2 + name_len + 1 + 1 + 4 + 1 + 1 + 1 + 1
+        // Per-field size (no quant): 2 + name_len + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 4 + 8
         const HEADER_SIZE: usize = 14;
-        const FIELD_FIXED: usize = 12; // bytes per field excluding name
+        const FIELD_FIXED: usize = 25; // bytes per field excluding name (includes smoothing)
         let fields_size: usize = schema
             .fields
             .iter()
@@ -249,57 +237,7 @@ mod tests {
 
     #[test]
     fn roundtrip_determinism_with_quantization_and_smoothing() {
-        let schema = CompiledSchema {
-            version: 1,
-            fields: vec![
-                FieldMeta {
-                    name: "x".to_string(),
-                    field_type: FieldType::F32,
-                    bit_width: 21,
-                    bit_offset: 0,
-                    group_index: 0,
-                    quantization: Some(QuantizationParams {
-                        min: -10000.0,
-                        max: 10000.0,
-                        precision: 0.01,
-                        num_values: 2_000_001,
-                        mask: (1u64 << 21) - 1,
-                    }),
-                    prediction: PredictionMode::InputReplay,
-                    smoothing: SmoothingParams {
-                        mode: SmoothingMode::Lerp,
-                        duration_ms: 100,
-                        max_distance: 0.0,
-                    },
-                    interpolation: InterpolationMode::Linear,
-                    skip_delta: false,
-                },
-                FieldMeta {
-                    name: "alive".to_string(),
-                    field_type: FieldType::Bool,
-                    bit_width: 1,
-                    bit_offset: 21,
-                    group_index: 0,
-                    quantization: None,
-                    prediction: PredictionMode::None,
-                    smoothing: SmoothingParams {
-                        mode: SmoothingMode::Snap,
-                        duration_ms: 0,
-                        max_distance: 0.0,
-                    },
-                    interpolation: InterpolationMode::None,
-                    skip_delta: false,
-                },
-            ],
-            field_groups: vec![FieldGroup {
-                name: "default".to_string(),
-                priority: Priority::Medium,
-                max_tick_rate: 0,
-                bitmask_range: (0, 2),
-            }],
-            total_bits: 22,
-            bitmask_byte_count: 1,
-        };
+        let schema = schema_with_quantization_and_smoothing();
         let bytes1 = export_schema(&schema);
         let bytes2 = export_schema(&schema);
         assert_eq!(bytes1, bytes2);

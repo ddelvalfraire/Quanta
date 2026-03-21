@@ -222,4 +222,82 @@ defmodule Quanta.Nifs.SchemaCompilerTest do
       assert group_count == 3
     end
   end
+
+  describe "import_schema/1" do
+    test "import/export roundtrip returns usable reference" do
+      {:ok, ref, _} = SchemaCompiler.compile(@quantized_wit, "player-state")
+      {:ok, bytes} = SchemaCompiler.export(ref)
+      assert {:ok, imported} = SchemaCompiler.import_schema(bytes)
+      assert is_reference(imported)
+
+      # Re-export should produce identical bytes
+      assert {:ok, ^bytes} = SchemaCompiler.export(imported)
+    end
+
+    test "returns error for invalid bytes" do
+      assert {:error, msg} = SchemaCompiler.import_schema(<<"BAAD">>)
+      assert is_binary(msg)
+    end
+
+    test "returns error for truncated data" do
+      {:ok, ref, _} = SchemaCompiler.compile(@minimal_wit, "my-state")
+      {:ok, bytes} = SchemaCompiler.export(ref)
+      truncated = binary_part(bytes, 0, 6)
+      assert {:error, _msg} = SchemaCompiler.import_schema(truncated)
+    end
+  end
+
+  describe "check_compatibility/2" do
+    test "identical schemas return :identical" do
+      {:ok, ref1, _} = SchemaCompiler.compile(@minimal_wit, "my-state")
+      {:ok, ref2, _} = SchemaCompiler.compile(@minimal_wit, "my-state")
+      assert {:ok, :identical, _} = SchemaCompiler.check_compatibility(ref1, ref2)
+    end
+
+    test "appended field returns :compatible" do
+      old_wit = """
+      record my-state {
+          alive: bool,
+      }
+      """
+
+      new_wit = """
+      record my-state {
+          alive: bool,
+          health: u16,
+      }
+      """
+
+      {:ok, old_ref, _} = SchemaCompiler.compile(old_wit, "my-state")
+      {:ok, new_ref, _} = SchemaCompiler.compile(new_wit, "my-state")
+      assert {:ok, :compatible, details} = SchemaCompiler.check_compatibility(old_ref, new_ref)
+      assert details =~ "health"
+    end
+
+    test "changed field type returns :incompatible" do
+      old_wit = """
+      record my-state {
+          value: u16,
+      }
+      """
+
+      new_wit = """
+      record my-state {
+          value: u32,
+      }
+      """
+
+      {:ok, old_ref, _} = SchemaCompiler.compile(old_wit, "my-state")
+      {:ok, new_ref, _} = SchemaCompiler.compile(new_wit, "my-state")
+      assert {:ok, :incompatible, details} = SchemaCompiler.check_compatibility(old_ref, new_ref)
+      assert details =~ "type changed"
+    end
+
+    test "import then check compatibility roundtrip" do
+      {:ok, ref, _} = SchemaCompiler.compile(@quantized_wit, "player-state")
+      {:ok, bytes} = SchemaCompiler.export(ref)
+      {:ok, imported} = SchemaCompiler.import_schema(bytes)
+      assert {:ok, :identical, _} = SchemaCompiler.check_compatibility(ref, imported)
+    end
+  end
 end

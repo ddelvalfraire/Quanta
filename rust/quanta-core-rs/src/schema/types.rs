@@ -71,6 +71,26 @@ pub enum FieldType {
 }
 
 impl FieldType {
+    pub fn from_byte(byte: u8, variant_count: u16) -> Option<Self> {
+        match byte {
+            0 => Some(FieldType::Bool),
+            1 => Some(FieldType::U8),
+            2 => Some(FieldType::S8),
+            3 => Some(FieldType::U16),
+            4 => Some(FieldType::S16),
+            5 => Some(FieldType::U32),
+            6 => Some(FieldType::S32),
+            7 => Some(FieldType::U64),
+            8 => Some(FieldType::S64),
+            9 => Some(FieldType::F32),
+            10 => Some(FieldType::F64),
+            11 => Some(FieldType::String),
+            12 => Some(FieldType::Enum(variant_count)),
+            13 => Some(FieldType::Flags(variant_count)),
+            _ => None,
+        }
+    }
+
     pub fn is_numeric(&self) -> bool {
         matches!(
             self,
@@ -170,6 +190,16 @@ impl Priority {
     pub fn as_byte(&self) -> u8 {
         *self as u8
     }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(Priority::Critical),
+            1 => Some(Priority::High),
+            2 => Some(Priority::Medium),
+            3 => Some(Priority::Low),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,6 +215,15 @@ impl PredictionMode {
             PredictionMode::None => 0,
             PredictionMode::InputReplay => 1,
             PredictionMode::Cosmetic => 2,
+        }
+    }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(PredictionMode::None),
+            1 => Some(PredictionMode::InputReplay),
+            2 => Some(PredictionMode::Cosmetic),
+            _ => None,
         }
     }
 }
@@ -204,6 +243,15 @@ impl SmoothingMode {
             SmoothingMode::SnapLerp => 2,
         }
     }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(SmoothingMode::Lerp),
+            1 => Some(SmoothingMode::Snap),
+            2 => Some(SmoothingMode::SnapLerp),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,6 +267,15 @@ impl InterpolationMode {
             InterpolationMode::None => 0,
             InterpolationMode::Linear => 1,
             InterpolationMode::Hermite => 2,
+        }
+    }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(InterpolationMode::None),
+            1 => Some(InterpolationMode::Linear),
+            2 => Some(InterpolationMode::Hermite),
+            _ => None,
         }
     }
 }
@@ -399,5 +456,143 @@ mod tests {
             field: "x".into(),
         };
         assert!(w.to_string().contains("quantize without clamp"));
+    }
+}
+
+/// Shared test fixtures for schema tests.
+#[cfg(test)]
+pub mod test_fixtures {
+    use super::*;
+
+    pub fn minimal_schema() -> CompiledSchema {
+        CompiledSchema {
+            version: 1,
+            fields: vec![FieldMeta {
+                name: "alive".to_string(),
+                field_type: FieldType::Bool,
+                bit_width: 1,
+                bit_offset: 0,
+                group_index: 0,
+                quantization: None,
+                prediction: PredictionMode::None,
+                smoothing: SmoothingParams {
+                    mode: SmoothingMode::Snap,
+                    duration_ms: 0,
+                    max_distance: 0.0,
+                },
+                interpolation: InterpolationMode::None,
+                skip_delta: false,
+            }],
+            field_groups: vec![FieldGroup {
+                name: "default".to_string(),
+                priority: Priority::Medium,
+                max_tick_rate: 0,
+                bitmask_range: (0, 1),
+            }],
+            total_bits: 1,
+            bitmask_byte_count: 1,
+        }
+    }
+
+    pub fn two_field_schema() -> CompiledSchema {
+        CompiledSchema {
+            version: 1,
+            fields: vec![
+                FieldMeta {
+                    name: "alive".to_string(),
+                    field_type: FieldType::Bool,
+                    bit_width: 1,
+                    bit_offset: 0,
+                    group_index: 0,
+                    quantization: None,
+                    prediction: PredictionMode::None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
+                    interpolation: InterpolationMode::None,
+                    skip_delta: false,
+                },
+                FieldMeta {
+                    name: "health".to_string(),
+                    field_type: FieldType::U16,
+                    bit_width: 16,
+                    bit_offset: 1,
+                    group_index: 0,
+                    quantization: None,
+                    prediction: PredictionMode::None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
+                    interpolation: InterpolationMode::None,
+                    skip_delta: false,
+                },
+            ],
+            field_groups: vec![FieldGroup {
+                name: "default".to_string(),
+                priority: Priority::Medium,
+                max_tick_rate: 0,
+                bitmask_range: (0, 2),
+            }],
+            total_bits: 17,
+            bitmask_byte_count: 1,
+        }
+    }
+
+    pub fn schema_with_quantization_and_smoothing() -> CompiledSchema {
+        CompiledSchema {
+            version: 1,
+            fields: vec![
+                FieldMeta {
+                    name: "x".to_string(),
+                    field_type: FieldType::F32,
+                    bit_width: 21,
+                    bit_offset: 0,
+                    group_index: 0,
+                    quantization: Some(QuantizationParams {
+                        min: -10000.0,
+                        max: 10000.0,
+                        precision: 0.01,
+                        num_values: 2_000_001,
+                        mask: (1u64 << 21) - 1,
+                    }),
+                    prediction: PredictionMode::InputReplay,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Lerp,
+                        duration_ms: 100,
+                        max_distance: 0.0,
+                    },
+                    interpolation: InterpolationMode::Linear,
+                    skip_delta: false,
+                },
+                FieldMeta {
+                    name: "alive".to_string(),
+                    field_type: FieldType::Bool,
+                    bit_width: 1,
+                    bit_offset: 21,
+                    group_index: 0,
+                    quantization: None,
+                    prediction: PredictionMode::None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
+                    interpolation: InterpolationMode::None,
+                    skip_delta: false,
+                },
+            ],
+            field_groups: vec![FieldGroup {
+                name: "default".to_string(),
+                priority: Priority::Medium,
+                max_tick_rate: 0,
+                bitmask_range: (0, 2),
+            }],
+            total_bits: 22,
+            bitmask_byte_count: 1,
+        }
     }
 }

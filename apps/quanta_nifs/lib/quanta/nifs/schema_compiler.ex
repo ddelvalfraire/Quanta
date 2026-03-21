@@ -14,4 +14,15 @@ defmodule Quanta.Nifs.SchemaCompiler do
   def export(schema) do
     Native.schema_export(schema)
   end
+
+  @spec import_schema(bytes :: binary()) :: {:ok, reference()} | {:error, String.t()}
+  def import_schema(bytes) when is_binary(bytes) do
+    Native.schema_import(bytes)
+  end
+
+  @spec check_compatibility(old :: reference(), new :: reference()) ::
+          {:ok, :identical | :compatible | :incompatible, String.t()}
+  def check_compatibility(old, new) do
+    Native.schema_check_compatibility(old, new)
+  end
 end
