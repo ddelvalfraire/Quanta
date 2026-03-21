@@ -7,9 +7,18 @@
 # Rust
 /rust/target/
 /rust/fixtures/**/target/
+/rust/quanta-wasm-decoder/target/
 **/*.rs.bk
 *.pdb
 **/mutants.out*/
+
+# WASM build artifacts
+/rust/quanta-wasm-decoder/pkg/
+/packages/delta-decoder/wasm/
+
+# npm
+node_modules/
+/packages/*/dist/
 
 # NIF compiled artifacts
 **/priv/native/
