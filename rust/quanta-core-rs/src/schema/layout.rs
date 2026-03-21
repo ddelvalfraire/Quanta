@@ -77,11 +77,7 @@ pub fn compute_layout(
                     .annotations
                     .prediction
                     .unwrap_or(PredictionMode::None),
-                smoothing: pf.annotations.smoothing.clone().unwrap_or(SmoothingParams {
-                    mode: SmoothingMode::Snap,
-                    duration_ms: 0,
-                    max_distance: 0.0,
-                }),
+                smoothing: pf.annotations.smoothing.clone(),
                 interpolation: pf
                     .annotations
                     .interpolation

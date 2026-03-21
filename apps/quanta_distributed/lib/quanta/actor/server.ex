@@ -107,13 +107,17 @@ defmodule Quanta.Actor.Server do
   @doc "Returns a drain priority (0-4) for ordered passivation. Lower = drain first."
   @spec drain_priority(pid(), timeout()) :: non_neg_integer()
   def drain_priority(pid, timeout \\ 3_000) do
-    state = :sys.get_state(pid, timeout)
+    case :sys.get_state(pid, timeout) do
+      %{pending_replies: pr, named_timers: nt, subscribers: subs} ->
+        cond do
+          map_size(pr) > 0 -> 4
+          map_size(nt) > 0 -> 3
+          map_size(subs) > 0 -> 2
+          true -> 1
+        end
 
-    cond do
-      map_size(state.pending_replies) > 0 -> 4
-      map_size(state.named_timers) > 0 -> 3
-      map_size(state.subscribers) > 0 -> 2
-      true -> 1
+      _ ->
+        0
     end
   catch
     :exit, _ -> 0

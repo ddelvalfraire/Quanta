@@ -54,24 +54,25 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
         if field.quantization.is_some() {
             flags |= FLAG_HAS_QUANTIZATION;
         }
-        // Smoothing is always present; set the flag for import compatibility.
-        flags |= FLAG_HAS_SMOOTHING;
+        if field.smoothing.is_some() {
+            flags |= FLAG_HAS_SMOOTHING;
+        }
         buf.push(flags);
 
         buf.push(field.prediction.as_byte());
         buf.push(field.interpolation.as_byte());
 
-        // Optional quantization params
         if let Some(ref qp) = field.quantization {
             buf.extend_from_slice(&qp.min.to_be_bytes());
             buf.extend_from_slice(&qp.max.to_be_bytes());
             buf.extend_from_slice(&qp.precision.to_be_bytes());
         }
 
-        // Smoothing params (always present)
-        buf.push(field.smoothing.mode.as_byte());
-        buf.extend_from_slice(&field.smoothing.duration_ms.to_be_bytes());
-        buf.extend_from_slice(&field.smoothing.max_distance.to_be_bytes());
+        if let Some(ref sp) = field.smoothing {
+            buf.push(sp.mode.as_byte());
+            buf.extend_from_slice(&sp.duration_ms.to_be_bytes());
+            buf.extend_from_slice(&sp.max_distance.to_be_bytes());
+        }
     }
 
     // Groups
@@ -158,11 +159,7 @@ mod tests {
                     group_index: 0,
                     quantization: None,
                     prediction: PredictionMode::None,
-                    smoothing: SmoothingParams {
-                        mode: SmoothingMode::Snap,
-                        duration_ms: 0,
-                        max_distance: 0.0,
-                    },
+                    smoothing: None,
                     interpolation: InterpolationMode::None,
                     skip_delta: false,
                 },
@@ -174,11 +171,7 @@ mod tests {
                     group_index: 1,
                     quantization: None,
                     prediction: PredictionMode::None,
-                    smoothing: SmoothingParams {
-                        mode: SmoothingMode::Snap,
-                        duration_ms: 0,
-                        max_distance: 0.0,
-                    },
+                    smoothing: None,
                     interpolation: InterpolationMode::None,
                     skip_delta: false,
                 },
@@ -203,9 +196,8 @@ mod tests {
 
         let bytes = export_schema(&schema);
 
-        // Per-field size (no quant): 2 + name_len + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 4 + 8
         const HEADER_SIZE: usize = 14;
-        const FIELD_FIXED: usize = 25; // bytes per field excluding name (includes smoothing)
+        const FIELD_FIXED: usize = 12;
         let fields_size: usize = schema
             .fields
             .iter()

@@ -65,16 +65,11 @@ defmodule Quanta.Actor.Registry do
   @doc "Returns all `{actor_id, pid, meta}` tuples registered on the local node."
   @spec local_actor_ids() :: [{Quanta.ActorId.t(), pid(), map()}]
   def local_actor_ids do
-    Quanta.Actor.DynSup.list_actor_pids()
-    |> Enum.reduce([], fn pid, acc ->
-      try do
-        %{actor_id: actor_id} = :sys.get_state(pid, 3_000)
-        {_pid, meta} = :syn.lookup(@scope, actor_id)
-        [{actor_id, pid, meta} | acc]
-      catch
-        :exit, _ -> acc
-      end
-    end)
+    table = :syn_backbone.get_table_name(:syn_registry_by_name, @scope)
+
+    :ets.select(table, [
+      {{:"$1", :"$2", :"$3", :_, :_, node()}, [], [{{:"$1", :"$2", :"$3"}}]}
+    ])
   end
 
   @spec deregister(Quanta.ActorId.t()) :: :ok

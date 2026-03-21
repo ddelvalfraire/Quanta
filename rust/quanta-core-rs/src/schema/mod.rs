@@ -224,15 +224,7 @@ record player-state {
         assert!(field("pos-x").quantization.is_some());
         assert_eq!(field("pos-x").prediction, PredictionMode::InputReplay);
         assert_eq!(field("pos-x").interpolation, InterpolationMode::Linear);
-        // Unannotated smoothing defaults to Snap
-        assert_eq!(
-            field("pos-x").smoothing,
-            SmoothingParams {
-                mode: SmoothingMode::Snap,
-                duration_ms: 0,
-                max_distance: 0.0,
-            }
-        );
+        assert_eq!(field("pos-x").smoothing, None);
 
         // yaw: quantize(0.01) + clamp(-3.15, 3.15) -> 10 bits
         assert_eq!(field("yaw").bit_width, 10);

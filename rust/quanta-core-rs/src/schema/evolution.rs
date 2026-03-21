@@ -192,17 +192,13 @@ fn parse_field(r: &mut Reader) -> Result<FieldMeta, SchemaError> {
         })?;
         let duration_ms = r.read_u32()?;
         let max_distance = r.read_f64()?;
-        SmoothingParams {
+        Some(SmoothingParams {
             mode,
             duration_ms,
             max_distance,
-        }
+        })
     } else {
-        SmoothingParams {
-            mode: SmoothingMode::Snap,
-            duration_ms: 0,
-            max_distance: 0.0,
-        }
+        None
     };
 
     // Enum/Flags variant count is lossy: we reconstruct the upper bound from bit_width.

@@ -184,6 +184,8 @@ defmodule Quanta.Drain do
       %{node: node()}
     )
 
+    :persistent_term.erase(@persistent_term_key)
+
     send(state.caller, {:drain_complete, __MODULE__})
 
     {:stop, :normal, state}
