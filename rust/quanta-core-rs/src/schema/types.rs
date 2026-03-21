@@ -1,5 +1,10 @@
 use std::fmt;
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CompileOptions {
+    pub prediction_enabled: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompiledSchema {
     pub version: u8,
@@ -18,7 +23,7 @@ pub struct FieldMeta {
     pub group_index: u8,
     pub quantization: Option<QuantizationParams>,
     pub prediction: PredictionMode,
-    pub smoothing: Option<SmoothingParams>,
+    pub smoothing: SmoothingParams,
     pub interpolation: InterpolationMode,
     pub skip_delta: bool,
 }
@@ -43,7 +48,8 @@ pub struct QuantizationParams {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SmoothingParams {
     pub mode: SmoothingMode,
-    pub params: Vec<f64>,
+    pub duration_ms: u32,
+    pub max_distance: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -283,6 +289,8 @@ pub enum SchemaError {
     ClampMinGeMax { field: String, min: f64, max: f64 },
     QuantizeClampBitsTooLarge { field: String, bits: u32 },
     StringWithoutSkipDelta { field: String },
+    SmoothLerpOnNonNumeric { field: String },
+    PredictionNotEnabled { field: String },
     ParseError(String),
 }
 
@@ -311,6 +319,15 @@ impl fmt::Display for SchemaError {
             SchemaError::StringWithoutSkipDelta { field } => {
                 write!(f, "string field '{field}' must have @quanta:skip_delta")
             }
+            SchemaError::SmoothLerpOnNonNumeric { field } => {
+                write!(f, "smooth(lerp|snap_lerp) on non-numeric field: {field}")
+            }
+            SchemaError::PredictionNotEnabled { field } => {
+                write!(
+                    f,
+                    "predict(input_replay|cosmetic) without prediction enabled for field: {field}"
+                )
+            }
             SchemaError::ParseError(msg) => write!(f, "parse error: {msg}"),
         }
     }
@@ -325,6 +342,7 @@ pub enum SchemaWarning {
     RedundantClamp { field: String },
     UnknownAnnotation { field: String, annotation: String },
     MalformedAnnotation { field: String, directive: String },
+    PredictOnNonNumeric { field: String },
 }
 
 impl fmt::Display for SchemaWarning {
@@ -357,6 +375,9 @@ impl fmt::Display for SchemaWarning {
                     f,
                     "malformed @quanta:{directive} annotation on field: {field}"
                 )
+            }
+            SchemaWarning::PredictOnNonNumeric { field } => {
+                write!(f, "predict on non-numeric field: {field}")
             }
         }
     }
@@ -454,7 +475,11 @@ pub mod test_fixtures {
                 group_index: 0,
                 quantization: None,
                 prediction: PredictionMode::None,
-                smoothing: None,
+                smoothing: SmoothingParams {
+                    mode: SmoothingMode::Snap,
+                    duration_ms: 0,
+                    max_distance: 0.0,
+                },
                 interpolation: InterpolationMode::None,
                 skip_delta: false,
             }],
@@ -481,7 +506,11 @@ pub mod test_fixtures {
                     group_index: 0,
                     quantization: None,
                     prediction: PredictionMode::None,
-                    smoothing: None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
                     interpolation: InterpolationMode::None,
                     skip_delta: false,
                 },
@@ -493,7 +522,11 @@ pub mod test_fixtures {
                     group_index: 0,
                     quantization: None,
                     prediction: PredictionMode::None,
-                    smoothing: None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
                     interpolation: InterpolationMode::None,
                     skip_delta: false,
                 },
@@ -527,10 +560,11 @@ pub mod test_fixtures {
                         mask: (1u64 << 21) - 1,
                     }),
                     prediction: PredictionMode::InputReplay,
-                    smoothing: Some(SmoothingParams {
+                    smoothing: SmoothingParams {
                         mode: SmoothingMode::Lerp,
-                        params: vec![0.1],
-                    }),
+                        duration_ms: 100,
+                        max_distance: 0.0,
+                    },
                     interpolation: InterpolationMode::Linear,
                     skip_delta: false,
                 },
@@ -542,7 +576,11 @@ pub mod test_fixtures {
                     group_index: 0,
                     quantization: None,
                     prediction: PredictionMode::None,
-                    smoothing: None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
                     interpolation: InterpolationMode::None,
                     skip_delta: false,
                 },

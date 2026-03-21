@@ -4,7 +4,7 @@ use super::types::*;
 pub const MAGIC: &[u8; 4] = b"QSCH";
 
 /// Current format version.
-pub const FORMAT_VERSION: u8 = 1;
+pub const FORMAT_VERSION: u8 = 2;
 
 /// Per-field flag bits (shared between export and import).
 pub const FLAG_SKIP_DELTA: u8 = 0x01;
@@ -54,9 +54,8 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
         if field.quantization.is_some() {
             flags |= FLAG_HAS_QUANTIZATION;
         }
-        if field.smoothing.is_some() {
-            flags |= FLAG_HAS_SMOOTHING;
-        }
+        // Smoothing is always present; set the flag for import compatibility.
+        flags |= FLAG_HAS_SMOOTHING;
         buf.push(flags);
 
         buf.push(field.prediction.as_byte());
@@ -69,14 +68,10 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
             buf.extend_from_slice(&qp.precision.to_be_bytes());
         }
 
-        // Optional smoothing params
-        if let Some(ref sp) = field.smoothing {
-            buf.push(sp.mode.as_byte());
-            buf.push(sp.params.len() as u8);
-            for p in &sp.params {
-                buf.extend_from_slice(&p.to_be_bytes());
-            }
-        }
+        // Smoothing params (always present)
+        buf.push(field.smoothing.mode.as_byte());
+        buf.extend_from_slice(&field.smoothing.duration_ms.to_be_bytes());
+        buf.extend_from_slice(&field.smoothing.max_distance.to_be_bytes());
     }
 
     // Groups
@@ -96,7 +91,7 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::types::test_fixtures::minimal_schema;
+    use crate::schema::types::test_fixtures::*;
 
     #[test]
     fn magic_bytes() {
@@ -107,7 +102,7 @@ mod tests {
     #[test]
     fn format_version() {
         let bytes = export_schema(&minimal_schema());
-        assert_eq!(bytes[4], FORMAT_VERSION);
+        assert_eq!(bytes[4], 2);
     }
 
     #[test]
@@ -151,8 +146,97 @@ mod tests {
     }
 
     #[test]
+    fn export_includes_group_metadata() {
+        let schema = CompiledSchema {
+            version: 1,
+            fields: vec![
+                FieldMeta {
+                    name: "a".to_string(),
+                    field_type: FieldType::U8,
+                    bit_width: 8,
+                    bit_offset: 0,
+                    group_index: 0,
+                    quantization: None,
+                    prediction: PredictionMode::None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
+                    interpolation: InterpolationMode::None,
+                    skip_delta: false,
+                },
+                FieldMeta {
+                    name: "b".to_string(),
+                    field_type: FieldType::Bool,
+                    bit_width: 1,
+                    bit_offset: 8,
+                    group_index: 1,
+                    quantization: None,
+                    prediction: PredictionMode::None,
+                    smoothing: SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    },
+                    interpolation: InterpolationMode::None,
+                    skip_delta: false,
+                },
+            ],
+            field_groups: vec![
+                FieldGroup {
+                    name: "alpha".to_string(),
+                    priority: Priority::High,
+                    max_tick_rate: 30,
+                    bitmask_range: (0, 1),
+                },
+                FieldGroup {
+                    name: "beta".to_string(),
+                    priority: Priority::Low,
+                    max_tick_rate: 10,
+                    bitmask_range: (1, 2),
+                },
+            ],
+            total_bits: 9,
+            bitmask_byte_count: 1,
+        };
+
+        let bytes = export_schema(&schema);
+
+        // Per-field size (no quant): 2 + name_len + 1 + 1 + 4 + 1 + 1 + 1 + 1 + 1 + 4 + 8
+        const HEADER_SIZE: usize = 14;
+        const FIELD_FIXED: usize = 25; // bytes per field excluding name (includes smoothing)
+        let fields_size: usize = schema
+            .fields
+            .iter()
+            .map(|f| FIELD_FIXED + f.name.len())
+            .sum();
+        let mut pos = HEADER_SIZE + fields_size;
+
+        let assert_group =
+            |pos: &mut usize, name: &str, priority: u8, tick_rate: u16, range: (u16, u16)| {
+                let nl = u16::from_be_bytes([bytes[*pos], bytes[*pos + 1]]) as usize;
+                *pos += 2;
+                assert_eq!(&bytes[*pos..*pos + nl], name.as_bytes());
+                *pos += nl;
+                assert_eq!(bytes[*pos], priority);
+                *pos += 1;
+                let tr = u16::from_be_bytes([bytes[*pos], bytes[*pos + 1]]);
+                assert_eq!(tr, tick_rate);
+                *pos += 2;
+                let rs = u16::from_be_bytes([bytes[*pos], bytes[*pos + 1]]);
+                let re = u16::from_be_bytes([bytes[*pos + 2], bytes[*pos + 3]]);
+                assert_eq!((rs, re), range);
+                *pos += 4;
+            };
+
+        assert_group(&mut pos, "alpha", Priority::High.as_byte(), 30, (0, 1));
+        assert_group(&mut pos, "beta", Priority::Low.as_byte(), 10, (1, 2));
+        assert_eq!(pos, bytes.len());
+    }
+
+    #[test]
     fn roundtrip_determinism_with_quantization_and_smoothing() {
-        use crate::schema::types::test_fixtures::schema_with_quantization_and_smoothing;
         let schema = schema_with_quantization_and_smoothing();
         let bytes1 = export_schema(&schema);
         let bytes2 = export_schema(&schema);

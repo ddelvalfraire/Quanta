@@ -11,11 +11,14 @@ pub struct LayoutResult {
     pub warnings: Vec<SchemaWarning>,
 }
 
-pub fn compute_layout(parsed_fields: &[ParsedField]) -> Result<LayoutResult, SchemaError> {
+pub fn compute_layout(
+    parsed_fields: &[ParsedField],
+    opts: &CompileOptions,
+) -> Result<LayoutResult, SchemaError> {
     let mut warnings = Vec::new();
 
     for field in parsed_fields {
-        validation::validate_field(field, &mut warnings)?;
+        validation::validate_field(field, opts, &mut warnings)?;
     }
 
     // Group fields by field_group annotation.
@@ -74,7 +77,11 @@ pub fn compute_layout(parsed_fields: &[ParsedField]) -> Result<LayoutResult, Sch
                     .annotations
                     .prediction
                     .unwrap_or(PredictionMode::None),
-                smoothing: pf.annotations.smoothing.clone(),
+                smoothing: pf.annotations.smoothing.clone().unwrap_or(SmoothingParams {
+                    mode: SmoothingMode::Snap,
+                    duration_ms: 0,
+                    max_distance: 0.0,
+                }),
                 interpolation: pf
                     .annotations
                     .interpolation
@@ -98,7 +105,7 @@ pub fn compute_layout(parsed_fields: &[ParsedField]) -> Result<LayoutResult, Sch
     }
 
     let total_bits = current_bit_offset;
-    let bitmask_byte_count = ((fields.len() + 7) / 8) as u8;
+    let bitmask_byte_count = fields.len().div_ceil(8) as u8;
 
     Ok(LayoutResult {
         fields,
@@ -132,7 +139,7 @@ mod tests {
             FieldAnnotations::default(),
             0,
         )];
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert_eq!(result.fields.len(), 1);
         assert_eq!(result.fields[0].bit_width, 1);
         assert_eq!(result.fields[0].bit_offset, 0);
@@ -158,7 +165,7 @@ mod tests {
             make_field("pos-x", FieldType::U16, ann_critical, 1),
         ];
 
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
 
         assert_eq!(result.groups[0].name, "movement");
         assert_eq!(result.groups[0].priority, Priority::Critical);
@@ -188,7 +195,7 @@ mod tests {
             make_field("f4", FieldType::Bool, ann_b, 3),
         ];
 
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert_eq!(result.groups[0].bitmask_range, (0, 2));
         assert_eq!(result.groups[1].bitmask_range, (2, 4));
     }
@@ -201,7 +208,7 @@ mod tests {
             make_field("c", FieldType::Bool, FieldAnnotations::default(), 2),
         ];
 
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert_eq!(result.fields[0].bit_offset, 0);
         assert_eq!(result.fields[0].bit_width, 8);
         assert_eq!(result.fields[1].bit_offset, 8);
@@ -226,7 +233,7 @@ mod tests {
             make_field("y", FieldType::F32, ann2, 1),
         ];
 
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert_eq!(result.groups[0].max_tick_rate, 60);
     }
 
@@ -238,7 +245,7 @@ mod tests {
             FieldAnnotations::default(),
             0,
         )];
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert_eq!(result.groups[0].max_tick_rate, 0);
     }
 
@@ -255,7 +262,7 @@ mod tests {
             })
             .collect();
 
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert_eq!(result.bitmask_byte_count, 2); // ceil(9/8) = 2
     }
 
@@ -272,14 +279,14 @@ mod tests {
             })
             .collect();
 
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert_eq!(result.bitmask_byte_count, 1); // ceil(8/8) = 1
     }
 
     #[test]
     fn empty_layout() {
         let fields: Vec<ParsedField> = vec![];
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert!(result.fields.is_empty());
         assert!(result.groups.is_empty());
         assert_eq!(result.total_bits, 0);
@@ -301,7 +308,7 @@ mod tests {
             make_field("b", FieldType::U8, ann_high, 1),
         ];
 
-        let result = compute_layout(&fields).unwrap();
+        let result = compute_layout(&fields, &CompileOptions::default()).unwrap();
         assert_eq!(result.groups[0].priority, Priority::High);
     }
 }

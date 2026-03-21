@@ -135,26 +135,55 @@ fn parse_directive(directive: &str, field_name: &str, ann: &mut FieldAnnotations
         }
     } else if let Some(args) = strip_func("smooth", directive) {
         let parts: Vec<&str> = args.split(',').collect();
+        let raw_params: Vec<&str> = parts[1..]
+            .iter()
+            .map(|p| p.trim())
+            .filter(|p| !p.is_empty())
+            .collect();
         match parts[0].trim() {
-            "lerp" | "snap" | "snap_lerp" => {
-                let mode = match parts[0].trim() {
-                    "lerp" => SmoothingMode::Lerp,
-                    "snap" => SmoothingMode::Snap,
-                    _ => SmoothingMode::SnapLerp,
-                };
-                let raw_params: Vec<&str> = parts[1..]
-                    .iter()
-                    .map(|p| p.trim())
-                    .filter(|p| !p.is_empty())
-                    .collect();
-                let params: Vec<f64> = raw_params
-                    .iter()
-                    .filter_map(|p| p.parse::<f64>().ok())
-                    .collect();
-                if params.len() != raw_params.len() {
+            "lerp" => {
+                if raw_params.len() == 1 {
+                    if let Ok(d) = raw_params[0].parse::<u32>() {
+                        ann.smoothing = Some(SmoothingParams {
+                            mode: SmoothingMode::Lerp,
+                            duration_ms: d,
+                            max_distance: 0.0,
+                        });
+                    } else {
+                        ann.warnings.push(malformed(field_name, "smooth"));
+                    }
+                } else {
                     ann.warnings.push(malformed(field_name, "smooth"));
                 }
-                ann.smoothing = Some(SmoothingParams { mode, params });
+            }
+            "snap" => {
+                if raw_params.is_empty() {
+                    ann.smoothing = Some(SmoothingParams {
+                        mode: SmoothingMode::Snap,
+                        duration_ms: 0,
+                        max_distance: 0.0,
+                    });
+                } else {
+                    ann.warnings.push(malformed(field_name, "smooth"));
+                }
+            }
+            "snap_lerp" => {
+                if raw_params.len() == 2 {
+                    if let (Ok(d), Ok(md)) = (
+                        raw_params[0].parse::<u32>(),
+                        raw_params[1].parse::<f64>(),
+                    ) {
+                        ann.smoothing = Some(SmoothingParams {
+                            mode: SmoothingMode::SnapLerp,
+                            duration_ms: d,
+                            max_distance: md,
+                        });
+                    } else {
+                        ann.warnings.push(malformed(field_name, "smooth"));
+                    }
+                } else {
+                    ann.warnings.push(malformed(field_name, "smooth"));
+                }
             }
             _ => ann.warnings.push(malformed(field_name, "smooth")),
         }
@@ -248,18 +277,53 @@ mod tests {
 
     #[test]
     fn parse_smooth_lerp() {
-        let ann = parse_annotations(&["/// @quanta:smooth(lerp, 0.1)"], "f");
+        let ann = parse_annotations(&["/// @quanta:smooth(lerp, 100)"], "f");
         let smooth = ann.smoothing.unwrap();
         assert_eq!(smooth.mode, SmoothingMode::Lerp);
-        assert_eq!(smooth.params, vec![0.1]);
+        assert_eq!(smooth.duration_ms, 100);
+        assert_eq!(smooth.max_distance, 0.0);
     }
 
     #[test]
-    fn parse_smooth_snap_lerp_multi_params() {
-        let ann = parse_annotations(&["/// @quanta:smooth(snap_lerp, 0.5, 0.2)"], "f");
+    fn parse_smooth_snap() {
+        let ann = parse_annotations(&["/// @quanta:smooth(snap)"], "f");
+        let smooth = ann.smoothing.unwrap();
+        assert_eq!(smooth.mode, SmoothingMode::Snap);
+        assert_eq!(smooth.duration_ms, 0);
+        assert_eq!(smooth.max_distance, 0.0);
+    }
+
+    #[test]
+    fn parse_smooth_snap_lerp() {
+        let ann = parse_annotations(&["/// @quanta:smooth(snap_lerp, 150, 5.0)"], "f");
         let smooth = ann.smoothing.unwrap();
         assert_eq!(smooth.mode, SmoothingMode::SnapLerp);
-        assert_eq!(smooth.params, vec![0.5, 0.2]);
+        assert_eq!(smooth.duration_ms, 150);
+        assert_eq!(smooth.max_distance, 5.0);
+    }
+
+    #[test]
+    fn smooth_lerp_wrong_param_count() {
+        let ann = parse_annotations(&["/// @quanta:smooth(lerp)"], "f");
+        assert!(ann.smoothing.is_none());
+        assert_eq!(ann.warnings.len(), 1);
+        assert!(matches!(&ann.warnings[0], SchemaWarning::MalformedAnnotation { .. }));
+    }
+
+    #[test]
+    fn smooth_snap_with_params_is_malformed() {
+        let ann = parse_annotations(&["/// @quanta:smooth(snap, 100)"], "f");
+        assert!(ann.smoothing.is_none());
+        assert_eq!(ann.warnings.len(), 1);
+        assert!(matches!(&ann.warnings[0], SchemaWarning::MalformedAnnotation { .. }));
+    }
+
+    #[test]
+    fn smooth_snap_lerp_wrong_param_count() {
+        let ann = parse_annotations(&["/// @quanta:smooth(snap_lerp, 100)"], "f");
+        assert!(ann.smoothing.is_none());
+        assert_eq!(ann.warnings.len(), 1);
+        assert!(matches!(&ann.warnings[0], SchemaWarning::MalformedAnnotation { .. }));
     }
 
     #[test]

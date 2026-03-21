@@ -187,17 +187,22 @@ fn parse_field(r: &mut Reader) -> Result<FieldMeta, SchemaError> {
 
     let smoothing = if has_smoothing {
         let mode_byte = r.read_u8()?;
-        let param_count = r.read_u8()?;
-        let mut params = Vec::with_capacity(param_count as usize);
-        for _ in 0..param_count {
-            params.push(r.read_f64()?);
-        }
         let mode = SmoothingMode::from_byte(mode_byte).ok_or_else(|| {
             SchemaError::ParseError(format!("invalid smoothing mode byte: {mode_byte}"))
         })?;
-        Some(SmoothingParams { mode, params })
+        let duration_ms = r.read_u32()?;
+        let max_distance = r.read_f64()?;
+        SmoothingParams {
+            mode,
+            duration_ms,
+            max_distance,
+        }
     } else {
-        None
+        SmoothingParams {
+            mode: SmoothingMode::Snap,
+            duration_ms: 0,
+            max_distance: 0.0,
+        }
     };
 
     // Enum/Flags variant count is lossy: we reconstruct the upper bound from bit_width.
