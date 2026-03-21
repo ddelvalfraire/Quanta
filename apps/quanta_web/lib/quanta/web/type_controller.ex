@@ -65,9 +65,13 @@ defmodule Quanta.Web.TypeController do
   defp check_schema_evolution(manifest, wit_upload, ns, type) do
     case {manifest.state.kind, wit_upload} do
       {{:schematized, type_name}, %Plug.Upload{path: wit_path}} ->
-        with {:ok, wit_source} <- File.read(wit_path) do
-          prev_version = get_previous_state_version(ns, type)
-          SchemaEvolution.check_deploy(manifest, wit_source, type_name, prev_version)
+        case File.read(wit_path) do
+          {:ok, wit_source} ->
+            prev_version = get_previous_state_version(ns, type)
+            SchemaEvolution.check_deploy(manifest, wit_source, type_name, prev_version)
+
+          {:error, posix} ->
+            {:error, "failed to read WIT upload: #{posix}"}
         end
 
       _ ->

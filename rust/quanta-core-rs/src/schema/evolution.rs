@@ -1,4 +1,7 @@
-use super::export::{MAGIC, FORMAT_VERSION};
+use super::export::{
+    FLAG_HAS_QUANTIZATION, FLAG_HAS_SMOOTHING, FLAG_SKIP_DELTA, FORMAT_VERSION, MAGIC,
+    MAX_FIELD_COUNT,
+};
 use super::types::*;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -8,54 +11,84 @@ pub enum CompatibilityResult {
     Incompatible { details: String },
 }
 
-/// Import a `CompiledSchema` from the QSCH binary format produced by `export_schema`.
-pub fn import_schema(bytes: &[u8]) -> Result<CompiledSchema, SchemaError> {
-    let read_u8 = |pos: &mut usize, data: &[u8]| -> Result<u8, SchemaError> {
-        if *pos >= data.len() {
+/// Cursor over a byte slice for incremental parsing.
+struct Reader<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    fn read_u8(&mut self) -> Result<u8, SchemaError> {
+        if self.pos >= self.data.len() {
             return Err(SchemaError::ParseError("unexpected end of data".into()));
         }
-        let v = data[*pos];
-        *pos += 1;
+        let v = self.data[self.pos];
+        self.pos += 1;
         Ok(v)
-    };
+    }
 
-    let read_u16 = |pos: &mut usize, data: &[u8]| -> Result<u16, SchemaError> {
-        if *pos + 2 > data.len() {
+    fn read_u16(&mut self) -> Result<u16, SchemaError> {
+        if self.pos + 2 > self.data.len() {
             return Err(SchemaError::ParseError("unexpected end of data".into()));
         }
-        let v = u16::from_be_bytes([data[*pos], data[*pos + 1]]);
-        *pos += 2;
+        let v = u16::from_be_bytes([self.data[self.pos], self.data[self.pos + 1]]);
+        self.pos += 2;
         Ok(v)
-    };
+    }
 
-    let read_u32 = |pos: &mut usize, data: &[u8]| -> Result<u32, SchemaError> {
-        if *pos + 4 > data.len() {
+    fn read_u32(&mut self) -> Result<u32, SchemaError> {
+        if self.pos + 4 > self.data.len() {
             return Err(SchemaError::ParseError("unexpected end of data".into()));
         }
-        let v = u32::from_be_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
-        *pos += 4;
+        let v = u32::from_be_bytes([
+            self.data[self.pos],
+            self.data[self.pos + 1],
+            self.data[self.pos + 2],
+            self.data[self.pos + 3],
+        ]);
+        self.pos += 4;
         Ok(v)
-    };
+    }
 
-    let read_f64 = |pos: &mut usize, data: &[u8]| -> Result<f64, SchemaError> {
-        if *pos + 8 > data.len() {
+    fn read_f64(&mut self) -> Result<f64, SchemaError> {
+        if self.pos + 8 > self.data.len() {
             return Err(SchemaError::ParseError("unexpected end of data".into()));
         }
         let v = f64::from_be_bytes([
-            data[*pos],
-            data[*pos + 1],
-            data[*pos + 2],
-            data[*pos + 3],
-            data[*pos + 4],
-            data[*pos + 5],
-            data[*pos + 6],
-            data[*pos + 7],
+            self.data[self.pos],
+            self.data[self.pos + 1],
+            self.data[self.pos + 2],
+            self.data[self.pos + 3],
+            self.data[self.pos + 4],
+            self.data[self.pos + 5],
+            self.data[self.pos + 6],
+            self.data[self.pos + 7],
         ]);
-        *pos += 8;
+        self.pos += 8;
         Ok(v)
-    };
+    }
 
-    // Header: magic
+    fn read_string(&mut self) -> Result<String, SchemaError> {
+        let len = self.read_u16()? as usize;
+        if self.pos + len > self.data.len() {
+            return Err(SchemaError::ParseError(
+                "unexpected end of data reading string".into(),
+            ));
+        }
+        let s = std::str::from_utf8(&self.data[self.pos..self.pos + len])
+            .map_err(|e| SchemaError::ParseError(format!("invalid UTF-8: {e}")))?
+            .to_string();
+        self.pos += len;
+        Ok(s)
+    }
+}
+
+/// Import a `CompiledSchema` from the QSCH binary format produced by `export_schema`.
+pub fn import_schema(bytes: &[u8]) -> Result<CompiledSchema, SchemaError> {
     if bytes.len() < 4 {
         return Err(SchemaError::ParseError("data too short for magic bytes".into()));
     }
@@ -65,10 +98,11 @@ pub fn import_schema(bytes: &[u8]) -> Result<CompiledSchema, SchemaError> {
             &bytes[0..4]
         )));
     }
-    let mut pos = 4;
 
-    // format version
-    let fmt_ver = read_u8(&mut pos, bytes)?;
+    let mut r = Reader::new(bytes);
+    r.pos = 4;
+
+    let fmt_ver = r.read_u8()?;
     if fmt_ver != FORMAT_VERSION {
         return Err(SchemaError::ParseError(format!(
             "unsupported format version: expected {}, got {}",
@@ -76,141 +110,26 @@ pub fn import_schema(bytes: &[u8]) -> Result<CompiledSchema, SchemaError> {
         )));
     }
 
-    let version = read_u8(&mut pos, bytes)?;
-    let field_count = read_u16(&mut pos, bytes)?;
-    let group_count = read_u8(&mut pos, bytes)?;
-    let total_bits = read_u32(&mut pos, bytes)?;
-    let bitmask_byte_count = read_u8(&mut pos, bytes)?;
+    let version = r.read_u8()?;
+    let field_count = r.read_u16()?;
+    if field_count > MAX_FIELD_COUNT {
+        return Err(SchemaError::ParseError(format!(
+            "field count {} exceeds maximum {}",
+            field_count, MAX_FIELD_COUNT
+        )));
+    }
+    let group_count = r.read_u8()?;
+    let total_bits = r.read_u32()?;
+    let bitmask_byte_count = r.read_u8()?;
 
-    // Fields
     let mut fields = Vec::with_capacity(field_count as usize);
     for _ in 0..field_count {
-        let name_len = read_u16(&mut pos, bytes)?;
-        if pos + name_len as usize > bytes.len() {
-            return Err(SchemaError::ParseError("unexpected end of data reading field name".into()));
-        }
-        let name = std::str::from_utf8(&bytes[pos..pos + name_len as usize])
-            .map_err(|e| SchemaError::ParseError(format!("invalid UTF-8 in field name: {e}")))?
-            .to_string();
-        pos += name_len as usize;
-
-        let type_byte = read_u8(&mut pos, bytes)?;
-        let bit_width = read_u8(&mut pos, bytes)?;
-        let bit_offset = read_u32(&mut pos, bytes)?;
-        let group_index = read_u8(&mut pos, bytes)?;
-        let flags = read_u8(&mut pos, bytes)?;
-        let prediction_byte = read_u8(&mut pos, bytes)?;
-        let interpolation_byte = read_u8(&mut pos, bytes)?;
-
-        let skip_delta = (flags & 0x01) != 0;
-        let has_quantization = (flags & 0x02) != 0;
-        let has_smoothing = (flags & 0x04) != 0;
-
-        let quantization = if has_quantization {
-            let min = read_f64(&mut pos, bytes)?;
-            let max = read_f64(&mut pos, bytes)?;
-            let precision = read_f64(&mut pos, bytes)?;
-            // Reconstruct num_values and mask from min/max/precision
-            let num_values = ((max - min) / precision).floor() as u64 + 1;
-            let bits = ceil_log2_u64(num_values);
-            let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
-            Some(QuantizationParams {
-                min,
-                max,
-                precision,
-                num_values,
-                mask,
-            })
-        } else {
-            None
-        };
-
-        let smoothing = if has_smoothing {
-            let mode_byte = read_u8(&mut pos, bytes)?;
-            let param_count = read_u8(&mut pos, bytes)?;
-            let mut params = Vec::with_capacity(param_count as usize);
-            for _ in 0..param_count {
-                params.push(read_f64(&mut pos, bytes)?);
-            }
-            let mode = SmoothingMode::from_byte(mode_byte).ok_or_else(|| {
-                SchemaError::ParseError(format!("invalid smoothing mode byte: {mode_byte}"))
-            })?;
-            Some(SmoothingParams { mode, params })
-        } else {
-            None
-        };
-
-        // For Enum/Flags we need the variant count — derive it from bit_width
-        let variant_count = match type_byte {
-            12 => {
-                // Enum: bit_width = ceil_log2(variant_count), so variant_count = 2^bit_width
-                // but that's an upper bound. We store what we can reconstruct.
-                if bit_width == 0 { 1 } else { 1u16 << bit_width }
-            }
-            13 => {
-                // Flags: bit_width == flag_count
-                bit_width as u16
-            }
-            _ => 0,
-        };
-
-        let field_type = FieldType::from_byte(type_byte, variant_count).ok_or_else(|| {
-            SchemaError::ParseError(format!("invalid field type byte: {type_byte}"))
-        })?;
-
-        let prediction = PredictionMode::from_byte(prediction_byte).ok_or_else(|| {
-            SchemaError::ParseError(format!("invalid prediction mode byte: {prediction_byte}"))
-        })?;
-
-        let interpolation = InterpolationMode::from_byte(interpolation_byte).ok_or_else(|| {
-            SchemaError::ParseError(format!(
-                "invalid interpolation mode byte: {interpolation_byte}"
-            ))
-        })?;
-
-        fields.push(FieldMeta {
-            name,
-            field_type,
-            bit_width,
-            bit_offset,
-            group_index,
-            quantization,
-            prediction,
-            smoothing,
-            interpolation,
-            skip_delta,
-        });
+        fields.push(parse_field(&mut r)?);
     }
 
-    // Groups
     let mut field_groups = Vec::with_capacity(group_count as usize);
     for _ in 0..group_count {
-        let name_len = read_u16(&mut pos, bytes)?;
-        if pos + name_len as usize > bytes.len() {
-            return Err(SchemaError::ParseError(
-                "unexpected end of data reading group name".into(),
-            ));
-        }
-        let name = std::str::from_utf8(&bytes[pos..pos + name_len as usize])
-            .map_err(|e| SchemaError::ParseError(format!("invalid UTF-8 in group name: {e}")))?
-            .to_string();
-        pos += name_len as usize;
-
-        let priority_byte = read_u8(&mut pos, bytes)?;
-        let priority = Priority::from_byte(priority_byte).ok_or_else(|| {
-            SchemaError::ParseError(format!("invalid priority byte: {priority_byte}"))
-        })?;
-
-        let max_tick_rate = read_u16(&mut pos, bytes)?;
-        let range_start = read_u16(&mut pos, bytes)?;
-        let range_end = read_u16(&mut pos, bytes)?;
-
-        field_groups.push(FieldGroup {
-            name,
-            priority,
-            max_tick_rate,
-            bitmask_range: (range_start, range_end),
-        });
+        field_groups.push(parse_group(&mut r)?);
     }
 
     Ok(CompiledSchema {
@@ -222,14 +141,129 @@ pub fn import_schema(bytes: &[u8]) -> Result<CompiledSchema, SchemaError> {
     })
 }
 
+fn parse_field(r: &mut Reader) -> Result<FieldMeta, SchemaError> {
+    let name = r.read_string()?;
+    let type_byte = r.read_u8()?;
+    let bit_width = r.read_u8()?;
+    let bit_offset = r.read_u32()?;
+    let group_index = r.read_u8()?;
+    let flags = r.read_u8()?;
+    let prediction_byte = r.read_u8()?;
+    let interpolation_byte = r.read_u8()?;
+
+    let skip_delta = (flags & FLAG_SKIP_DELTA) != 0;
+    let has_quantization = (flags & FLAG_HAS_QUANTIZATION) != 0;
+    let has_smoothing = (flags & FLAG_HAS_SMOOTHING) != 0;
+
+    let quantization = if has_quantization {
+        let min = r.read_f64()?;
+        let max = r.read_f64()?;
+        let precision = r.read_f64()?;
+
+        let raw = ((max - min) / precision).floor();
+        if !raw.is_finite() || raw < 0.0 || raw >= u64::MAX as f64 {
+            return Err(SchemaError::ParseError(format!(
+                "invalid quantization range for field {name}: min={min}, max={max}, precision={precision}"
+            )));
+        }
+        let num_values = raw as u64 + 1;
+        let bits = ceil_log2_u64(num_values);
+        let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+        Some(QuantizationParams {
+            min,
+            max,
+            precision,
+            num_values,
+            mask,
+        })
+    } else {
+        None
+    };
+
+    let smoothing = if has_smoothing {
+        let mode_byte = r.read_u8()?;
+        let param_count = r.read_u8()?;
+        let mut params = Vec::with_capacity(param_count as usize);
+        for _ in 0..param_count {
+            params.push(r.read_f64()?);
+        }
+        let mode = SmoothingMode::from_byte(mode_byte).ok_or_else(|| {
+            SchemaError::ParseError(format!("invalid smoothing mode byte: {mode_byte}"))
+        })?;
+        Some(SmoothingParams { mode, params })
+    } else {
+        None
+    };
+
+    // Enum/Flags variant count is lossy: we reconstruct the upper bound from bit_width.
+    // Enum(3) with bit_width=2 imports as Enum(4). This does not affect compatibility
+    // checks which compare the full FieldType (including variant count).
+    let variant_count = match type_byte {
+        12 => {
+            if bit_width == 0 { 1 } else { 1u16 << bit_width }
+        }
+        13 => bit_width as u16,
+        _ => 0,
+    };
+
+    let field_type = FieldType::from_byte(type_byte, variant_count).ok_or_else(|| {
+        SchemaError::ParseError(format!("invalid field type byte: {type_byte}"))
+    })?;
+
+    let prediction = PredictionMode::from_byte(prediction_byte).ok_or_else(|| {
+        SchemaError::ParseError(format!("invalid prediction mode byte: {prediction_byte}"))
+    })?;
+
+    let interpolation = InterpolationMode::from_byte(interpolation_byte).ok_or_else(|| {
+        SchemaError::ParseError(format!(
+            "invalid interpolation mode byte: {interpolation_byte}"
+        ))
+    })?;
+
+    Ok(FieldMeta {
+        name,
+        field_type,
+        bit_width,
+        bit_offset,
+        group_index,
+        quantization,
+        prediction,
+        smoothing,
+        interpolation,
+        skip_delta,
+    })
+}
+
+fn parse_group(r: &mut Reader) -> Result<FieldGroup, SchemaError> {
+    let name = r.read_string()?;
+    let priority_byte = r.read_u8()?;
+    let priority = Priority::from_byte(priority_byte).ok_or_else(|| {
+        SchemaError::ParseError(format!("invalid priority byte: {priority_byte}"))
+    })?;
+    let max_tick_rate = r.read_u16()?;
+    let range_start = r.read_u16()?;
+    let range_end = r.read_u16()?;
+
+    Ok(FieldGroup {
+        name,
+        priority,
+        max_tick_rate,
+        bitmask_range: (range_start, range_end),
+    })
+}
+
 /// Compare two compiled schemas for append-only compatibility.
+///
+/// Checks name and type at each position. Layout-altering changes (quantization,
+/// prediction, smoothing, bit_width) on existing fields are reported as
+/// `Compatible`, not `Identical`, since they change the wire encoding.
 pub fn check_schema_compatibility(
     old: &CompiledSchema,
     new: &CompiledSchema,
 ) -> CompatibilityResult {
     let min_len = old.fields.len().min(new.fields.len());
+    let mut has_layout_changes = false;
 
-    // Check existing fields match position-by-position
     for i in 0..min_len {
         let old_f = &old.fields[i];
         let new_f = &new.fields[i];
@@ -251,6 +285,10 @@ pub fn check_schema_compatibility(
                 ),
             };
         }
+
+        if old_f != new_f {
+            has_layout_changes = true;
+        }
     }
 
     if new.fields.len() < old.fields.len() {
@@ -263,16 +301,22 @@ pub fn check_schema_compatibility(
         };
     }
 
-    if new.fields.len() == old.fields.len() {
-        CompatibilityResult::Identical
-    } else {
+    if new.fields.len() > old.fields.len() {
         let added: Vec<&str> = new.fields[old.fields.len()..]
             .iter()
             .map(|f| f.name.as_str())
             .collect();
-        CompatibilityResult::Compatible {
+        return CompatibilityResult::Compatible {
             details: format!("appended {} field(s): {}", added.len(), added.join(", ")),
+        };
+    }
+
+    if has_layout_changes {
+        CompatibilityResult::Compatible {
+            details: "field layout changed (quantization, prediction, or bit_width)".into(),
         }
+    } else {
+        CompatibilityResult::Identical
     }
 }
 
@@ -513,5 +557,58 @@ mod tests {
             check_schema_compatibility(&original, &imported),
             CompatibilityResult::Identical
         );
+    }
+
+    #[test]
+    fn layout_change_is_compatible_not_identical() {
+        let old = schema_with_quantization_and_smoothing();
+        let mut new = old.clone();
+        // Change quantization params (same name+type, different bit_width)
+        new.fields[0].quantization = Some(QuantizationParams {
+            min: -5000.0,
+            max: 5000.0,
+            precision: 0.01,
+            num_values: 1_000_001,
+            mask: (1u64 << 20) - 1,
+        });
+        new.fields[0].bit_width = 20;
+        match check_schema_compatibility(&old, &new) {
+            CompatibilityResult::Compatible { details } => {
+                assert!(details.contains("layout changed"));
+            }
+            other => panic!("expected Compatible, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn import_rejects_field_count_over_max() {
+        let mut bytes = export_schema(&minimal_schema());
+        // Overwrite field_count (bytes 6-7) with MAX_FIELD_COUNT + 1
+        let too_many = (super::MAX_FIELD_COUNT + 1).to_be_bytes();
+        bytes[6] = too_many[0];
+        bytes[7] = too_many[1];
+        let err = import_schema(&bytes).unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum"));
+    }
+
+    #[test]
+    fn import_rejects_zero_precision_quantization() {
+        let mut schema = schema_with_quantization_and_smoothing();
+        schema.fields[0].quantization.as_mut().unwrap().precision = 0.0;
+        let bytes = export_schema(&schema);
+        let err = import_schema(&bytes).unwrap_err();
+        assert!(err.to_string().contains("invalid quantization range"));
+    }
+
+    #[test]
+    fn enum_variant_count_lossy_on_roundtrip() {
+        // Enum(3) has bit_width=2, which imports back as Enum(4).
+        // This documents the known lossy behavior.
+        let mut schema = minimal_schema();
+        schema.fields[0].field_type = FieldType::Enum(3);
+        schema.fields[0].bit_width = 2;
+        let bytes = export_schema(&schema);
+        let imported = import_schema(&bytes).unwrap();
+        assert_eq!(imported.fields[0].field_type, FieldType::Enum(4));
     }
 }

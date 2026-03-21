@@ -57,7 +57,7 @@ fn schema_import<'a>(env: Env<'a>, bytes: Binary) -> Term<'a> {
     })
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 fn schema_check_compatibility<'a>(
     env: Env<'a>,
     old: ResourceArc<CompiledSchemaResource>,

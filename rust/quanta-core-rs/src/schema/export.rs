@@ -6,6 +6,14 @@ pub const MAGIC: &[u8; 4] = b"QSCH";
 /// Current format version.
 pub const FORMAT_VERSION: u8 = 1;
 
+/// Per-field flag bits (shared between export and import).
+pub const FLAG_SKIP_DELTA: u8 = 0x01;
+pub const FLAG_HAS_QUANTIZATION: u8 = 0x02;
+pub const FLAG_HAS_SMOOTHING: u8 = 0x04;
+
+/// Maximum field count we accept on import (defense-in-depth).
+pub const MAX_FIELD_COUNT: u16 = 4096;
+
 /// Export a CompiledSchema to deterministic big-endian binary format.
 ///
 /// Layout:
@@ -39,16 +47,15 @@ pub fn export_schema(schema: &CompiledSchema) -> Vec<u8> {
         buf.extend_from_slice(&field.bit_offset.to_be_bytes());
         buf.push(field.group_index);
 
-        // flags: bit 0 = skip_delta, bit 1 = has_quantization, bit 2 = has_smoothing
         let mut flags: u8 = 0;
         if field.skip_delta {
-            flags |= 0x01;
+            flags |= FLAG_SKIP_DELTA;
         }
         if field.quantization.is_some() {
-            flags |= 0x02;
+            flags |= FLAG_HAS_QUANTIZATION;
         }
         if field.smoothing.is_some() {
-            flags |= 0x04;
+            flags |= FLAG_HAS_SMOOTHING;
         }
         buf.push(flags);
 
