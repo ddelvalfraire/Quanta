@@ -21,6 +21,7 @@ thread_local! {
     static COMPUTE_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static APPLY_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
     static ENCODE_BUF: RefCell<Vec<u64>> = const { RefCell::new(Vec::new()) };
+    static QUANTIZE_BUF: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -215,6 +216,30 @@ fn decode_value_to_term<'a>(
         }
         _ => value.encode(env),
     }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn delta_quantize_state<'a>(
+    env: Env<'a>,
+    schema_arc: ResourceArc<CompiledSchemaResource>,
+    state_binary: Binary,
+) -> Term<'a> {
+    crate::macros::nif_safe!(env, {
+        let schema = &schema_arc.0;
+        let raw_state = state_binary.as_slice();
+
+        QUANTIZE_BUF.with(|buf| {
+            let mut buf = buf.borrow_mut();
+            match encoder::quantize_state_into(schema, raw_state, &mut buf) {
+                Ok(()) => {
+                    let mut bin = NewBinary::new(env, buf.len());
+                    bin.as_mut_slice().copy_from_slice(&buf);
+                    (atoms::ok(), Binary::from(bin)).encode(env)
+                }
+                Err(e) => (atoms::error(), e.to_string()).encode(env),
+            }
+        })
+    })
 }
 
 fn encode_term_to_value(

@@ -380,4 +380,8 @@ defmodule Quanta.Nifs.Native do
   @spec delta_encode_state(schema :: reference(), values :: [term()]) ::
           {:ok, binary()} | {:error, String.t()}
   def delta_encode_state(_schema, _values), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec delta_quantize_state(schema :: reference(), state :: binary()) ::
+          {:ok, binary()} | {:error, String.t()}
+  def delta_quantize_state(_schema, _state), do: :erlang.nif_error(:nif_not_loaded)
 end

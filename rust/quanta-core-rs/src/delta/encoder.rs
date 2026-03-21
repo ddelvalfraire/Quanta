@@ -248,6 +248,88 @@ pub fn apply_delta_into(
     Ok(())
 }
 
+/// Returns the native (pre-quantization) bit width for a field.
+/// For quantized float fields this is the IEEE 754 width (32 or 64),
+/// not the schema's quantized `bit_width`.
+pub fn native_bit_width(field: &FieldMeta) -> u8 {
+    if field.quantization.is_some() {
+        // Quantized fields use their native float width for the input format
+        field.field_type.native_bits().unwrap_or(field.bit_width)
+    } else {
+        field.bit_width
+    }
+}
+
+/// Converts native-packed state bytes (IEEE 754 floats at full width) into
+/// quantized-packed state bytes (floats mapped to integer grids at schema bit widths).
+pub fn quantize_state(
+    schema: &CompiledSchema,
+    raw_state: &[u8],
+) -> Result<Vec<u8>, DeltaError> {
+    let mut output = Vec::new();
+    quantize_state_into(schema, raw_state, &mut output)?;
+    Ok(output)
+}
+
+/// Like `quantize_state` but writes into a reusable buffer.
+pub fn quantize_state_into(
+    schema: &CompiledSchema,
+    raw_state: &[u8],
+    output: &mut Vec<u8>,
+) -> Result<(), DeltaError> {
+    output.clear();
+
+    let native_total_bits: u32 = schema
+        .fields
+        .iter()
+        .filter(|f| field_is_active(f))
+        .map(|f| native_bit_width(f) as u32)
+        .sum();
+
+    let expected_bytes = (native_total_bits as usize).div_ceil(8);
+    if raw_state.len() < expected_bytes {
+        return Err(DeltaError::StateTooShort {
+            expected: expected_bytes,
+            got: raw_state.len(),
+        });
+    }
+
+    let mut reader = BitReader::new(raw_state, native_total_bits);
+    let mut values = Vec::with_capacity(schema.fields.len());
+
+    for field in &schema.fields {
+        if !field_is_active(field) {
+            values.push(0);
+            continue;
+        }
+
+        let native_width = native_bit_width(field);
+        let raw = reader.read_bits(native_width)?;
+
+        // Quantized fields: read at native IEEE width, convert to f64, quantize
+        // Non-quantized fields: pass through raw value unchanged
+        let quantized = if let Some(ref params) = field.quantization {
+            let float_val = match field.field_type {
+                FieldType::F32 => f32::from_bits(raw as u32) as f64,
+                FieldType::F64 => f64::from_bits(raw),
+                _ => unreachable!(
+                    "quantization on non-float field '{}' ({:?}) should be rejected by schema compiler",
+                    field.name, field.field_type
+                ),
+            };
+            quantize_field(float_val, params, &field.name)?
+        } else {
+            raw
+        };
+
+        values.push(quantized);
+    }
+
+    let result = write_state(schema, &values);
+    output.extend_from_slice(&result);
+    Ok(())
+}
+
 pub fn is_signed_int(ft: &FieldType) -> bool {
     matches!(
         ft,
@@ -537,5 +619,126 @@ mod tests {
         let state = write_state(&schema, &values);
         let read_back = read_state(&schema, &state).unwrap();
         assert_eq!(read_back, values);
+    }
+
+    #[test]
+    fn native_bit_width_non_quantized() {
+        let schema = two_field_schema();
+        // Bool field: bit_width = 1, no quantization → native = 1
+        assert_eq!(native_bit_width(&schema.fields[0]), 1);
+        // U16 field: bit_width = 16, no quantization → native = 16
+        assert_eq!(native_bit_width(&schema.fields[1]), 16);
+    }
+
+    #[test]
+    fn native_bit_width_quantized_f32() {
+        let schema = schema_with_quantization_and_smoothing();
+        // F32 quantized field: bit_width = 21, but native = 32 (IEEE 754)
+        assert_eq!(native_bit_width(&schema.fields[0]), 32);
+        // Bool field: bit_width = 1, no quantization → native = 1
+        assert_eq!(native_bit_width(&schema.fields[1]), 1);
+    }
+
+    #[test]
+    fn quantize_state_f32_field() {
+        let schema = schema_with_quantization_and_smoothing();
+        let params = schema.fields[0].quantization.as_ref().unwrap();
+
+        // Build native-packed state: f32 at 32 bits + bool at 1 bit
+        let float_val: f32 = 50.15;
+        let float_bits = float_val.to_bits();
+        let bool_val: u64 = 1;
+
+        let native_total_bits = 32 + 1; // f32(32) + bool(1)
+        let mut writer = BitWriter::new(native_total_bits);
+        writer.write_bits(float_bits as u64, 32);
+        writer.write_bits(bool_val, 1);
+        let native_state = writer.finish();
+
+        let quantized_state = quantize_state(&schema, &native_state).unwrap();
+
+        // Decode and verify quantized value
+        let values = read_state(&schema, &quantized_state).unwrap();
+        let restored = dequantize(values[0], params);
+        assert!(
+            (restored - 50.15).abs() < params.precision,
+            "restored={restored}, expected ~50.15"
+        );
+        assert_eq!(values[1], 1); // bool unchanged
+    }
+
+    #[test]
+    fn quantize_state_nan_rejected() {
+        let schema = schema_with_quantization_and_smoothing();
+
+        let nan_bits = f32::NAN.to_bits();
+        let native_total_bits = 32 + 1;
+        let mut writer = BitWriter::new(native_total_bits);
+        writer.write_bits(nan_bits as u64, 32);
+        writer.write_bits(0, 1);
+        let native_state = writer.finish();
+
+        let err = quantize_state(&schema, &native_state).unwrap_err();
+        assert!(matches!(err, DeltaError::NaNOrInfinity { .. }));
+        if let DeltaError::NaNOrInfinity { field } = &err {
+            assert_eq!(field, "x");
+        }
+    }
+
+    #[test]
+    fn quantize_state_infinity_rejected() {
+        let schema = schema_with_quantization_and_smoothing();
+
+        let inf_bits = f32::INFINITY.to_bits();
+        let native_total_bits = 32 + 1;
+        let mut writer = BitWriter::new(native_total_bits);
+        writer.write_bits(inf_bits as u64, 32);
+        writer.write_bits(0, 1);
+        let native_state = writer.finish();
+
+        let err = quantize_state(&schema, &native_state).unwrap_err();
+        assert!(matches!(err, DeltaError::NaNOrInfinity { .. }));
+    }
+
+    #[test]
+    fn quantize_state_non_quantized_passthrough() {
+        // Non-quantized schema: values pass through unchanged
+        let schema = two_field_schema();
+        let values = vec![1u64, 42000];
+        let state = write_state(&schema, &values);
+
+        // For non-quantized schemas, native widths == schema widths,
+        // so the same state bytes serve as input
+        let quantized = quantize_state(&schema, &state).unwrap();
+        assert_eq!(quantized, state);
+    }
+
+    #[test]
+    fn quantize_state_then_delta_exact_comparison() {
+        let schema = schema_with_quantization_and_smoothing();
+
+        // Two values that differ only within the precision — after quantization
+        // they should produce the same packed integer → empty delta
+        let val_a: f32 = 50.101;
+        let val_b: f32 = 50.104; // within 0.01 precision of val_a
+
+        let native_total_bits = 32 + 1;
+
+        let mut w = BitWriter::new(native_total_bits);
+        w.write_bits(val_a.to_bits() as u64, 32);
+        w.write_bits(1, 1);
+        let native_a = w.finish();
+
+        let mut w = BitWriter::new(native_total_bits);
+        w.write_bits(val_b.to_bits() as u64, 32);
+        w.write_bits(1, 1);
+        let native_b = w.finish();
+
+        let q_a = quantize_state(&schema, &native_a).unwrap();
+        let q_b = quantize_state(&schema, &native_b).unwrap();
+
+        // Both quantize to the same integer → delta is empty
+        let delta = compute_delta(&schema, &q_a, &q_b, None).unwrap();
+        assert!(delta.is_empty(), "Expected empty delta for values within precision");
     }
 }
