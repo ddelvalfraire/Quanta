@@ -8,7 +8,7 @@ defmodule Mix.Tasks.Bench do
   def run(_args) do
     Mix.Task.run("app.start")
 
-    for tier <- ~w(bench.tier1 bench.tier2 bench.tier3 bench.tier4) do
+    for tier <- ~w(bench.tier1 bench.tier2 bench.tier3 bench.tier4 bench.tier5) do
       Mix.Task.run(tier)
     end
   end
@@ -75,5 +75,21 @@ defmodule Mix.Tasks.Bench.Tier4 do
     IO.puts("║     Tier 4: Differentiators      ║")
     IO.puts("╚══════════════════════════════════╝\n")
     Quanta.Bench.Tier4.run_all()
+  end
+end
+
+defmodule Mix.Tasks.Bench.Tier5 do
+  @moduledoc "Run Tier 5 (NIF delta encoding) benchmarks."
+  @shortdoc "Run Tier 5 benchmarks"
+
+  use Mix.Task
+
+  @impl true
+  def run(_args) do
+    Mix.Task.run("app.start")
+    IO.puts("\n╔══════════════════════════════════╗")
+    IO.puts("║   Tier 5: NIF Delta Encoding     ║")
+    IO.puts("╚══════════════════════════════════╝\n")
+    Quanta.Bench.Tier5.run_all()
   end
 end
