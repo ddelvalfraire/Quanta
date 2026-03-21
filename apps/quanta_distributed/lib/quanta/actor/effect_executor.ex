@@ -9,7 +9,7 @@ defmodule Quanta.Actor.EffectExecutor do
   alias Quanta.Actor.{CrdtOps, DynSup, Registry, Server}
   alias Quanta.Codec.Wire
   alias Quanta.Envelope
-  alias Quanta.Nifs.LoroEngine
+  alias Quanta.Nifs.{DeltaEncoder, LoroEngine}
 
   require Logger
 
@@ -17,7 +17,8 @@ defmodule Quanta.Actor.EffectExecutor do
           actor_id: Quanta.ActorId.t(),
           envelope: Envelope.t(),
           manifest: Quanta.Manifest.t(),
-          server_state: Server.t()
+          server_state: Server.t(),
+          prev_state_data: binary() | nil
         }
 
   # Deviations from ticket spec (T12):
@@ -66,15 +67,19 @@ defmodule Quanta.Actor.EffectExecutor do
       {:error, :persist_failed, :state_too_large}
     else
       state = acc.server_state
+      old_state_data = context[:prev_state_data] || state.state_data
 
-      %{
-        acc
-        | server_state: %{
-            state
-            | state_data: data,
-              events_since_snapshot: state.events_since_snapshot + 1
-          }
+      new_seq = state.delta_seq + 1
+
+      new_state = %{
+        state
+        | state_data: data,
+          events_since_snapshot: state.events_since_snapshot + 1,
+          delta_seq: new_seq
       }
+
+      broadcast_delta(new_state, old_state_data, data, new_seq)
+      %{acc | server_state: new_state}
     end
   end
 
@@ -240,6 +245,24 @@ defmodule Quanta.Actor.EffectExecutor do
 
     for {pid, {_user_id, _ref}} <- subscribers do
       send(pid, msg)
+    end
+
+    :ok
+  end
+
+  defp broadcast_delta(state, old_data, new_data, seq) do
+    if state.schema_ref && map_size(state.subscribers) > 0 do
+      case DeltaEncoder.compute_delta(state.schema_ref, old_data, new_data) do
+        {:ok, delta} when byte_size(delta) > 0 ->
+          msg = {:delta_update, delta, new_data, seq, state.schema_version}
+
+          for {pid, {_user_id, _ref}} <- state.subscribers do
+            send(pid, msg)
+          end
+
+        _ ->
+          :ok
+      end
     end
 
     :ok

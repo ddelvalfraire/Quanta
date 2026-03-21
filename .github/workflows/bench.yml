@@ -1,0 +1,72 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    paths:
+      - 'rust/**'
+
+jobs:
+  rust-slo:
+    name: Rust SLO ceiling tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-slo-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-slo-
+
+      - name: Run SLO tests
+        working-directory: rust
+        run: cargo test -p quanta-core-rs --test slo_test --release
+
+  rust-bench:
+    name: Rust Criterion benchmarks
+    runs-on: ubuntu-latest
+    if: ${{ vars.BENCHER_API_TOKEN != '' || secrets.BENCHER_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('rust/**/Cargo.lock', 'rust/**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+
+      - name: Install Bencher CLI
+        uses: bencherdev/bencher@main
+
+      - name: Run benchmarks with Bencher
+        working-directory: rust
+        env:
+          BENCHER_API_TOKEN: ${{ secrets.BENCHER_API_TOKEN }}
+          BRANCH_NAME: ${{ github.head_ref }}
+        run: |
+          bencher run \
+            --project quanta \
+            --branch "$BRANCH_NAME" \
+            --testbed ubuntu-latest \
+            --adapter rust_criterion \
+            --threshold-measure latency \
+            --threshold-test t_test \
+            --threshold-upper-boundary 0.15 \
+            --err \
+            "cargo bench -p quanta-core-rs --bench delta_bench"
