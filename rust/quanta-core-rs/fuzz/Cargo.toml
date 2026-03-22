@@ -1,0 +1,24 @@
+[package]
+name = "quanta-core-rs-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+quanta-core-rs = { path = ".." }
+
+[[bin]]
+name = "fuzz_wire_frame"
+path = "fuzz_targets/fuzz_wire_frame.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_bridge_frame"
+path = "fuzz_targets/fuzz_bridge_frame.rs"
+doc = false
+
+[workspace]
