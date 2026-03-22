@@ -1,7 +1,3 @@
-//! Testing utilities for quanta-realtime-server.
-//!
-//! Gated on `#[cfg(any(test, feature = "test-utils"))]` at the module level in lib.rs.
-
 mod bot;
 mod certs;
 mod harness;
@@ -16,12 +12,10 @@ pub use recording::{
     replay, Divergence, IslandRecording, RecordedEffect, RecordedInput, TickRecord,
 };
 
-/// Shared test executors to avoid duplication across test modules.
 pub mod test_executors {
     use crate::tick::*;
     use crate::types::EntitySlot;
 
-    /// WASM executor that increments the first byte of state on each message.
     pub struct IncrementWasm;
 
     impl WasmExecutor for IncrementWasm {

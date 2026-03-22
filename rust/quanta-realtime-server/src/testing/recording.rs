@@ -5,7 +5,6 @@ use crate::types::EntitySlot;
 
 pub const RECORDING_FORMAT_VERSION: u16 = 1;
 
-/// A recorded input event, serializable for replay.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone)]
 pub struct RecordedInput {
     pub entity_slot: u32,
@@ -25,7 +24,6 @@ impl From<&RecordedInput> for ClientInput {
     }
 }
 
-/// A recorded bridge effect, serializable for replay comparison.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone)]
 pub enum RecordedEffect {
     SendRemote { target: String, payload: Vec<u8> },
@@ -50,7 +48,6 @@ impl From<&BridgeEffect> for RecordedEffect {
     }
 }
 
-/// A single tick's recorded data.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone)]
 pub struct TickRecord {
     pub tick_number: u64,
@@ -59,7 +56,6 @@ pub struct TickRecord {
     pub entity_checksums: Vec<(u32, u64)>,
 }
 
-/// A full island recording that can be saved/loaded for replay.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone)]
 pub struct IslandRecording {
     pub format_version: u16,
@@ -92,7 +88,6 @@ impl IslandRecording {
     }
 }
 
-/// Where replay diverged from the recording.
 #[derive(Debug)]
 pub struct Divergence {
     pub tick: u64,
@@ -101,10 +96,6 @@ pub struct Divergence {
     pub actual: u64,
 }
 
-/// Replay a recording through a TestHarness, comparing entity checksums.
-///
-/// Returns `Ok(())` if all checksums match, or `Err(Divergence)` at the first mismatch.
-/// The `checksum_fn` computes a u64 hash from entity state bytes (e.g. xxh3).
 pub fn replay<F>(
     recording: &IslandRecording,
     wasm: Box<dyn WasmExecutor>,

@@ -11,7 +11,6 @@ pub trait BotBehavior: Send {
     fn on_tick(&mut self, tick: u64, entity_states: &[(u32, Vec<u8>)]) -> Vec<BotAction>;
 }
 
-/// Does nothing — tests passive entity load.
 pub struct IdleBot;
 
 impl BotBehavior for IdleBot {
@@ -20,7 +19,6 @@ impl BotBehavior for IdleBot {
     }
 }
 
-/// Generates random input payloads using a seeded xorshift64 PRNG.
 pub struct RandomWalkBot {
     state: u64,
     entity: u32,
@@ -54,7 +52,6 @@ impl BotBehavior for RandomWalkBot {
     }
 }
 
-/// Sends maximum input rate — tests throughput under load.
 pub struct StressBot {
     pub inputs_per_tick: u32,
     entity: u32,
@@ -86,7 +83,6 @@ pub struct BotMetrics {
     pub ticks_run: u64,
 }
 
-/// Runs N bots against a TestHarness for M ticks, collecting metrics.
 pub struct BotHarness {
     bots: Vec<Box<dyn BotBehavior>>,
     harness: super::TestHarness,

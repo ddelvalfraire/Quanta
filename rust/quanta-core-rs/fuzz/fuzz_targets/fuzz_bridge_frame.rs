@@ -3,6 +3,5 @@
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    // decode_bridge_frame must never panic on arbitrary input.
     let _ = quanta_core_rs::bridge::decode_bridge_frame(data);
 });

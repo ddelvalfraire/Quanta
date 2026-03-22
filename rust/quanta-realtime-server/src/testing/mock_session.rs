@@ -5,7 +5,6 @@ use std::time::Duration;
 use crate::error::SendError;
 use crate::session::{Session, TransportType};
 
-/// A mock session for testing that captures all sent data.
 pub struct MockSession {
     inner: Mutex<MockSessionInner>,
     transport: TransportType,

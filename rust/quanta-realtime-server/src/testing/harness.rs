@@ -5,10 +5,6 @@ use crate::command::IslandCommand;
 use crate::tick::*;
 use crate::types::{EntitySlot, IslandId};
 
-/// A test harness wrapping a `TickEngine` for deterministic testing.
-///
-/// Owns the channel senders and shutdown flag so tests only need to
-/// interact with high-level convenience methods.
 pub struct TestHarness {
     engine: TickEngine,
     input_tx: crossbeam_channel::Sender<ClientInput>,
@@ -42,8 +38,6 @@ impl TestHarness {
         self.engine.current_tick()
     }
 
-    /// Returns the tick number that was most recently executed.
-    /// `current_tick()` points to the *next* tick; this returns `current_tick() - 1`.
     pub fn last_completed_tick(&self) -> u64 {
         self.engine.current_tick().saturating_sub(1)
     }
@@ -56,7 +50,6 @@ impl TestHarness {
         self.engine.entity_count()
     }
 
-    /// Returns the actual entity slot keys registered in the engine.
     pub fn entity_slots(&self) -> Vec<EntitySlot> {
         self.engine.entity_slots()
     }
@@ -66,7 +59,6 @@ impl TestHarness {
     }
 }
 
-/// Builder for constructing a `TestHarness`.
 pub struct TestHarnessBuilder {
     tick_rate_hz: u8,
     max_catchup_ticks: u32,
