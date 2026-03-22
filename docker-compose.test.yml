@@ -54,6 +54,30 @@ services:
     networks:
       - nats-cluster
 
+  # Placeholder — uncomment when Dockerfile is added
+  # realtime:
+  #   build:
+  #     context: ./rust
+  #     dockerfile: Dockerfile.realtime
+  #   depends_on:
+  #     - nats-1
+  #   environment:
+  #     NATS_URL: nats://nats-1:4222
+  #   networks:
+  #     - nats-cluster
+
+  # Placeholder — uncomment when distributed tests are ready
+  # distributed:
+  #   build:
+  #     context: ./rust
+  #     dockerfile: Dockerfile.distributed
+  #   depends_on:
+  #     - nats-1
+  #   environment:
+  #     NATS_URL: nats://nats-1:4222
+  #   networks:
+  #     - nats-cluster
+
 networks:
   nats-cluster:
     driver: bridge
