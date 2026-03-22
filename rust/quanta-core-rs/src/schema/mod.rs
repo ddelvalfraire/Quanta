@@ -4,6 +4,7 @@ pub mod evolution;
 pub mod export;
 pub mod layout;
 pub mod parser;
+pub mod position;
 pub mod types;
 pub mod validation;
 
