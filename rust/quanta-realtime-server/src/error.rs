@@ -7,6 +7,7 @@ pub enum EndpointError {
     Quinn(quinn::ConnectionError),
     Auth(String),
     WebTransport(String),
+    WebSocket(String),
     Send(SendError),
 }
 
@@ -18,6 +19,7 @@ impl fmt::Display for EndpointError {
             Self::Quinn(err) => write!(f, "QUIC connection error: {err}"),
             Self::Auth(msg) => write!(f, "auth error: {msg}"),
             Self::WebTransport(msg) => write!(f, "WebTransport error: {msg}"),
+            Self::WebSocket(msg) => write!(f, "WebSocket error: {msg}"),
             Self::Send(err) => write!(f, "send error: {err}"),
         }
     }

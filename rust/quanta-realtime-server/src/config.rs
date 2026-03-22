@@ -16,6 +16,7 @@ pub struct EndpointConfig {
     pub max_concurrent_uni_streams: u32,
     pub rate_limit_per_sec: u32,
     pub auth_timeout: Duration,
+    pub ws_port: Option<u16>,
 }
 
 impl Default for EndpointConfig {
@@ -30,6 +31,7 @@ impl Default for EndpointConfig {
             max_concurrent_uni_streams: 4,
             rate_limit_per_sec: 100,
             auth_timeout: Duration::from_secs(5),
+            ws_port: None,
         }
     }
 }
