@@ -1,71 +1,9 @@
-use quanta_realtime_server::command::IslandCommand;
-use quanta_realtime_server::tick::*;
-use quanta_realtime_server::types::{EntitySlot, IslandId};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+mod common;
+
 use std::sync::Arc;
 
-fn slot(n: u32) -> EntitySlot {
-    EntitySlot(n)
-}
-
-/// Create a TickEngine with a custom WasmExecutor for testing.
-fn test_engine(
-    wasm: Box<dyn WasmExecutor>,
-) -> (
-    TickEngine,
-    crossbeam_channel::Sender<ClientInput>,
-    crossbeam_channel::Sender<IslandCommand>,
-    crossbeam_channel::Sender<BridgeMessage>,
-) {
-    let (input_tx, input_rx) = crossbeam_channel::unbounded();
-    let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
-    let (bridge_tx, bridge_rx) = crossbeam_channel::unbounded();
-    let config = TickEngineConfig {
-        tick_rate_hz: 20,
-        max_catchup_ticks: 3,
-    };
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let engine = TickEngine::new(
-        IslandId::from("test-island"),
-        config,
-        wasm,
-        input_rx,
-        bridge_rx,
-        cmd_rx,
-        shutdown,
-        Arc::new(AtomicU64::new(0)),
-    );
-    (engine, input_tx, cmd_tx, bridge_tx)
-}
-
-struct MockWasm {
-    handler:
-        Box<dyn FnMut(EntitySlot, &[u8], &TickMessage) -> Result<HandleResult, WasmTrap> + Send>,
-}
-
-impl MockWasm {
-    fn new<F>(handler: F) -> Self
-    where
-        F: FnMut(EntitySlot, &[u8], &TickMessage) -> Result<HandleResult, WasmTrap>
-            + Send
-            + 'static,
-    {
-        Self {
-            handler: Box::new(handler),
-        }
-    }
-}
-
-impl WasmExecutor for MockWasm {
-    fn call_handle_message(
-        &mut self,
-        entity: EntitySlot,
-        state: &[u8],
-        message: &TickMessage,
-    ) -> Result<HandleResult, WasmTrap> {
-        (self.handler)(entity, state, message)
-    }
-}
+use common::{slot, test_engine, MockWasm};
+use quanta_realtime_server::tick::*;
 
 // ── Request-reply: bridge request → entity Reply → BridgeReply effect ──
 

@@ -76,6 +76,8 @@ mod tests {
         let (tx, _rx) = crossbeam_channel::unbounded::<IslandCommand>();
         let (input_tx, _input_rx) =
             crossbeam_channel::unbounded::<crate::tick::ClientInput>();
+        let (bridge_tx, _bridge_rx) =
+            crossbeam_channel::unbounded::<crate::tick::BridgeMessage>();
         IslandHandle {
             island_id: IslandId::from(id),
             state,
@@ -83,6 +85,7 @@ mod tests {
             entity_count,
             command_tx: tx,
             input_tx,
+            bridge_tx,
             join_handle: None,
             manifest: crate::types::IslandManifest {
                 island_id: IslandId::from(id),

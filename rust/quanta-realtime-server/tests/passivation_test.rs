@@ -2,6 +2,7 @@ mod common;
 
 use common::*;
 use quanta_realtime_server::config::ServerConfig;
+use quanta_realtime_server::types::EntitySlot;
 
 fn fast_passivation_config() -> ServerConfig {
     ServerConfig {
@@ -39,7 +40,7 @@ async fn passivation_writes_checkpoint() {
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 0);
 
-    bridge_message(&tx, "ckpt-1", vec![1, 2, 3]).await.unwrap();
+    bridge_message(&tx, "ckpt-1", EntitySlot(0), vec![1, 2, 3]).await.unwrap();
 
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 1, "island should be reactivated from checkpoint");
@@ -58,7 +59,7 @@ async fn reactivation_loads_correct_state_from_checkpoint() {
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 0, "island should have been passivated");
 
-    bridge_message(&tx, "react-1", vec![42]).await.unwrap();
+    bridge_message(&tx, "react-1", EntitySlot(0), vec![42]).await.unwrap();
 
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 1, "island should be reactivated");
@@ -160,7 +161,7 @@ async fn reactivated_island_resumes_from_correct_tick() {
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 0, "island should be passivated");
 
-    bridge_message(&tx, "tick-resume", vec![1]).await.unwrap();
+    bridge_message(&tx, "tick-resume", EntitySlot(0), vec![1]).await.unwrap();
 
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 1, "island should be reactivated");

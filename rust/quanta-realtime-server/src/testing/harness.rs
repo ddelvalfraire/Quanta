@@ -8,6 +8,7 @@ use crate::types::{EntitySlot, IslandId};
 pub struct TestHarness {
     engine: TickEngine,
     input_tx: crossbeam_channel::Sender<ClientInput>,
+    bridge_tx: crossbeam_channel::Sender<BridgeMessage>,
     #[allow(dead_code)]
     cmd_tx: crossbeam_channel::Sender<IslandCommand>,
     shutdown: Arc<AtomicBool>,
@@ -24,6 +25,10 @@ impl TestHarness {
 
     pub fn send_input(&self, input: ClientInput) {
         self.input_tx.send(input).expect("input channel disconnected");
+    }
+
+    pub fn send_bridge(&self, msg: BridgeMessage) {
+        self.bridge_tx.send(msg).expect("bridge channel disconnected");
     }
 
     pub fn add_entity(&mut self, slot: EntitySlot, state: Vec<u8>, owner: Option<SessionId>) {
@@ -99,7 +104,7 @@ impl TestHarnessBuilder {
     pub fn build(self) -> TestHarness {
         let (input_tx, input_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
-        let (_bridge_tx, bridge_rx) = crossbeam_channel::unbounded();
+        let (bridge_tx, bridge_rx) = crossbeam_channel::unbounded();
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let config = TickEngineConfig {
@@ -124,6 +129,7 @@ impl TestHarnessBuilder {
         TestHarness {
             engine,
             input_tx,
+            bridge_tx,
             cmd_tx,
             shutdown,
         }

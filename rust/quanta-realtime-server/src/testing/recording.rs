@@ -29,6 +29,10 @@ pub enum RecordedEffect {
     SendRemote { target: String, payload: Vec<u8> },
     Persist { entity_count: u32 },
     EmitTelemetry { event: String },
+    RequestRemote { source_entity: u32, target: String, payload: Vec<u8> },
+    FireAndForget { target: String, payload: Vec<u8> },
+    BridgeReply { correlation_id: [u8; 16], payload: Vec<u8> },
+    EntityEvicted { entity: u32 },
 }
 
 impl From<&BridgeEffect> for RecordedEffect {
@@ -44,22 +48,25 @@ impl From<&BridgeEffect> for RecordedEffect {
             BridgeEffect::EmitTelemetry { event } => RecordedEffect::EmitTelemetry {
                 event: event.clone(),
             },
-            BridgeEffect::RequestRemote { target, payload, .. } => {
-                RecordedEffect::SendRemote {
+            BridgeEffect::RequestRemote { source_entity, target, payload } => {
+                RecordedEffect::RequestRemote {
+                    source_entity: source_entity.0,
                     target: target.clone(),
                     payload: payload.clone(),
                 }
             }
-            BridgeEffect::FireAndForget { target, payload } => RecordedEffect::SendRemote {
+            BridgeEffect::FireAndForget { target, payload } => RecordedEffect::FireAndForget {
                 target: target.clone(),
                 payload: payload.clone(),
             },
-            BridgeEffect::BridgeReply { .. } => RecordedEffect::SendRemote {
-                target: String::new(),
-                payload: Vec::new(),
-            },
-            BridgeEffect::EntityEvicted { .. } => RecordedEffect::EmitTelemetry {
-                event: "entity_evicted".to_string(),
+            BridgeEffect::BridgeReply { correlation_id, payload } => {
+                RecordedEffect::BridgeReply {
+                    correlation_id: *correlation_id,
+                    payload: payload.clone(),
+                }
+            }
+            BridgeEffect::EntityEvicted { entity } => RecordedEffect::EntityEvicted {
+                entity: entity.0,
             },
         }
     }

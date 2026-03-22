@@ -15,8 +15,16 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 /// Maximum effects a single WASM `handle_message` call may produce.
-/// Prevents a misbehaving module from flooding deferred_sends or effects_out.
 const MAX_EFFECTS_PER_CALL: usize = 64;
+
+/// Maximum deferred sends that can accumulate between ticks.
+const MAX_DEFERRED_SENDS: usize = 4096;
+
+/// Maximum entity count accepted from a passivation snapshot.
+const MAX_SNAPSHOT_ENTITIES: usize = 10_000;
+
+/// Maximum entity state size accepted from a passivation snapshot (1 MB).
+const MAX_SNAPSHOT_ENTITY_STATE: usize = 1_024 * 1_024;
 
 /// Below this threshold, busy-wait is cheaper than the OS scheduler overhead.
 const MIN_SLEEP_DURATION: Duration = Duration::from_micros(500);
@@ -45,7 +53,7 @@ fn route_effects(
 
 /// The core tick loop engine for a simulation island.
 ///
-/// Executes a 5-phase tick loop with fixed timestep (Gaffer on Games pattern):
+/// Executes a 6-phase tick loop with fixed timestep (Gaffer on Games pattern):
 /// 1. Drain inputs (crossbeam MPSC → per-entity input buffer)
 /// 2. Fire timers
 /// 3. Build per-entity message queues (priority: Timer > Bridge > Input > Deferred)
@@ -123,16 +131,34 @@ impl TickEngine {
     /// Restore entity states from a passivation snapshot, resuming at the stored tick.
     pub fn restore_from_snapshot(&mut self, snapshot: &crate::types::IslandSnapshot) {
         self.tick = snapshot.tick;
-        match bitcode::decode::<Vec<(u32, Vec<u8>)>>(&snapshot.state) {
+        match bitcode::decode::<Vec<(u32, Vec<u8>, Option<String>)>>(&snapshot.state) {
             Ok(entries) => {
-                for (slot_id, state) in entries {
+                if entries.len() > MAX_SNAPSHOT_ENTITIES {
+                    warn!(
+                        island_id = %self.island_id,
+                        count = entries.len(),
+                        max = MAX_SNAPSHOT_ENTITIES,
+                        "snapshot entity count exceeds limit, rejecting"
+                    );
+                    return;
+                }
+                for (slot_id, state, owner) in entries {
+                    if state.len() > MAX_SNAPSHOT_ENTITY_STATE {
+                        warn!(
+                            island_id = %self.island_id,
+                            slot = slot_id,
+                            size = state.len(),
+                            "snapshot entity state too large, skipping"
+                        );
+                        continue;
+                    }
                     let init_state = state.clone();
                     self.entities.insert(
                         EntitySlot(slot_id),
                         EntityState {
                             slot: EntitySlot(slot_id),
                             state,
-                            owner_session: None,
+                            owner_session: owner.map(SessionId),
                             dirty: false,
                             init_state,
                             checkpoint_state: None,
@@ -240,26 +266,24 @@ impl TickEngine {
         self.effects_out.clear();
         for entity in &payload.entities {
             let slot = EntitySlot(entity.slot);
-            let init_state = entity.state.clone();
+            let state = entity.state.clone();
+            let owner = entity.owner_session.clone();
+            self.snapshot_buffer.insert(
+                slot,
+                SnapshotEntry {
+                    state: state.clone(),
+                    owner_session: owner.clone(),
+                },
+            );
             self.entities.insert(
                 slot,
                 EntityState {
                     slot,
-                    state: entity.state.clone(),
-                    owner_session: entity
-                        .owner_session
-                        .as_ref()
-                        .map(|s| SessionId(s.clone())),
+                    init_state: state.clone(),
+                    state,
+                    owner_session: owner.map(SessionId),
                     dirty: false,
-                    init_state,
                     checkpoint_state: None,
-                },
-            );
-            self.snapshot_buffer.insert(
-                slot,
-                SnapshotEntry {
-                    state: entity.state.clone(),
-                    owner_session: entity.owner_session.clone(),
                 },
             );
         }
@@ -379,6 +403,7 @@ impl TickEngine {
                             ),
                         });
                         self.flush_effects();
+                        self.write_final_checkpoint();
                         return false;
                     }
                 }
@@ -434,10 +459,10 @@ impl TickEngine {
     }
 
     fn serialize_entity_states(&self) -> Vec<u8> {
-        let entries: Vec<(u32, Vec<u8>)> = self
+        let entries: Vec<(u32, Vec<u8>, Option<String>)> = self
             .entities
             .iter()
-            .map(|(slot, e)| (slot.0, e.state.clone()))
+            .map(|(slot, e)| (slot.0, e.state.clone(), e.owner_session.as_ref().map(|s| s.0.clone())))
             .collect();
         bitcode::encode(&entries)
     }
@@ -451,12 +476,6 @@ impl TickEngine {
         let actor_queues = self.phase3_build_queues(&inputs, &timer_messages);
         let effect_batch = self.phase4_simulate(&actor_queues);
         self.phase5_batch_effects(effect_batch);
-
-        // Phase 6: Compute deltas (state snapshot for async processing)
-        // Full implementation sends DeltaWorkItem to Tokio runtime.
-        // Wired up when transport layer is connected.
-
-        // Checkpoint triggers (after effects are known)
         self.check_checkpoint_triggers();
     }
 
@@ -484,13 +503,14 @@ impl TickEngine {
         }
         let payload = self.build_snapshot();
         let data = crate::checkpoint::codec::encode_checkpoint(self.tick, &payload);
-        // Safe to unwrap: guarded by is_none() check above, no mutation between.
-        self.checkpoint_handle.as_ref().unwrap().try_send(CheckpointRequest {
-            island_id: self.island_id.clone(),
-            tick: self.tick,
-            data,
-            ack: None,
-        });
+        if let Some(handle) = &self.checkpoint_handle {
+            handle.try_send(CheckpointRequest {
+                island_id: self.island_id.clone(),
+                tick: self.tick,
+                data,
+                ack: None,
+            });
+        }
         self.last_checkpoint_tick = self.tick;
     }
 
@@ -722,11 +742,15 @@ impl TickEngine {
             for effect in effects {
                 match effect {
                     TickEffect::Send { target, payload } => {
-                        self.deferred_sends.push(DeferredSend {
-                            source: source_slot,
-                            target,
-                            payload,
-                        });
+                        if self.deferred_sends.len() < MAX_DEFERRED_SENDS {
+                            self.deferred_sends.push(DeferredSend {
+                                source: source_slot,
+                                target,
+                                payload,
+                            });
+                        } else {
+                            warn!("deferred sends at capacity, dropping send");
+                        }
                     }
                     TickEffect::SendRemote { target, payload } => {
                         self.effects_out
@@ -747,8 +771,9 @@ impl TickEngine {
                         self.effects_out
                             .push(BridgeEffect::EmitTelemetry { event });
                     }
-                    TickEffect::Reply(_payload) => {
-                        // Route to client session (wired when transport is connected)
+                    TickEffect::Reply(_) => {
+                        // Reply effects are routed in phase4 via route_effects().
+                        // This arm should not be reachable.
                     }
                     TickEffect::RequestRemote { target, payload } => {
                         self.effects_out.push(BridgeEffect::RequestRemote {

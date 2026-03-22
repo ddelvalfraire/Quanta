@@ -104,12 +104,17 @@ pub async fn player_left(
 pub async fn bridge_message(
     tx: &tokio::sync::mpsc::Sender<ManagerCommand>,
     island_id: &str,
+    target_entity: EntitySlot,
     payload: Vec<u8>,
 ) -> Result<(), LifecycleError> {
     let (reply_tx, reply_rx) = oneshot::channel();
     tx.send(ManagerCommand::BridgeMessage {
         island_id: IslandId::from(island_id),
-        payload,
+        message: BridgeMessage {
+            target_entity,
+            kind: BridgeMessageKind::OneWay,
+            payload,
+        },
         reply: reply_tx,
     })
     .await

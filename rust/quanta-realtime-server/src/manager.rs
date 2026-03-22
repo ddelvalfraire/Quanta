@@ -96,10 +96,10 @@ impl IslandManager {
             }
             ManagerCommand::BridgeMessage {
                 island_id,
-                payload,
+                message,
                 reply,
             } => {
-                let result = self.handle_bridge_message(&island_id, payload);
+                let result = self.handle_bridge_message(&island_id, message);
                 let _ = reply.send(result);
             }
             ManagerCommand::PlayerInput { island_id, reply } => {
@@ -131,9 +131,9 @@ impl IslandManager {
             ThreadModel::Pooled
         };
 
-        let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<IslandCommand>();
+        let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<IslandCommand>(32);
         let (input_tx, input_rx) = crossbeam_channel::bounded::<ClientInput>(256);
-        let (_bridge_tx, bridge_rx) = crossbeam_channel::bounded::<BridgeMessage>(256);
+        let (bridge_tx, bridge_rx) = crossbeam_channel::bounded::<BridgeMessage>(256);
         let island_id = manifest.island_id.clone();
         let passivate_when_empty = manifest.passivate_when_empty;
         let shutdown = self.shutdown.clone();
@@ -181,6 +181,7 @@ impl IslandManager {
             entity_count: manifest.entity_count,
             command_tx: cmd_tx,
             input_tx,
+            bridge_tx,
             join_handle: Some(join_handle),
             manifest,
             player_count: 0,
@@ -287,13 +288,14 @@ impl IslandManager {
     fn handle_bridge_message(
         &mut self,
         island_id: &IslandId,
-        _payload: Vec<u8>,
+        message: BridgeMessage,
     ) -> Result<(), LifecycleError> {
         if let Some(handle) = self.registry.get_mut(island_id) {
             if handle.player_count == 0 && handle.passivate_when_empty {
                 let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
                 handle.passivation_deadline = Some(Instant::now() + idle_timeout);
             }
+            let _ = handle.bridge_tx.try_send(message);
             return Ok(());
         }
 

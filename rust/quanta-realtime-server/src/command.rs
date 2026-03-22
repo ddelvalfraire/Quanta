@@ -30,7 +30,7 @@ pub enum ManagerCommand {
     /// Route a bridge message to an island. Reactivates passivated islands on demand.
     BridgeMessage {
         island_id: IslandId,
-        payload: Vec<u8>,
+        message: crate::tick::BridgeMessage,
         reply: oneshot::Sender<Result<(), LifecycleError>>,
     },
     /// Notify the manager of player input activity (resets idle timer).
