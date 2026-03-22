@@ -1,7 +1,13 @@
-use quanta_realtime_server::command::{ActivationError, LifecycleError, ManagerCommand};
+#![allow(dead_code)]
+
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use quanta_realtime_server::command::{ActivationError, IslandCommand, LifecycleError, ManagerCommand};
 use quanta_realtime_server::config::ServerConfig;
 use quanta_realtime_server::manager::{manager_channel, IslandManager};
-use quanta_realtime_server::types::{IslandId, IslandManifest};
+use quanta_realtime_server::tick::*;
+use quanta_realtime_server::types::{EntitySlot, IslandId, IslandManifest};
 use tokio::sync::oneshot;
 
 pub fn test_manifest(id: &str, entity_count: u32) -> IslandManifest {
@@ -72,4 +78,72 @@ pub fn spawn_manager(config: ServerConfig) -> tokio::sync::mpsc::Sender<ManagerC
         mgr.run().await;
     });
     tx
+}
+
+// ── Tick engine test helpers ───────────────────────────────────────
+
+pub fn slot(n: u32) -> EntitySlot {
+    EntitySlot(n)
+}
+
+pub struct MockWasm {
+    handler:
+        Box<dyn FnMut(EntitySlot, &[u8], &TickMessage) -> Result<HandleResult, WasmTrap> + Send>,
+}
+
+impl MockWasm {
+    pub fn new<F>(handler: F) -> Self
+    where
+        F: FnMut(EntitySlot, &[u8], &TickMessage) -> Result<HandleResult, WasmTrap>
+            + Send
+            + 'static,
+    {
+        Self {
+            handler: Box::new(handler),
+        }
+    }
+}
+
+impl WasmExecutor for MockWasm {
+    fn call_handle_message(
+        &mut self,
+        entity: EntitySlot,
+        state: &[u8],
+        message: &TickMessage,
+    ) -> Result<HandleResult, WasmTrap> {
+        (self.handler)(entity, state, message)
+    }
+}
+
+pub fn test_engine(
+    wasm: Box<dyn WasmExecutor>,
+) -> (
+    TickEngine,
+    crossbeam_channel::Sender<ClientInput>,
+    crossbeam_channel::Sender<IslandCommand>,
+) {
+    let (input_tx, input_rx) = crossbeam_channel::unbounded();
+    let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+    let config = TickEngineConfig {
+        tick_rate_hz: 20,
+        max_catchup_ticks: 3,
+    };
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let engine = TickEngine::new(
+        IslandId::from("test-island"),
+        config,
+        wasm,
+        input_rx,
+        cmd_rx,
+        shutdown,
+    );
+    (engine, input_tx, cmd_tx)
+}
+
+pub fn noop_engine() -> (
+    TickEngine,
+    crossbeam_channel::Sender<ClientInput>,
+    crossbeam_channel::Sender<IslandCommand>,
+) {
+    test_engine(Box::new(NoopWasmExecutor))
 }

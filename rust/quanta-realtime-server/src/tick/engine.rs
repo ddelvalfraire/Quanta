@@ -1,3 +1,5 @@
+use crate::checkpoint::codec::{CheckpointEntity, CheckpointPayload};
+use crate::checkpoint::writer::{CheckpointHandle, CheckpointRequest};
 use crate::command::IslandCommand;
 use crate::types::{EntitySlot, IslandId};
 
@@ -21,6 +23,14 @@ use tracing::{info, warn};
 /// 4. Simulate (WASM handle_message per entity, BTreeMap order)
 /// 5. Batch effects (persist coalescing, deferred sends)
 /// 6. Compute deltas (hand off to async runtime)
+
+/// Checkpoint snapshot buffer entry. Stores entity state as plain types
+/// (String instead of SessionId) to match the checkpoint codec format.
+struct SnapshotEntry {
+    state: Vec<u8>,
+    owner_session: Option<String>,
+}
+
 pub struct TickEngine {
     island_id: IslandId,
     config: TickEngineConfig,
@@ -35,6 +45,11 @@ pub struct TickEngine {
     effects_out: Vec<BridgeEffect>,
     last_input_seq: HashMap<SessionId, u32>,
     shutdown: Arc<AtomicBool>,
+    // Checkpoint state
+    checkpoint_handle: Option<CheckpointHandle>,
+    checkpoint_interval_ticks: u64,
+    last_checkpoint_tick: u64,
+    snapshot_buffer: BTreeMap<EntitySlot, SnapshotEntry>,
 }
 
 impl TickEngine {
@@ -61,6 +76,10 @@ impl TickEngine {
             effects_out: Vec::new(),
             last_input_seq: HashMap::new(),
             shutdown,
+            checkpoint_handle: None,
+            checkpoint_interval_ticks: 0,
+            last_checkpoint_tick: 0,
+            snapshot_buffer: BTreeMap::new(),
         }
     }
 
@@ -71,6 +90,7 @@ impl TickEngine {
                 slot,
                 state,
                 owner_session: owner,
+                dirty: true,
             },
         );
     }
@@ -115,6 +135,82 @@ impl TickEngine {
         self.timers.cancel_timer(entity, name)
     }
 
+    /// Attach a checkpoint writer. `interval_secs` controls periodic checkpoints (0 = disabled).
+    pub fn set_checkpoint_handle(&mut self, handle: CheckpointHandle, interval_secs: u32) {
+        self.checkpoint_interval_ticks =
+            (interval_secs as u64) * (self.config.tick_rate_hz as u64);
+        self.checkpoint_handle = Some(handle);
+    }
+
+    /// Restore engine state from a decoded checkpoint payload.
+    /// Clears all transient state (deferred sends, timers, faults, input tracking).
+    pub fn restore_from_checkpoint(&mut self, tick: u64, payload: &CheckpointPayload) {
+        self.tick = tick;
+        self.entities.clear();
+        self.snapshot_buffer.clear();
+        self.deferred_sends.clear();
+        self.timers = TimerManager::new(self.config.tick_rate_hz);
+        self.fault_tracker = FaultTracker::new();
+        self.last_input_seq.clear();
+        self.effects_out.clear();
+        for entity in &payload.entities {
+            let slot = EntitySlot(entity.slot);
+            self.entities.insert(
+                slot,
+                EntityState {
+                    slot,
+                    state: entity.state.clone(),
+                    owner_session: entity
+                        .owner_session
+                        .as_ref()
+                        .map(|s| SessionId(s.clone())),
+                    dirty: false,
+                },
+            );
+            self.snapshot_buffer.insert(
+                slot,
+                SnapshotEntry {
+                    state: entity.state.clone(),
+                    owner_session: entity.owner_session.clone(),
+                },
+            );
+        }
+        self.last_checkpoint_tick = tick;
+    }
+
+    /// Build a checkpoint snapshot using the copy-on-update optimization.
+    /// Only clones state for dirty entities; clean entities reuse the buffer.
+    pub fn build_snapshot(&mut self) -> CheckpointPayload {
+        for (slot, entity) in &mut self.entities {
+            if entity.dirty {
+                self.snapshot_buffer.insert(
+                    *slot,
+                    SnapshotEntry {
+                        state: entity.state.clone(),
+                        owner_session: entity.owner_session.as_ref().map(|s| s.0.clone()),
+                    },
+                );
+                entity.dirty = false;
+            }
+        }
+
+        // Remove entities that no longer exist
+        self.snapshot_buffer
+            .retain(|slot, _| self.entities.contains_key(slot));
+
+        let entities = self
+            .snapshot_buffer
+            .iter()
+            .map(|(slot, entry)| CheckpointEntity {
+                slot: slot.0,
+                state: entry.state.clone(),
+                owner_session: entry.owner_session.clone(),
+            })
+            .collect();
+
+        CheckpointPayload { entities }
+    }
+
     /// Execute one tick and advance the tick counter.
     pub fn tick(&mut self) {
         self.execute_tick();
@@ -141,7 +237,7 @@ impl TickEngine {
             "tick engine started"
         );
 
-        while !self.shutdown.load(Ordering::Relaxed) {
+        'outer: while !self.shutdown.load(Ordering::Relaxed) {
             if self.drain_commands() {
                 break;
             }
@@ -169,7 +265,7 @@ impl TickEngine {
                 accumulator -= tick_period;
 
                 if self.drain_commands() {
-                    return;
+                    break 'outer;
                 }
             }
 
@@ -178,6 +274,8 @@ impl TickEngine {
                 std::thread::sleep(sleep_time);
             }
         }
+
+        self.write_final_checkpoint();
 
         info!(
             island_id = %self.island_id,
@@ -221,6 +319,79 @@ impl TickEngine {
         // Phase 6: Compute deltas (state snapshot for async processing)
         // Full implementation sends DeltaWorkItem to Tokio runtime.
         // Wired up when transport layer is connected.
+
+        // Checkpoint triggers (after effects are known)
+        self.check_checkpoint_triggers();
+    }
+
+    fn check_checkpoint_triggers(&mut self) {
+        if self.checkpoint_handle.is_none() {
+            return;
+        }
+
+        let has_persist = self
+            .effects_out
+            .iter()
+            .any(|e| matches!(e, BridgeEffect::Persist { .. }));
+
+        let periodic_due = self.checkpoint_interval_ticks > 0
+            && self.tick >= self.last_checkpoint_tick + self.checkpoint_interval_ticks;
+
+        if has_persist || periodic_due {
+            self.write_checkpoint();
+        }
+    }
+
+    fn write_checkpoint(&mut self) {
+        if self.checkpoint_handle.is_none() {
+            return;
+        }
+        let payload = self.build_snapshot();
+        let data = crate::checkpoint::codec::encode_checkpoint(self.tick, &payload);
+        // Safe to unwrap: guarded by is_none() check above, no mutation between.
+        self.checkpoint_handle.as_ref().unwrap().try_send(CheckpointRequest {
+            island_id: self.island_id.clone(),
+            tick: self.tick,
+            data,
+            ack: None,
+        });
+        self.last_checkpoint_tick = self.tick;
+    }
+
+    /// Synchronous final checkpoint for pre-passivation. Blocks until the write is acknowledged.
+    ///
+    /// # Panics
+    /// Panics if called from within a Tokio async runtime. This method is designed
+    /// to be called from the island's dedicated OS thread.
+    fn write_final_checkpoint(&mut self) {
+        if self.checkpoint_handle.is_none() {
+            return;
+        }
+        let payload = self.build_snapshot();
+        let data = crate::checkpoint::codec::encode_checkpoint(self.tick, &payload);
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        let req = CheckpointRequest {
+            island_id: self.island_id.clone(),
+            tick: self.tick,
+            data,
+            ack: Some(ack_tx),
+        };
+        let handle = self.checkpoint_handle.as_ref().unwrap();
+        if handle.tx.blocking_send(req).is_err() {
+            warn!(
+                island_id = %self.island_id,
+                tick = self.tick,
+                "final checkpoint send failed: writer closed"
+            );
+            return;
+        }
+        if ack_rx.blocking_recv().is_err() {
+            warn!(
+                island_id = %self.island_id,
+                tick = self.tick,
+                "final checkpoint ack lost: writer dropped sender"
+            );
+        }
     }
 
     fn phase1_drain_inputs(&mut self) -> Vec<ClientInput> {
@@ -313,6 +484,7 @@ impl TickEngine {
                 match wasm.call_handle_message(*entity_slot, &current_state, msg) {
                     Ok(result) => {
                         if let Some(e) = entities.get_mut(entity_slot) {
+                            e.dirty = e.state != result.state || e.dirty;
                             e.state = result.state;
                         }
                         if !result.effects.is_empty() {

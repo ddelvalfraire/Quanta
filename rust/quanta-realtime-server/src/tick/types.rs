@@ -20,6 +20,8 @@ pub struct EntityState {
     pub slot: EntitySlot,
     pub state: Vec<u8>,
     pub owner_session: Option<SessionId>,
+    /// Set when state changes; cleared after checkpoint snapshot is taken.
+    pub dirty: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod checkpoint;
 pub mod capacity;
 pub mod command;
 pub mod config;
