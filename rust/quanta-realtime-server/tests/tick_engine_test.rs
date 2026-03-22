@@ -26,7 +26,7 @@ fn deterministic_entity_processing_order() {
             })
         });
 
-        let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+        let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
         // Add entities out of natural order
         engine.add_entity(slot(5), vec![0], None);
         engine.add_entity(slot(1), vec![0], None);
@@ -68,7 +68,7 @@ fn timer_fires_exactly_on_target_tick() {
         })
     });
 
-    let (mut engine, _input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, _input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
 
     // Set timer for 100ms at 20Hz (50ms/tick) → fires on tick 2
@@ -101,7 +101,7 @@ fn cancelled_timer_does_not_fire() {
         })
     });
 
-    let (mut engine, _input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, _input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
 
     engine.set_timer(slot(1), "heal".into(), 100);
@@ -128,7 +128,7 @@ fn stale_input_dropped_new_input_processed() {
         })
     });
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
 
     // Send inputs: seq 3, then stale seq 1, then new seq 5
@@ -161,7 +161,7 @@ fn persist_effects_coalesced_into_one_checkpoint() {
         })
     });
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     for i in 0..3 {
         engine.add_entity(slot(i), vec![i as u8], None);
         input_tx
@@ -226,7 +226,7 @@ fn same_island_send_deferred_to_next_tick() {
         }
     });
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
     engine.add_entity(slot(2), vec![0], None);
 
@@ -261,6 +261,8 @@ fn timer_messages_processed_before_inputs() {
             TickMessage::Input { .. } => "input",
             TickMessage::Bridge { .. } => "bridge",
             TickMessage::Deferred { .. } => "deferred",
+            TickMessage::BridgeRequest { .. } => "bridge_request",
+            TickMessage::SagaFailed { .. } => "saga_failed",
         };
         order.lock().unwrap().push(label);
         Ok(HandleResult {
@@ -269,7 +271,7 @@ fn timer_messages_processed_before_inputs() {
         })
     });
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
 
     // Set timer that fires on tick 1
@@ -325,7 +327,7 @@ fn wasm_trap_skips_remaining_messages_and_records_fault() {
         }
     });
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
 
     // Send 3 inputs — only the first should be attempted (then trap breaks)
@@ -362,7 +364,7 @@ fn stop_self_removes_entity() {
         })
     });
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
     engine.add_entity(slot(2), vec![0], None);
 
@@ -396,7 +398,7 @@ fn wasm_state_mutation_persists() {
         })
     });
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
 
     for seq in 1..=3 {
@@ -449,7 +451,7 @@ fn set_timer_effect_creates_timer() {
         }
     });
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
 
     input_tx
@@ -475,7 +477,7 @@ fn set_timer_effect_creates_timer() {
 
 #[test]
 fn run_loop_stops_on_drain() {
-    let (mut engine, _input_tx, cmd_tx) = noop_engine();
+    let (mut engine, _input_tx, cmd_tx, _bridge_tx) = noop_engine();
     engine.add_entity(slot(1), vec![0], None);
 
     // Send Drain immediately so the loop exits on first command check
@@ -490,6 +492,7 @@ fn run_loop_stops_on_drain() {
 #[test]
 fn run_loop_stops_on_shutdown_flag() {
     let (input_tx, input_rx) = crossbeam_channel::unbounded();
+    let (bridge_tx, bridge_rx) = crossbeam_channel::unbounded();
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
     let config = TickEngineConfig {
         tick_rate_hz: 20,
@@ -503,6 +506,7 @@ fn run_loop_stops_on_shutdown_flag() {
         config,
         Box::new(NoopWasmExecutor),
         input_rx,
+        bridge_rx,
         cmd_rx,
         shutdown,
     );
@@ -515,6 +519,7 @@ fn run_loop_stops_on_shutdown_flag() {
 
     engine.run(); // should stop within ~100ms
     drop(input_tx);
+    drop(bridge_tx);
     drop(cmd_tx);
 }
 
@@ -522,7 +527,7 @@ fn run_loop_stops_on_shutdown_flag() {
 
 #[test]
 fn tick_counter_advances() {
-    let (mut engine, _input_tx, _cmd_tx) = noop_engine();
+    let (mut engine, _input_tx, _cmd_tx, _bridge_tx) = noop_engine();
     assert_eq!(engine.current_tick(), 0);
     engine.tick();
     assert_eq!(engine.current_tick(), 1);
@@ -545,7 +550,7 @@ fn idle_entities_not_processed() {
         })
     });
 
-    let (mut engine, _input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, _input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
     engine.add_entity(slot(2), vec![0], None);
 

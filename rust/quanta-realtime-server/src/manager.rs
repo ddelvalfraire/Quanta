@@ -5,7 +5,7 @@ use crate::config::ServerConfig;
 use crate::island::handle::{IslandHandle, ThreadModel};
 use crate::island::registry::IslandRegistry;
 use crate::island::state_machine::IslandState;
-use crate::tick::types::{ClientInput, NoopWasmExecutor, TickEngineConfig};
+use crate::tick::types::{BridgeMessage, ClientInput, NoopWasmExecutor, TickEngineConfig};
 use crate::tick::TickEngine;
 use crate::traits::Bridge;
 use crate::types::{IslandId, IslandManifest, IslandSnapshot};
@@ -133,6 +133,7 @@ impl IslandManager {
 
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<IslandCommand>();
         let (input_tx, input_rx) = crossbeam_channel::bounded::<ClientInput>(256);
+        let (_bridge_tx, bridge_rx) = crossbeam_channel::bounded::<BridgeMessage>(256);
         let island_id = manifest.island_id.clone();
         let passivate_when_empty = manifest.passivate_when_empty;
         let shutdown = self.shutdown.clone();
@@ -141,8 +142,15 @@ impl IslandManager {
         let join_handle = std::thread::spawn(move || {
             let config = TickEngineConfig::default();
             let wasm = Box::new(NoopWasmExecutor);
-            let mut engine =
-                TickEngine::new(engine_island_id, config, wasm, input_rx, cmd_rx, shutdown);
+            let mut engine = TickEngine::new(
+                engine_island_id,
+                config,
+                wasm,
+                input_rx,
+                bridge_rx,
+                cmd_rx,
+                shutdown,
+            );
 
             if let Some(snap) = snapshot {
                 engine.restore_from_snapshot(&snap);

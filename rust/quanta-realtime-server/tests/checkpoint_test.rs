@@ -71,7 +71,7 @@ fn periodic_checkpoint_triggered_at_interval() {
 
     let writer_task = rt.spawn(writer.run());
 
-    let (mut engine, _input_tx, _cmd_tx) = noop_engine();
+    let (mut engine, _input_tx, _cmd_tx, _bridge_tx) = noop_engine();
     engine.add_entity(slot(1), vec![10], None);
 
     // 1s at 20Hz = 20 ticks. Run 41 ticks so we hit tick 20 and tick 40.
@@ -123,7 +123,7 @@ fn event_triggered_checkpoint_on_persist() {
 
     let writer_task = rt.spawn(writer.run());
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![42], Some(SessionId::from("p1")));
     // No periodic interval — only event-triggered
     engine.set_checkpoint_handle(handle, 0);
@@ -206,7 +206,7 @@ fn recovery_restores_entities_and_tick() {
         ],
     };
 
-    let (mut engine, _input_tx, _cmd_tx) = noop_engine();
+    let (mut engine, _input_tx, _cmd_tx, _bridge_tx) = noop_engine();
     engine.restore_from_checkpoint(42, &payload);
 
     assert_eq!(engine.current_tick(), 42);
@@ -240,7 +240,7 @@ fn concurrent_arcswap_read_does_not_block_tick() {
         .unwrap();
     let writer_task = rt.spawn(writer.run());
 
-    let (mut engine, input_tx, _cmd_tx) = test_engine(Box::new(wasm));
+    let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
     engine.set_checkpoint_handle(handle, 0);
 
@@ -326,7 +326,7 @@ async fn writer_coalesces_rapid_checkpoints() {
 
 #[test]
 fn copy_on_update_only_clones_dirty_entities() {
-    let (mut engine, _input_tx, _cmd_tx) = noop_engine();
+    let (mut engine, _input_tx, _cmd_tx, _bridge_tx) = noop_engine();
 
     // Add 200 entities
     for i in 0..200 {

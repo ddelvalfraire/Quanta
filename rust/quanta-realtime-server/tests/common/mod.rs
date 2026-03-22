@@ -192,9 +192,11 @@ pub fn test_engine(
     TickEngine,
     crossbeam_channel::Sender<ClientInput>,
     crossbeam_channel::Sender<IslandCommand>,
+    crossbeam_channel::Sender<BridgeMessage>,
 ) {
     let (input_tx, input_rx) = crossbeam_channel::unbounded();
     let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+    let (bridge_tx, bridge_rx) = crossbeam_channel::unbounded();
     let config = TickEngineConfig {
         tick_rate_hz: 20,
         max_catchup_ticks: 3,
@@ -205,16 +207,18 @@ pub fn test_engine(
         config,
         wasm,
         input_rx,
+        bridge_rx,
         cmd_rx,
         shutdown,
     );
-    (engine, input_tx, cmd_tx)
+    (engine, input_tx, cmd_tx, bridge_tx)
 }
 
 pub fn noop_engine() -> (
     TickEngine,
     crossbeam_channel::Sender<ClientInput>,
     crossbeam_channel::Sender<IslandCommand>,
+    crossbeam_channel::Sender<BridgeMessage>,
 ) {
     test_engine(Box::new(NoopWasmExecutor))
 }
