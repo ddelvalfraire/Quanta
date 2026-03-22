@@ -19,13 +19,46 @@ pub enum ManagerCommand {
     GetMetrics {
         reply: oneshot::Sender<ManagerMetrics>,
     },
+    PlayerJoined {
+        island_id: IslandId,
+        reply: oneshot::Sender<Result<(), LifecycleError>>,
+    },
+    PlayerLeft {
+        island_id: IslandId,
+        reply: oneshot::Sender<Result<(), LifecycleError>>,
+    },
+    /// Route a bridge message to an island. Reactivates passivated islands on demand.
+    BridgeMessage {
+        island_id: IslandId,
+        payload: Vec<u8>,
+        reply: oneshot::Sender<Result<(), LifecycleError>>,
+    },
+    /// Notify the manager of player input activity (resets idle timer).
+    PlayerInput {
+        island_id: IslandId,
+        reply: oneshot::Sender<Result<(), LifecycleError>>,
+    },
 }
 
-#[derive(Debug)]
 pub enum IslandCommand {
     Tick,
     Drain,
     Stop,
+    /// Passivate: complete current tick, capture entity state snapshot, then stop.
+    Passivate {
+        snapshot_tx: crossbeam_channel::Sender<crate::types::IslandSnapshot>,
+    },
+}
+
+impl std::fmt::Debug for IslandCommand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tick => write!(f, "Tick"),
+            Self::Drain => write!(f, "Drain"),
+            Self::Stop => write!(f, "Stop"),
+            Self::Passivate { .. } => write!(f, "Passivate"),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]

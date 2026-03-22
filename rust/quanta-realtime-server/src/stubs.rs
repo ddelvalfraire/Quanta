@@ -60,6 +60,7 @@ pub struct StubBridge;
 impl Bridge for StubBridge {
     fn report_island_stopped(&self, _island_id: &IslandId) {}
     fn request_passivation(&self, _island_id: &IslandId) {}
+    fn report_island_passivated(&self, _island_id: &IslandId, _checkpoint_tick: u64) {}
 }
 
 pub struct StubSpatialIndex;
@@ -83,6 +84,7 @@ mod tests {
             entity_count: 1,
             wasm_module: "test.wasm".into(),
             initial_state: vec![],
+            passivate_when_empty: true,
         };
         rt.init(&manifest).unwrap();
         let r1 = rt.tick(&[]).unwrap();

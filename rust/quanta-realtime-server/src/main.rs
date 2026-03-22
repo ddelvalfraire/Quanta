@@ -41,7 +41,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await;
     });
 
-    let mut manager = IslandManager::new(config, cmd_rx);
+    let bridge = std::sync::Arc::new(quanta_realtime_server::stubs::StubBridge);
+    let mut manager = IslandManager::new(config, cmd_rx, bridge);
     manager.run().await;
 
     Ok(())

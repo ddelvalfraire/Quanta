@@ -83,6 +83,34 @@ impl TickEngine {
         }
     }
 
+    /// Restore entity states from a passivation snapshot, resuming at the stored tick.
+    pub fn restore_from_snapshot(&mut self, snapshot: &crate::types::IslandSnapshot) {
+        self.tick = snapshot.tick;
+        match bitcode::decode::<Vec<(u32, Vec<u8>)>>(&snapshot.state) {
+            Ok(entries) => {
+                for (slot_id, state) in entries {
+                    self.entities.insert(
+                        EntitySlot(slot_id),
+                        EntityState {
+                            slot: EntitySlot(slot_id),
+                            state,
+                            owner_session: None,
+                            dirty: false,
+                        },
+                    );
+                }
+            }
+            Err(e) => {
+                warn!(
+                    island_id = %self.island_id,
+                    tick = snapshot.tick,
+                    error = %e,
+                    "failed to decode passivation snapshot, starting with empty state"
+                );
+            }
+        }
+    }
+
     pub fn add_entity(&mut self, slot: EntitySlot, state: Vec<u8>, owner: Option<SessionId>) {
         self.entities.insert(
             slot,
@@ -289,15 +317,41 @@ impl TickEngine {
     }
 
     /// Check for pending commands. Returns true if the engine should stop.
-    fn drain_commands(&self) -> bool {
+    fn drain_commands(&mut self) -> bool {
         loop {
             match self.cmd_rx.try_recv() {
                 Ok(IslandCommand::Tick) => {} // legacy no-op
                 Ok(IslandCommand::Drain) | Ok(IslandCommand::Stop) => return true,
+                Ok(IslandCommand::Passivate { snapshot_tx }) => {
+                    self.send_passivation_snapshot(snapshot_tx);
+                    return true;
+                }
                 Err(crossbeam_channel::TryRecvError::Empty) => return false,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return true,
             }
         }
+    }
+
+    fn send_passivation_snapshot(
+        &self,
+        tx: crossbeam_channel::Sender<crate::types::IslandSnapshot>,
+    ) {
+        let state = self.serialize_entity_states();
+        let snapshot = crate::types::IslandSnapshot {
+            island_id: self.island_id.clone(),
+            tick: self.tick,
+            state,
+        };
+        let _ = tx.send(snapshot);
+    }
+
+    fn serialize_entity_states(&self) -> Vec<u8> {
+        let entries: Vec<(u32, Vec<u8>)> = self
+            .entities
+            .iter()
+            .map(|(slot, e)| (slot.0, e.state.clone()))
+            .collect();
+        bitcode::encode(&entries)
     }
 
     /// Execute one tick (6 phases). Does NOT advance the tick counter.

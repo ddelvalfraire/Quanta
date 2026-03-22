@@ -23,6 +23,7 @@ pub trait Session: Send + Sync + 'static {
 pub trait Bridge: Send + Sync + 'static {
     fn report_island_stopped(&self, island_id: &IslandId);
     fn request_passivation(&self, island_id: &IslandId);
+    fn report_island_passivated(&self, island_id: &IslandId, checkpoint_tick: u64);
 }
 
 pub trait SpatialIndex: Send + Sync + 'static {
