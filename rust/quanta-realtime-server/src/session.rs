@@ -77,6 +77,10 @@ impl Session for QuicSession {
             .map_err(|e| SendError::ConnectionLost(e.to_string()))
     }
 
+    // Reliable stream delivery is handled out-of-band via send_initial_state_stream
+    // which operates on the raw quinn::Connection directly. This trait method is not
+    // used for bulk transfer and can be implemented when per-stream reliable messaging
+    // is needed beyond initial sync.
     fn send_reliable(&self, _stream_id: u32, _data: &[u8]) -> Result<(), SendError> {
         Err(SendError::StreamClosed)
     }

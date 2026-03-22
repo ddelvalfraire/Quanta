@@ -1,43 +1,18 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 
-use quanta_realtime_server::{
-    AuthRequest, AuthResponse, AuthValidator, ConnectedClient, EndpointConfig, EndpointError,
-    WsListener,
-};
 use quanta_realtime_server::reconnect::ReconnectTier;
+use quanta_realtime_server::testing::endpoint_helpers::TestValidator;
+use quanta_realtime_server::{
+    AuthRequest, AuthResponse, ConnectedClient, EndpointConfig, WsListener,
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-struct TestValidator {
-    counter: AtomicU64,
-}
-
-impl TestValidator {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            counter: AtomicU64::new(1),
-        })
-    }
-}
-
-impl AuthValidator for TestValidator {
-    fn validate(&self, _req: &AuthRequest) -> Result<AuthResponse, EndpointError> {
-        let session_id = self.counter.fetch_add(1, Ordering::Relaxed);
-        Ok(AuthResponse {
-            session_id,
-            accepted: true,
-            reason: String::new(),
-        })
-    }
-}
 
 async fn start_ws_server(
     config: EndpointConfig,
@@ -79,7 +54,6 @@ async fn ws_connect_and_auth(
         .expect("ws connect");
     let (mut sink, mut stream) = ws.split();
 
-    // Send auth as raw bitcode binary message (no length prefix).
     let req = AuthRequest {
         token: "test-token".into(),
         client_version: "0.1.0".into(),
@@ -90,7 +64,6 @@ async fn ws_connect_and_auth(
         .await
         .expect("send auth");
 
-    // Read auth response.
     let resp_msg = stream.next().await.expect("response").expect("ws read");
     let resp_bytes = match resp_msg {
         Message::Binary(b) => b,
@@ -122,6 +95,7 @@ async fn ws_connect_and_auth_succeeds() {
         connected.session.transport_type(),
         quanta_realtime_server::TransportType::WebSocket
     );
+    // WS is a degraded fallback — always Cold reconnect.
     assert!(matches!(connected.reconnect_tier, ReconnectTier::Cold));
     assert!(connected.quic_connection.is_none());
 

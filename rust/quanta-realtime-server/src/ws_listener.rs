@@ -111,6 +111,12 @@ async fn handle_ws_connection(
             let msg = msg.map_err(|e| EndpointError::WebSocket(e.to_string()))?;
             match msg {
                 Message::Binary(data) => {
+                    if data.len() > 65_536 {
+                        return Err(EndpointError::Auth(format!(
+                            "ws auth request too large: {} bytes",
+                            data.len()
+                        )));
+                    }
                     let req: AuthRequest = bitcode::decode(&data)
                         .map_err(|e| EndpointError::Auth(format!("decode auth: {e}")))?;
                     let response = validator.validate(&req)?;
