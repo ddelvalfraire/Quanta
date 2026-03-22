@@ -16,7 +16,7 @@ impl From<&str> for IslandId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct EntitySlot(pub u32);
 
 pub type DeltaBytes = Vec<u8>;
