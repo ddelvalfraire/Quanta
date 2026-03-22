@@ -1,7 +1,7 @@
 use quanta_realtime_server::command::IslandCommand;
 use quanta_realtime_server::tick::*;
 use quanta_realtime_server::types::{EntitySlot, IslandId};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 
 fn slot(n: u32) -> EntitySlot {
@@ -33,6 +33,7 @@ fn test_engine(
         bridge_rx,
         cmd_rx,
         shutdown,
+        Arc::new(AtomicU64::new(0)),
     );
     (engine, input_tx, cmd_tx, bridge_tx)
 }

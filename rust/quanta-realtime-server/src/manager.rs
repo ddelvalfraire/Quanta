@@ -138,7 +138,11 @@ impl IslandManager {
         let passivate_when_empty = manifest.passivate_when_empty;
         let shutdown = self.shutdown.clone();
 
+        let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let engine_heartbeat = heartbeat.clone();
         let engine_island_id = island_id.clone();
+        let panicked = Arc::new(AtomicBool::new(false));
+        let engine_panicked = panicked.clone();
         let join_handle = std::thread::spawn(move || {
             let config = TickEngineConfig::default();
             let wasm = Box::new(NoopWasmExecutor);
@@ -150,13 +154,17 @@ impl IslandManager {
                 bridge_rx,
                 cmd_rx,
                 shutdown,
+                engine_heartbeat,
             );
 
             if let Some(snap) = snapshot {
                 engine.restore_from_snapshot(&snap);
             }
 
-            engine.run();
+            let clean = engine.run();
+            if !clean {
+                engine_panicked.store(true, Ordering::Relaxed);
+            }
         });
 
         let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
@@ -178,6 +186,8 @@ impl IslandManager {
             player_count: 0,
             passivation_deadline,
             passivate_when_empty,
+            heartbeat,
+            panicked,
         };
 
         self.registry.insert(handle);

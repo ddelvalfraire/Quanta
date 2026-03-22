@@ -1,5 +1,4 @@
 use crate::types::EntitySlot;
-use std::collections::BTreeMap;
 
 pub type CorrelationId = [u8; 16];
 
@@ -24,6 +23,8 @@ pub struct EntityState {
     pub owner_session: Option<SessionId>,
     /// Set when state changes; cleared after checkpoint snapshot is taken.
     pub dirty: bool,
+    pub init_state: Vec<u8>,
+    pub checkpoint_state: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,13 +76,13 @@ pub enum TickMessage {
 /// Effects returned from WASM handle_message execution.
 #[derive(Debug, Clone)]
 pub enum TickEffect {
-    Reply(Vec<u8>),
     Send { target: EntitySlot, payload: Vec<u8> },
     SendRemote { target: String, payload: Vec<u8> },
     Persist,
     SetTimer { name: String, delay_ms: u32 },
     CancelTimer(String),
     EmitTelemetry { event: String },
+    Reply(Vec<u8>),
     StopSelf,
     RequestRemote { target: String, payload: Vec<u8> },
     FireAndForget { target: String, payload: Vec<u8> },
@@ -148,13 +149,6 @@ impl WasmExecutor for NoopWasmExecutor {
     }
 }
 
-/// Work item sent from island thread to async runtime for delta encoding.
-#[derive(Debug)]
-pub struct DeltaWorkItem {
-    pub tick: u64,
-    pub entity_states: BTreeMap<EntitySlot, Vec<u8>>,
-}
-
 /// Effects routed outward from the tick engine (to bridge, checkpoint writer, etc.).
 #[derive(Debug, Clone)]
 pub enum BridgeEffect {
@@ -180,6 +174,9 @@ pub enum BridgeEffect {
     BridgeReply {
         correlation_id: CorrelationId,
         payload: Vec<u8>,
+    },
+    EntityEvicted {
+        entity: EntitySlot,
     },
 }
 

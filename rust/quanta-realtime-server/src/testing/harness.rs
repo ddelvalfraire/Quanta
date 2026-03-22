@@ -109,6 +109,7 @@ impl TestHarnessBuilder {
 
         let wasm = self.wasm.unwrap_or_else(|| Box::new(NoopWasmExecutor));
 
+        let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let engine = TickEngine::new(
             self.island_id,
             config,
@@ -117,6 +118,7 @@ impl TestHarnessBuilder {
             bridge_rx,
             cmd_rx,
             shutdown.clone(),
+            heartbeat,
         );
 
         TestHarness {

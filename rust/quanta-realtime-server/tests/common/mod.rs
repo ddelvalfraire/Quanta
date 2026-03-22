@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 
 use quanta_realtime_server::command::{ActivationError, IslandCommand, LifecycleError, ManagerCommand};
@@ -202,6 +202,7 @@ pub fn test_engine(
         max_catchup_ticks: 3,
     };
     let shutdown = Arc::new(AtomicBool::new(false));
+    let heartbeat = Arc::new(AtomicU64::new(0));
     let engine = TickEngine::new(
         IslandId::from("test-island"),
         config,
@@ -210,6 +211,7 @@ pub fn test_engine(
         bridge_rx,
         cmd_rx,
         shutdown,
+        heartbeat,
     );
     (engine, input_tx, cmd_tx, bridge_tx)
 }
