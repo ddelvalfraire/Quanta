@@ -2,6 +2,7 @@ name: Benchmarks
 
 on:
   pull_request:
+    branches: [main]
     paths:
       - 'rust/**'
 
