@@ -18,57 +18,51 @@ pub struct TestHarness {
 }
 
 impl TestHarness {
-    /// Execute one tick and advance the counter.
     pub fn tick(&mut self) {
         self.engine.tick();
     }
 
-    /// Execute N ticks.
     pub fn tick_n(&mut self, n: u32) {
         self.engine.tick_n(n);
     }
 
-    /// Inject a client input into the engine's input channel.
     pub fn send_input(&self, input: ClientInput) {
         self.input_tx.send(input).expect("input channel disconnected");
     }
 
-    /// Add an entity to the engine.
     pub fn add_entity(&mut self, slot: EntitySlot, state: Vec<u8>, owner: Option<SessionId>) {
         self.engine.add_entity(slot, state, owner);
     }
 
-    /// Take all bridge effects emitted during the last tick.
     pub fn take_effects(&mut self) -> Vec<BridgeEffect> {
         self.engine.take_effects()
     }
 
-    /// Current tick number.
     pub fn current_tick(&self) -> u64 {
         self.engine.current_tick()
     }
 
-    /// Get entity state by slot.
     pub fn get_entity_state(&self, slot: &EntitySlot) -> Option<&[u8]> {
         self.engine.get_entity_state(slot)
     }
 
-    /// Number of entities in the engine.
     pub fn entity_count(&self) -> usize {
         self.engine.entity_count()
     }
 
-    /// Signal shutdown (useful if tests spawn the run loop in a thread).
+    /// Returns the actual entity slot keys registered in the engine.
+    pub fn entity_slots(&self) -> Vec<EntitySlot> {
+        self.engine.entity_slots()
+    }
+
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
     }
 
-    /// Direct access to the underlying engine.
     pub fn engine(&self) -> &TickEngine {
         &self.engine
     }
 
-    /// Mutable access to the underlying engine.
     pub fn engine_mut(&mut self) -> &mut TickEngine {
         &mut self.engine
     }

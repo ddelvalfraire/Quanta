@@ -53,13 +53,6 @@ impl IslandRecording {
     }
 }
 
-/// Result of replaying a recording.
-#[derive(Debug)]
-pub struct ReplayResult {
-    pub ok: bool,
-    pub divergence: Option<Divergence>,
-}
-
 /// Where replay diverged from the recording.
 #[derive(Debug)]
 pub struct Divergence {
@@ -88,12 +81,13 @@ impl RecordedEffect {
 
 /// Replay a recording through a TestHarness, comparing entity checksums.
 ///
+/// Returns `Ok(())` if all checksums match, or `Err(Divergence)` at the first mismatch.
 /// The `checksum_fn` computes a u64 hash from entity state bytes (e.g. xxh3).
 pub fn replay<F>(
     recording: &IslandRecording,
     wasm: Box<dyn WasmExecutor>,
     checksum_fn: F,
-) -> ReplayResult
+) -> Result<(), Divergence>
 where
     F: Fn(&[u8]) -> u64,
 {
@@ -109,7 +103,6 @@ where
     }
 
     for record in &recording.tick_records {
-        // Inject inputs for this tick
         for input in &record.inputs {
             harness.send_input(ClientInput {
                 session_id: SessionId::from(input.session_id.as_str()),
@@ -121,47 +114,38 @@ where
 
         harness.tick();
 
-        // Verify entity checksums
         for &(slot, expected_checksum) in &record.entity_checksums {
             if let Some(state) = harness.get_entity_state(&EntitySlot(slot)) {
                 let actual = checksum_fn(state);
                 if actual != expected_checksum {
-                    return ReplayResult {
-                        ok: false,
-                        divergence: Some(Divergence {
-                            tick: record.tick_number,
-                            entity: slot,
-                            expected: expected_checksum,
-                            actual,
-                        }),
-                    };
+                    return Err(Divergence {
+                        tick: record.tick_number,
+                        entity: slot,
+                        expected: expected_checksum,
+                        actual,
+                    });
                 }
             }
         }
     }
 
-    ReplayResult {
-        ok: true,
-        divergence: None,
-    }
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::super::TestHarnessBuilder;
+    use super::super::test_executors::IncrementWasm;
 
     fn xxh3(data: &[u8]) -> u64 {
         xxhash_rust::xxh3::xxh3_64(data)
     }
 
-    /// Record a short sequence, replay it, verify no divergence.
     #[test]
     fn record_and_replay_no_divergence() {
-        // Step 1: Record
-        let wasm = IncrementWasm;
         let mut harness = TestHarnessBuilder::new()
-            .wasm(Box::new(wasm))
+            .wasm(Box::new(IncrementWasm))
             .build();
 
         harness.add_entity(EntitySlot(1), vec![0], None);
@@ -195,6 +179,7 @@ mod tests {
                 .map(RecordedEffect::from_bridge_effect)
                 .collect();
 
+            // current_tick() returns the next tick to execute; subtract 1 for the completed tick
             tick_records.push(TickRecord {
                 tick_number: harness.current_tick() - 1,
                 inputs: vec![input],
@@ -209,18 +194,13 @@ mod tests {
             tick_records,
         };
 
-        // Step 2: Replay with same WASM
-        let result = replay(&recording, Box::new(IncrementWasm), xxh3);
-        assert!(result.ok, "replay should match");
-        assert!(result.divergence.is_none());
+        replay(&recording, Box::new(IncrementWasm), xxh3).expect("replay should match");
     }
 
-    /// Replay with a different WASM executor, verify divergence detected.
     #[test]
     fn replay_detects_divergence() {
         let initial_entities = vec![(1u32, vec![0u8])];
 
-        // Build recording with IncrementWasm
         let mut harness = TestHarnessBuilder::new()
             .wasm(Box::new(IncrementWasm))
             .build();
@@ -253,15 +233,12 @@ mod tests {
             }],
         };
 
-        // Replay with NoopWasmExecutor (state stays [0], won't match [1])
-        let result = replay(&recording, Box::new(NoopWasmExecutor), xxh3);
-        assert!(!result.ok, "replay should diverge");
-        let div = result.divergence.unwrap();
+        let div = replay(&recording, Box::new(NoopWasmExecutor), xxh3)
+            .expect_err("replay should diverge");
         assert_eq!(div.tick, 0);
         assert_eq!(div.entity, 1);
     }
 
-    /// Save/load roundtrip via temp file.
     #[test]
     fn save_load_roundtrip() {
         let recording = IslandRecording {
@@ -286,24 +263,5 @@ mod tests {
         assert_eq!(loaded.tick_records.len(), 1);
 
         std::fs::remove_file(&path).ok();
-    }
-
-    /// Simple WASM executor that increments the first byte.
-    struct IncrementWasm;
-
-    impl WasmExecutor for IncrementWasm {
-        fn call_handle_message(
-            &mut self,
-            _entity: EntitySlot,
-            state: &[u8],
-            _message: &TickMessage,
-        ) -> Result<HandleResult, WasmTrap> {
-            let mut new_state = state.to_vec();
-            new_state[0] = new_state[0].wrapping_add(1);
-            Ok(HandleResult {
-                state: new_state,
-                effects: vec![],
-            })
-        }
     }
 }

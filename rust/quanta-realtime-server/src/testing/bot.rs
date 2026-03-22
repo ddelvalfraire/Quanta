@@ -1,14 +1,12 @@
 use crate::tick::*;
 use crate::types::EntitySlot;
 
-/// Action a bot can take each tick.
 #[derive(Debug, Clone)]
 pub enum BotAction {
     SendInput { entity: u32, payload: Vec<u8> },
     Idle,
 }
 
-/// Trait for implementing bot behaviors in load tests.
 pub trait BotBehavior: Send {
     fn on_tick(&mut self, tick: u64, entity_states: &[(u32, &[u8])]) -> Vec<BotAction>;
 }
@@ -22,7 +20,7 @@ impl BotBehavior for IdleBot {
     }
 }
 
-/// Generates random input payloads using a seeded PRNG.
+/// Generates random input payloads using a seeded xorshift64 PRNG.
 pub struct RandomWalkBot {
     state: u64,
     entity: u32,
@@ -36,7 +34,6 @@ impl RandomWalkBot {
         }
     }
 
-    /// Simple xorshift64 PRNG.
     fn next_u64(&mut self) -> u64 {
         let mut s = self.state;
         s ^= s << 13;
@@ -83,7 +80,6 @@ impl BotBehavior for StressBot {
     }
 }
 
-/// Metrics collected from a bot harness run.
 #[derive(Debug, Clone, Default)]
 pub struct BotMetrics {
     pub total_inputs: u64,
@@ -108,43 +104,40 @@ impl BotHarness {
         }
     }
 
-    /// Run all bots for the given number of ticks.
     pub fn run(&mut self, ticks: u64) {
         for _ in 0..ticks {
             let tick = self.harness.current_tick();
 
-            // Collect entity states for bots
-            let entity_states: Vec<(u32, Vec<u8>)> = (0..self.harness.entity_count() as u32)
+            let entity_states: Vec<(u32, Vec<u8>)> = self
+                .harness
+                .entity_slots()
+                .iter()
                 .filter_map(|slot| {
                     self.harness
-                        .get_entity_state(&EntitySlot(slot))
-                        .map(|s| (slot, s.to_vec()))
+                        .get_entity_state(slot)
+                        .map(|s| (slot.0, s.to_vec()))
                 })
                 .collect();
-
             let state_refs: Vec<(u32, &[u8])> =
                 entity_states.iter().map(|(s, d)| (*s, d.as_slice())).collect();
 
-            // Collect all actions from all bots
-            let mut all_actions = Vec::new();
-            for bot in &mut self.bots {
-                all_actions.extend(bot.on_tick(tick, &state_refs));
-            }
-
-            // Execute actions
-            for action in all_actions {
-                match action {
-                    BotAction::SendInput { entity, payload } => {
-                        self.input_seq += 1;
-                        self.harness.send_input(ClientInput {
-                            session_id: SessionId::from("bot"),
-                            entity_slot: EntitySlot(entity),
-                            input_seq: self.input_seq,
-                            payload,
-                        });
-                        self.metrics.total_inputs += 1;
+            for (bot_idx, bot) in self.bots.iter_mut().enumerate() {
+                for action in bot.on_tick(tick, &state_refs) {
+                    match action {
+                        BotAction::SendInput { entity, payload } => {
+                            self.input_seq += 1;
+                            self.harness.send_input(ClientInput {
+                                session_id: SessionId::from(
+                                    format!("bot-{bot_idx}").as_str(),
+                                ),
+                                entity_slot: EntitySlot(entity),
+                                input_seq: self.input_seq,
+                                payload,
+                            });
+                            self.metrics.total_inputs += 1;
+                        }
+                        BotAction::Idle => {}
                     }
-                    BotAction::Idle => {}
                 }
             }
 
@@ -166,6 +159,7 @@ impl BotHarness {
 mod tests {
     use super::*;
     use super::super::TestHarnessBuilder;
+    use super::super::test_executors::IncrementWasm;
 
     #[test]
     fn idle_bots_run_without_errors() {
@@ -196,7 +190,7 @@ mod tests {
         bot_harness.run(5);
 
         assert_eq!(bot_harness.metrics().ticks_run, 5);
-        assert_eq!(bot_harness.metrics().total_inputs, 50); // 10 inputs × 5 ticks
+        assert_eq!(bot_harness.metrics().total_inputs, 50);
     }
 
     #[test]
@@ -204,9 +198,8 @@ mod tests {
         let mut results = Vec::new();
 
         for _ in 0..2 {
-            let wasm = IncrementWasm;
             let mut harness = TestHarnessBuilder::new()
-                .wasm(Box::new(wasm))
+                .wasm(Box::new(IncrementWasm))
                 .build();
             harness.add_entity(EntitySlot(0), vec![0], None);
 
@@ -227,21 +220,17 @@ mod tests {
         assert_eq!(results[0], results[1], "same seed → same state");
     }
 
-    struct IncrementWasm;
+    #[test]
+    fn sparse_entity_slots_handled_correctly() {
+        let mut harness = TestHarnessBuilder::new().build();
+        harness.add_entity(EntitySlot(10), vec![0], None);
+        harness.add_entity(EntitySlot(50), vec![0], None);
 
-    impl WasmExecutor for IncrementWasm {
-        fn call_handle_message(
-            &mut self,
-            _entity: EntitySlot,
-            state: &[u8],
-            _message: &TickMessage,
-        ) -> Result<HandleResult, WasmTrap> {
-            let mut new_state = state.to_vec();
-            new_state[0] = new_state[0].wrapping_add(1);
-            Ok(HandleResult {
-                state: new_state,
-                effects: vec![],
-            })
-        }
+        let bots: Vec<Box<dyn BotBehavior>> = vec![Box::new(IdleBot)];
+
+        let mut bot_harness = BotHarness::new(harness, bots);
+        bot_harness.run(5);
+
+        assert_eq!(bot_harness.metrics().ticks_run, 5);
     }
 }

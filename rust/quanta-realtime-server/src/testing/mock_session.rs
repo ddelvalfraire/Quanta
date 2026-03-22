@@ -126,7 +126,6 @@ mod tests {
         assert_eq!(msgs[0], b"hello");
         assert_eq!(msgs[1], b"world");
 
-        // Buffer is cleared after take
         assert!(session.take_unreliable().is_empty());
     }
 
