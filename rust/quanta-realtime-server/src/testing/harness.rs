@@ -42,6 +42,12 @@ impl TestHarness {
         self.engine.current_tick()
     }
 
+    /// Returns the tick number that was most recently executed.
+    /// `current_tick()` points to the *next* tick; this returns `current_tick() - 1`.
+    pub fn last_completed_tick(&self) -> u64 {
+        self.engine.current_tick().saturating_sub(1)
+    }
+
     pub fn get_entity_state(&self, slot: &EntitySlot) -> Option<&[u8]> {
         self.engine.get_entity_state(slot)
     }
@@ -57,14 +63,6 @@ impl TestHarness {
 
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::Relaxed);
-    }
-
-    pub fn engine(&self) -> &TickEngine {
-        &self.engine
-    }
-
-    pub fn engine_mut(&mut self) -> &mut TickEngine {
-        &mut self.engine
     }
 }
 
@@ -145,6 +143,7 @@ impl Default for TestHarnessBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::test_executors::IncrementWasm;
 
     #[test]
     fn builder_defaults_produce_working_harness() {
@@ -156,13 +155,11 @@ mod tests {
 
     #[test]
     fn deterministic_ticks_same_inputs_same_outputs() {
-        // Run the same sequence twice — entity state must match at every tick.
         let mut results = Vec::new();
 
         for _ in 0..2 {
-            let wasm = CountingWasm { counter: 0 };
             let mut harness = TestHarnessBuilder::new()
-                .wasm(Box::new(wasm))
+                .wasm(Box::new(IncrementWasm))
                 .build();
 
             harness.add_entity(EntitySlot(1), vec![0], None);
@@ -199,23 +196,13 @@ mod tests {
         assert_eq!(harness.current_tick(), 0);
     }
 
-    /// A deterministic WASM executor that increments a counter in state.
-    struct CountingWasm {
-        counter: u32,
-    }
-
-    impl WasmExecutor for CountingWasm {
-        fn call_handle_message(
-            &mut self,
-            _entity: EntitySlot,
-            _state: &[u8],
-            _message: &TickMessage,
-        ) -> Result<HandleResult, WasmTrap> {
-            self.counter += 1;
-            Ok(HandleResult {
-                state: self.counter.to_le_bytes().to_vec(),
-                effects: vec![],
-            })
-        }
+    #[test]
+    fn last_completed_tick_tracks_correctly() {
+        let mut harness = TestHarnessBuilder::new().build();
+        assert_eq!(harness.last_completed_tick(), 0);
+        harness.tick();
+        assert_eq!(harness.last_completed_tick(), 0);
+        harness.tick();
+        assert_eq!(harness.last_completed_tick(), 1);
     }
 }

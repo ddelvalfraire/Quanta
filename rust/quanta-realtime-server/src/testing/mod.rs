@@ -17,8 +17,7 @@ pub use recording::{
 };
 
 /// Shared test executors to avoid duplication across test modules.
-#[cfg(test)]
-pub(crate) mod test_executors {
+pub mod test_executors {
     use crate::tick::*;
     use crate::types::EntitySlot;
 

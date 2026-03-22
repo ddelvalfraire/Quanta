@@ -2,21 +2,21 @@ use crate::tick::*;
 use crate::types::EntitySlot;
 
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum BotAction {
     SendInput { entity: u32, payload: Vec<u8> },
-    Idle,
 }
 
 pub trait BotBehavior: Send {
-    fn on_tick(&mut self, tick: u64, entity_states: &[(u32, &[u8])]) -> Vec<BotAction>;
+    fn on_tick(&mut self, tick: u64, entity_states: &[(u32, Vec<u8>)]) -> Vec<BotAction>;
 }
 
 /// Does nothing — tests passive entity load.
 pub struct IdleBot;
 
 impl BotBehavior for IdleBot {
-    fn on_tick(&mut self, _tick: u64, _entity_states: &[(u32, &[u8])]) -> Vec<BotAction> {
-        vec![BotAction::Idle]
+    fn on_tick(&mut self, _tick: u64, _entity_states: &[(u32, Vec<u8>)]) -> Vec<BotAction> {
+        vec![]
     }
 }
 
@@ -45,7 +45,7 @@ impl RandomWalkBot {
 }
 
 impl BotBehavior for RandomWalkBot {
-    fn on_tick(&mut self, _tick: u64, _entity_states: &[(u32, &[u8])]) -> Vec<BotAction> {
+    fn on_tick(&mut self, _tick: u64, _entity_states: &[(u32, Vec<u8>)]) -> Vec<BotAction> {
         let val = self.next_u64();
         vec![BotAction::SendInput {
             entity: self.entity,
@@ -70,7 +70,7 @@ impl StressBot {
 }
 
 impl BotBehavior for StressBot {
-    fn on_tick(&mut self, tick: u64, _entity_states: &[(u32, &[u8])]) -> Vec<BotAction> {
+    fn on_tick(&mut self, tick: u64, _entity_states: &[(u32, Vec<u8>)]) -> Vec<BotAction> {
         (0..self.inputs_per_tick)
             .map(|i| BotAction::SendInput {
                 entity: self.entity,
@@ -104,7 +104,7 @@ impl BotHarness {
         }
     }
 
-    pub fn run(&mut self, ticks: u64) {
+    pub fn run(&mut self, ticks: u32) {
         for _ in 0..ticks {
             let tick = self.harness.current_tick();
 
@@ -118,11 +118,9 @@ impl BotHarness {
                         .map(|s| (slot.0, s.to_vec()))
                 })
                 .collect();
-            let state_refs: Vec<(u32, &[u8])> =
-                entity_states.iter().map(|(s, d)| (*s, d.as_slice())).collect();
 
             for (bot_idx, bot) in self.bots.iter_mut().enumerate() {
-                for action in bot.on_tick(tick, &state_refs) {
+                for action in bot.on_tick(tick, &entity_states) {
                     match action {
                         BotAction::SendInput { entity, payload } => {
                             self.input_seq += 1;
@@ -136,7 +134,6 @@ impl BotHarness {
                             });
                             self.metrics.total_inputs += 1;
                         }
-                        BotAction::Idle => {}
                     }
                 }
             }

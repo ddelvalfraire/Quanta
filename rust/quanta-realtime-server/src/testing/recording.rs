@@ -3,6 +3,8 @@ use std::path::Path;
 use crate::tick::*;
 use crate::types::EntitySlot;
 
+pub const RECORDING_FORMAT_VERSION: u16 = 1;
+
 /// A recorded input event, serializable for replay.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone)]
 pub struct RecordedInput {
@@ -12,12 +14,40 @@ pub struct RecordedInput {
     pub payload: Vec<u8>,
 }
 
+impl From<&RecordedInput> for ClientInput {
+    fn from(r: &RecordedInput) -> Self {
+        ClientInput {
+            session_id: SessionId::from(r.session_id.as_str()),
+            entity_slot: EntitySlot(r.entity_slot),
+            input_seq: r.input_seq,
+            payload: r.payload.clone(),
+        }
+    }
+}
+
 /// A recorded bridge effect, serializable for replay comparison.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone)]
 pub enum RecordedEffect {
     SendRemote { target: String, payload: Vec<u8> },
     Persist { entity_count: u32 },
     EmitTelemetry { event: String },
+}
+
+impl From<&BridgeEffect> for RecordedEffect {
+    fn from(effect: &BridgeEffect) -> Self {
+        match effect {
+            BridgeEffect::SendRemote { target, payload } => RecordedEffect::SendRemote {
+                target: target.clone(),
+                payload: payload.clone(),
+            },
+            BridgeEffect::Persist { entity_states } => RecordedEffect::Persist {
+                entity_count: entity_states.len() as u32,
+            },
+            BridgeEffect::EmitTelemetry { event } => RecordedEffect::EmitTelemetry {
+                event: event.clone(),
+            },
+        }
+    }
 }
 
 /// A single tick's recorded data.
@@ -32,24 +62,33 @@ pub struct TickRecord {
 /// A full island recording that can be saved/loaded for replay.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone)]
 pub struct IslandRecording {
+    pub format_version: u16,
     pub tick_rate_hz: u8,
     pub initial_entities: Vec<(u32, Vec<u8>)>,
     pub tick_records: Vec<TickRecord>,
 }
 
 impl IslandRecording {
-    /// Save to a `.qrec` file.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let bytes = bitcode::encode(self);
         std::fs::write(path, bytes)
     }
 
-    /// Load from a `.qrec` file.
     pub fn load(path: &Path) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
-        bitcode::decode(&bytes).map_err(|e| {
+        let recording: Self = bitcode::decode(&bytes).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })
+        })?;
+        if recording.format_version != RECORDING_FORMAT_VERSION {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported recording format version: expected {}, got {}",
+                    RECORDING_FORMAT_VERSION, recording.format_version
+                ),
+            ));
+        }
+        Ok(recording)
     }
 }
 
@@ -60,23 +99,6 @@ pub struct Divergence {
     pub entity: u32,
     pub expected: u64,
     pub actual: u64,
-}
-
-impl RecordedEffect {
-    pub fn from_bridge_effect(effect: &BridgeEffect) -> Self {
-        match effect {
-            BridgeEffect::SendRemote { target, payload } => RecordedEffect::SendRemote {
-                target: target.clone(),
-                payload: payload.clone(),
-            },
-            BridgeEffect::Persist { entity_states } => RecordedEffect::Persist {
-                entity_count: entity_states.len() as u32,
-            },
-            BridgeEffect::EmitTelemetry { event } => RecordedEffect::EmitTelemetry {
-                event: event.clone(),
-            },
-        }
-    }
 }
 
 /// Replay a recording through a TestHarness, comparing entity checksums.
@@ -104,12 +126,7 @@ where
 
     for record in &recording.tick_records {
         for input in &record.inputs {
-            harness.send_input(ClientInput {
-                session_id: SessionId::from(input.session_id.as_str()),
-                entity_slot: EntitySlot(input.entity_slot),
-                input_seq: input.input_seq,
-                payload: input.payload.clone(),
-            });
+            harness.send_input(ClientInput::from(input));
         }
 
         harness.tick();
@@ -161,13 +178,7 @@ mod tests {
                 payload: vec![],
             };
 
-            harness.send_input(ClientInput {
-                session_id: SessionId::from("p1"),
-                entity_slot: EntitySlot(1),
-                input_seq: seq,
-                payload: vec![],
-            });
-
+            harness.send_input(ClientInput::from(&input));
             harness.tick();
 
             let state = harness.get_entity_state(&EntitySlot(1)).unwrap();
@@ -176,12 +187,11 @@ mod tests {
             let effects: Vec<RecordedEffect> = harness
                 .take_effects()
                 .iter()
-                .map(RecordedEffect::from_bridge_effect)
+                .map(RecordedEffect::from)
                 .collect();
 
-            // current_tick() returns the next tick to execute; subtract 1 for the completed tick
             tick_records.push(TickRecord {
-                tick_number: harness.current_tick() - 1,
+                tick_number: harness.last_completed_tick(),
                 inputs: vec![input],
                 effects,
                 entity_checksums: vec![(1, checksum)],
@@ -189,6 +199,7 @@ mod tests {
         }
 
         let recording = IslandRecording {
+            format_version: RECORDING_FORMAT_VERSION,
             tick_rate_hz: 20,
             initial_entities,
             tick_records,
@@ -218,6 +229,7 @@ mod tests {
         let checksum = xxh3(state);
 
         let recording = IslandRecording {
+            format_version: RECORDING_FORMAT_VERSION,
             tick_rate_hz: 20,
             initial_entities,
             tick_records: vec![TickRecord {
@@ -242,6 +254,7 @@ mod tests {
     #[test]
     fn save_load_roundtrip() {
         let recording = IslandRecording {
+            format_version: RECORDING_FORMAT_VERSION,
             tick_rate_hz: 30,
             initial_entities: vec![(1, vec![0, 1, 2])],
             tick_records: vec![TickRecord {
@@ -258,9 +271,29 @@ mod tests {
         recording.save(&path).unwrap();
         let loaded = IslandRecording::load(&path).unwrap();
 
+        assert_eq!(loaded.format_version, RECORDING_FORMAT_VERSION);
         assert_eq!(loaded.tick_rate_hz, 30);
         assert_eq!(loaded.initial_entities.len(), 1);
         assert_eq!(loaded.tick_records.len(), 1);
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn load_rejects_unknown_format_version() {
+        let recording = IslandRecording {
+            format_version: 999,
+            tick_rate_hz: 20,
+            initial_entities: vec![],
+            tick_records: vec![],
+        };
+
+        let dir = std::env::temp_dir();
+        let path = dir.join("test_bad_version.qrec");
+
+        recording.save(&path).unwrap();
+        let err = IslandRecording::load(&path).unwrap_err();
+        assert!(err.to_string().contains("unsupported recording format version"));
 
         std::fs::remove_file(&path).ok();
     }

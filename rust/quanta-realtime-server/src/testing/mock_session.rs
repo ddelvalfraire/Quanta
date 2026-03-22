@@ -40,17 +40,14 @@ impl MockSession {
         }
     }
 
-    /// Take all unreliable messages sent so far, clearing the buffer.
     pub fn take_unreliable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.inner.lock().unwrap().sent_unreliable)
     }
 
-    /// Take all reliable messages sent so far, clearing the buffer.
     pub fn take_reliable(&self) -> Vec<(u32, Vec<u8>)> {
         std::mem::take(&mut self.inner.lock().unwrap().sent_reliable)
     }
 
-    /// Push a datagram to be returned by the next `recv_datagram` call.
     pub fn push_datagram(&self, data: Vec<u8>) {
         self.inner
             .lock()
@@ -59,7 +56,6 @@ impl MockSession {
             .push_back(data);
     }
 
-    /// Check whether `close` has been called.
     pub fn is_closed(&self) -> bool {
         self.inner.lock().unwrap().closed
     }
