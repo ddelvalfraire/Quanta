@@ -66,7 +66,7 @@ fn load_pem_files(
     Ok((certs, key))
 }
 
-fn generate_self_signed(
+pub(crate) fn generate_self_signed(
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), EndpointError> {
     let rcgen::CertifiedKey { cert, key_pair } =
         rcgen::generate_simple_self_signed(vec!["localhost".into()])
