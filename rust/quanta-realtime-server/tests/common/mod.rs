@@ -3,8 +3,11 @@
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 
-use quanta_realtime_server::command::{ActivationError, IslandCommand, LifecycleError, ManagerCommand};
+use quanta_realtime_server::command::{
+    ActivationError, IslandCommand, LifecycleError, ManagerCommand, ZoneTransferError,
+};
 use quanta_realtime_server::config::ServerConfig;
+use quanta_realtime_server::zone_transfer::{BuffState, TransferredPlayer, ZoneTransferConfig};
 use quanta_realtime_server::manager::{manager_channel, IslandManager};
 use quanta_realtime_server::stubs::StubBridge;
 use quanta_realtime_server::tick::*;
@@ -228,4 +231,53 @@ pub fn noop_engine() -> (
     crossbeam_channel::Sender<BridgeMessage>,
 ) {
     test_engine(Box::new(NoopWasmExecutor))
+}
+
+// ── Zone transfer helpers ────────────────────────────────────────────
+
+pub fn zone_transfer_config() -> ServerConfig {
+    ServerConfig {
+        zone_transfer: Some(ZoneTransferConfig::for_testing()),
+        ..Default::default()
+    }
+}
+
+pub async fn prepare_zone_transfer(
+    tx: &tokio::sync::mpsc::Sender<ManagerCommand>,
+    player_id: &str,
+    source: &str,
+    target: &str,
+    position: [f32; 3],
+    velocity: [f32; 3],
+    buffs: Vec<BuffState>,
+) -> Result<Vec<u8>, ZoneTransferError> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    tx.send(ManagerCommand::PrepareZoneTransfer {
+        player_id: player_id.into(),
+        source_island: IslandId::from(source),
+        target_island: IslandId::from(target),
+        position,
+        velocity,
+        buffs,
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    reply_rx.await.unwrap()
+}
+
+pub async fn accept_zone_transfer(
+    tx: &tokio::sync::mpsc::Sender<ManagerCommand>,
+    token_bytes: Vec<u8>,
+    target: &str,
+) -> Result<TransferredPlayer, ZoneTransferError> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    tx.send(ManagerCommand::AcceptZoneTransfer {
+        token_bytes,
+        target_island: IslandId::from(target),
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    reply_rx.await.unwrap()
 }

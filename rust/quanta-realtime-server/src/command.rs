@@ -1,5 +1,6 @@
 use crate::types::IslandId;
 use crate::types::IslandManifest;
+use crate::zone_transfer::{BuffState, TransferError, TransferredPlayer};
 use std::fmt;
 use tokio::sync::oneshot;
 
@@ -37,6 +38,22 @@ pub enum ManagerCommand {
     PlayerInput {
         island_id: IslandId,
         reply: oneshot::Sender<Result<(), LifecycleError>>,
+    },
+    /// Phase 1: Create a signed transfer token and mark the player as leaving.
+    PrepareZoneTransfer {
+        player_id: String,
+        source_island: IslandId,
+        target_island: IslandId,
+        position: [f32; 3],
+        velocity: [f32; 3],
+        buffs: Vec<BuffState>,
+        reply: oneshot::Sender<Result<Vec<u8>, ZoneTransferError>>,
+    },
+    /// Phase 2: Validate a transfer token and mark the player as arriving.
+    AcceptZoneTransfer {
+        token_bytes: Vec<u8>,
+        target_island: IslandId,
+        reply: oneshot::Sender<Result<TransferredPlayer, ZoneTransferError>>,
     },
 }
 
@@ -92,6 +109,37 @@ impl fmt::Display for LifecycleError {
 }
 
 impl std::error::Error for LifecycleError {}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ZoneTransferError {
+    NotConfigured,
+    SourceNotFound(IslandId),
+    SourceNotRunning(IslandId),
+    TargetNotFound(IslandId),
+    TargetNotRunning(IslandId),
+    Transfer(TransferError),
+}
+
+impl fmt::Display for ZoneTransferError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotConfigured => write!(f, "zone transfer not configured"),
+            Self::SourceNotFound(id) => write!(f, "source island not found: {id}"),
+            Self::SourceNotRunning(id) => write!(f, "source island not running: {id}"),
+            Self::TargetNotFound(id) => write!(f, "target island not found: {id}"),
+            Self::TargetNotRunning(id) => write!(f, "target island not running: {id}"),
+            Self::Transfer(e) => write!(f, "transfer error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ZoneTransferError {}
+
+impl From<TransferError> for ZoneTransferError {
+    fn from(e: TransferError) -> Self {
+        Self::Transfer(e)
+    }
+}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ManagerMetrics {

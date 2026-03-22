@@ -1,4 +1,4 @@
-use crate::types::EntitySlot;
+use crate::types::{EntitySlot, IslandId};
 
 pub type CorrelationId = [u8; 16];
 
@@ -86,6 +86,15 @@ pub enum TickEffect {
     StopSelf,
     RequestRemote { target: String, payload: Vec<u8> },
     FireAndForget { target: String, payload: Vec<u8> },
+    /// WASM emits this to initiate a zone transfer for a player.
+    ZoneTransfer {
+        player_id: String,
+        target_zone: IslandId,
+        position: [f32; 3],
+        velocity: [f32; 3],
+        /// Bitcode-encoded `Vec<BuffState>` — opaque to the tick engine.
+        buffs: Vec<u8>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -177,6 +186,15 @@ pub enum BridgeEffect {
     },
     EntityEvicted {
         entity: EntitySlot,
+    },
+    /// A zone transfer was requested by an entity's WASM logic.
+    ZoneTransferRequest {
+        player_id: String,
+        source_entity: EntitySlot,
+        target_zone: IslandId,
+        position: [f32; 3],
+        velocity: [f32; 3],
+        buffs: Vec<u8>,
     },
 }
 

@@ -786,6 +786,22 @@ impl TickEngine {
                         self.effects_out
                             .push(BridgeEffect::FireAndForget { target, payload });
                     }
+                    TickEffect::ZoneTransfer {
+                        player_id,
+                        target_zone,
+                        position,
+                        velocity,
+                        buffs,
+                    } => {
+                        self.effects_out.push(BridgeEffect::ZoneTransferRequest {
+                            player_id,
+                            source_entity: source_slot,
+                            target_zone,
+                            position,
+                            velocity,
+                            buffs,
+                        });
+                    }
                     TickEffect::StopSelf => {
                         entities_to_remove.push(source_slot);
                     }

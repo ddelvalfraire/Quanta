@@ -11,6 +11,8 @@ pub struct AuthRequest {
     /// For fast reconnect (Tier 2): the session_id from a previous auth.
     /// `None` for first-time connections.
     pub session_token: Option<u64>,
+    /// For cross-server zone transfer: a signed `ZoneTransferToken` from the source server.
+    pub transfer_token: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
@@ -105,6 +107,7 @@ mod tests {
             token: "test-token-123".into(),
             client_version: "0.1.0".into(),
             session_token: None,
+            transfer_token: None,
         };
         let bytes = bitcode::encode(&req);
         let decoded: AuthRequest = bitcode::decode(&bytes).unwrap();
@@ -117,6 +120,7 @@ mod tests {
             token: "reconnect".into(),
             client_version: "0.1.0".into(),
             session_token: Some(42),
+            transfer_token: None,
         };
         let bytes = bitcode::encode(&req);
         let decoded: AuthRequest = bitcode::decode(&bytes).unwrap();
@@ -143,6 +147,7 @@ mod tests {
             token: "anything".into(),
             client_version: "0.0.1".into(),
             session_token: None,
+            transfer_token: None,
         };
         let resp = validator.validate(&req).unwrap();
         assert!(resp.accepted);
@@ -156,6 +161,7 @@ mod tests {
             token: "t".into(),
             client_version: "v".into(),
             session_token: None,
+            transfer_token: None,
         };
         let r1 = validator.validate(&req).unwrap();
         let r2 = validator.validate(&req).unwrap();
