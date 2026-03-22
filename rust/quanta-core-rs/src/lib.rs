@@ -3,6 +3,7 @@
 //! Provides binary-compatible type definitions used by both
 //! the NIF crate and the standalone realtime server.
 
+pub mod bridge;
 pub mod delta;
 pub mod schema;
 
@@ -63,20 +64,23 @@ pub enum SenderWire {
     None,
 }
 
-/// Encode a wire frame: `[version:1][header_len:4 BE][header][payload]`.
-pub fn encode_wire_frame(header: &EnvelopeHeader, payload: &[u8]) -> Vec<u8> {
+/// Encode a frame: `[version:1][header_len:4 BE][header_bitcode][payload]`.
+pub fn encode_frame<H: bitcode::Encode>(version: u8, header: &H, payload: &[u8]) -> Vec<u8> {
     let header_bytes = bitcode::encode(header);
     let header_len = header_bytes.len() as u32;
     let mut frame = Vec::with_capacity(1 + 4 + header_bytes.len() + payload.len());
-    frame.push(WIRE_VERSION);
+    frame.push(version);
     frame.extend_from_slice(&header_len.to_be_bytes());
     frame.extend_from_slice(&header_bytes);
     frame.extend_from_slice(payload);
     frame
 }
 
-/// Decode a wire frame, returning the header and payload slice.
-pub fn decode_wire_frame(frame: &[u8]) -> Result<(EnvelopeHeader, &[u8]), CodecError> {
+/// Decode a frame, returning the header and payload slice.
+pub fn decode_frame<H: for<'de> bitcode::Decode<'de>>(
+    expected_version: u8,
+    frame: &[u8],
+) -> Result<(H, &[u8]), CodecError> {
     if frame.len() < 5 {
         return Err(CodecError::TruncatedInput {
             expected: 5,
@@ -85,9 +89,9 @@ pub fn decode_wire_frame(frame: &[u8]) -> Result<(EnvelopeHeader, &[u8]), CodecE
     }
 
     let version = frame[0];
-    if version != WIRE_VERSION {
+    if version != expected_version {
         return Err(CodecError::UnsupportedVersion {
-            expected: WIRE_VERSION,
+            expected: expected_version,
             got: version,
         });
     }
@@ -107,6 +111,16 @@ pub fn decode_wire_frame(frame: &[u8]) -> Result<(EnvelopeHeader, &[u8]), CodecE
         bitcode::decode(header_bytes).map_err(|e| CodecError::InvalidHeader(e.to_string()))?;
 
     Ok((header, payload))
+}
+
+/// Encode a wire frame: `[version:1][header_len:4 BE][header][payload]`.
+pub fn encode_wire_frame(header: &EnvelopeHeader, payload: &[u8]) -> Vec<u8> {
+    encode_frame(WIRE_VERSION, header, payload)
+}
+
+/// Decode a wire frame, returning the header and payload slice.
+pub fn decode_wire_frame(frame: &[u8]) -> Result<(EnvelopeHeader, &[u8]), CodecError> {
+    decode_frame(WIRE_VERSION, frame)
 }
 
 #[derive(Debug, PartialEq)]

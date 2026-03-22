@@ -20,6 +20,13 @@ defmodule Quanta.Nifs.Native do
   @spec decode_envelope_header(binary()) :: {:ok, map()} | {:error, String.t()}
   def decode_envelope_header(_binary), do: :erlang.nif_error(:nif_not_loaded)
 
+  @spec encode_bridge_envelope(map(), binary()) :: {:ok, binary()} | {:error, String.t()}
+  def encode_bridge_envelope(_header, _payload), do: :erlang.nif_error(:nif_not_loaded)
+
+  @spec decode_bridge_envelope(binary()) ::
+          {:ok, map(), binary()} | {:error, String.t()}
+  def decode_bridge_envelope(_frame), do: :erlang.nif_error(:nif_not_loaded)
+
   # --- WasmRuntime: engine / component / linker ---
 
   def engine_new(), do: :erlang.nif_error(:nif_not_loaded)
