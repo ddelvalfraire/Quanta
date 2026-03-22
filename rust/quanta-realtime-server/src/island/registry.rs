@@ -3,7 +3,6 @@ use crate::island::state_machine::IslandState;
 use crate::types::IslandId;
 use rustc_hash::FxHashMap;
 
-/// Central store for all island handles, keyed by IslandId.
 pub struct IslandRegistry {
     islands: FxHashMap<String, IslandHandle>,
 }
@@ -41,12 +40,10 @@ impl IslandRegistry {
         self.islands.contains_key(&id.0)
     }
 
-    /// Total entity count across all islands.
     pub fn total_entities(&self) -> u64 {
         self.islands.values().map(|h| h.entity_count as u64).sum()
     }
 
-    /// Number of islands in Running or Initializing state.
     pub fn active_count(&self) -> u32 {
         self.islands
             .values()
@@ -54,7 +51,6 @@ impl IslandRegistry {
             .count() as u32
     }
 
-    /// Total number of islands in the registry (all states).
     pub fn len(&self) -> u32 {
         self.islands.len() as u32
     }

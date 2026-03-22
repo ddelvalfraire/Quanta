@@ -7,8 +7,6 @@ use std::thread::JoinHandle;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadModel {
     Dedicated,
-    /// TODO(T45): Pooled islands currently use std::thread::spawn like Dedicated.
-    /// Wire up a thread pool (rayon or custom work-stealing) for this variant.
     Pooled,
 }
 

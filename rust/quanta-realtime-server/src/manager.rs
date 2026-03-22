@@ -61,7 +61,6 @@ impl IslandManager {
         let thread_model = if manifest.entity_count >= self.config.entity_threshold {
             ThreadModel::Dedicated
         } else {
-            // TODO(T45): Pooled should use a thread pool, not a dedicated thread.
             ThreadModel::Pooled
         };
 
@@ -83,7 +82,6 @@ impl IslandManager {
 
         self.registry.insert(handle);
 
-        // Transition to Running immediately (init is a no-op stub for now).
         let h = self.registry.get_mut(&island_id).unwrap();
         h.state = h.state.transition(IslandState::Running).unwrap();
 
@@ -135,12 +133,6 @@ impl IslandManager {
         Ok(())
     }
 
-    /// Join the island thread and remove it from the registry.
-    ///
-    /// WARNING: This blocks the async manager loop on `jh.join()`. Acceptable
-    /// while island threads are stubs, but T45 must replace this with async
-    /// completion notification (e.g., `spawn_blocking` or a oneshot channel from
-    /// the island thread) so the manager stays responsive during real WASM ticks.
     fn finish_stop(&mut self, island_id: &crate::types::IslandId) {
         if let Some(mut handle) = self.registry.remove(island_id) {
             if let Some(jh) = handle.join_handle.take() {
@@ -159,7 +151,6 @@ impl IslandManager {
     }
 }
 
-/// Stub island thread loop. Blocks on crossbeam recv; exits on Drain or Stop.
 fn island_thread_loop(rx: crossbeam_channel::Receiver<IslandCommand>) {
     loop {
         match rx.recv() {

@@ -4,10 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct ServerConfig {
     pub nats_url: String,
     pub max_islands: u32,
-    /// Islands at or above this entity count get a dedicated thread.
     pub entity_threshold: u32,
     pub capacity_interval_secs: u64,
-    /// NATS subject template for capacity signals. `{server_id}` is replaced at runtime.
     pub capacity_subject: String,
 }
 

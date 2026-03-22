@@ -3,8 +3,6 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-/// Capacity signal published to NATS for the orchestrator.
-/// Field names match the spec wire format (`quanta.{ns}.realtime.capacity.{server_id}`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CapacitySignal {
     pub server_id: String,
@@ -15,10 +13,8 @@ pub struct CapacitySignal {
     #[serde(rename = "entities_total")]
     pub total_entities: u64,
     pub available_slots: u32,
-    /// Placeholder: always 0.0 until sysinfo is wired.
     #[serde(rename = "cpu_load_1m")]
     pub cpu_load: f64,
-    /// Placeholder: always 0 until sysinfo is wired.
     #[serde(rename = "memory_used_mb")]
     pub memory_used: u64,
 }

@@ -29,10 +29,6 @@ impl fmt::Display for TransitionError {
 impl std::error::Error for TransitionError {}
 
 impl IslandState {
-    /// Valid transitions:
-    ///   Initializing -> Running
-    ///   Running      -> Draining
-    ///   Draining     -> Stopped
     pub fn transition(self, to: IslandState) -> Result<IslandState, TransitionError> {
         let valid = matches!(
             (self, to),

@@ -1,7 +1,6 @@
 use crate::traits::{Bridge, IslandRuntime, Session, SpatialIndex, TickResult};
 use crate::types::{DeltaBytes, IslandId, IslandManifest, IslandSnapshot, PlayerInput};
 
-/// Stub runtime that does nothing. Used for testing the manager lifecycle.
 pub struct StubIslandRuntime {
     tick_count: u64,
 }
@@ -49,7 +48,6 @@ impl IslandRuntime for StubIslandRuntime {
     }
 }
 
-/// Stub session that discards all sends.
 pub struct StubSession;
 
 impl Session for StubSession {
@@ -57,7 +55,6 @@ impl Session for StubSession {
     fn disconnect(&self, _player_id: &str) {}
 }
 
-/// Stub bridge that does nothing.
 pub struct StubBridge;
 
 impl Bridge for StubBridge {
@@ -65,7 +62,6 @@ impl Bridge for StubBridge {
     fn request_passivation(&self, _island_id: &IslandId) {}
 }
 
-/// Stub spatial index that returns empty results.
 pub struct StubSpatialIndex;
 
 impl SpatialIndex for StubSpatialIndex {

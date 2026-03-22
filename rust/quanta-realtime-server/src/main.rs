@@ -47,8 +47,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Generate a server ID from timestamp and PID. Not cryptographically random;
-/// suitable for human-readable log correlation, not for auth or trust decisions.
 fn generate_server_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
