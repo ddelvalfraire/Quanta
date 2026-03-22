@@ -2552,6 +2552,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
+ "url",
  "web-transport-quinn",
 ]
 

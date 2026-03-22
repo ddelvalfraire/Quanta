@@ -3,6 +3,7 @@ pub mod capacity;
 pub mod command;
 pub mod config;
 pub mod connection;
+pub mod degraded;
 pub mod endpoint;
 pub mod error;
 pub mod island;
