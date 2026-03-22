@@ -9,6 +9,7 @@ pub mod error;
 pub mod island;
 pub mod manager;
 pub mod session;
+pub mod spatial;
 pub mod stubs;
 pub mod tick;
 pub mod tls;
