@@ -81,6 +81,7 @@ async fn ws_connect_and_auth(
     let req = AuthRequest {
         token: "test-token".into(),
         client_version: "0.1.0".into(),
+        session_token: None,
     };
     let req_bytes = bitcode::encode(&req);
     sink.send(Message::Binary(req_bytes.into()))

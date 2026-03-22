@@ -8,6 +8,9 @@ const MAX_AUTH_REQUEST_BYTES: usize = 65_536;
 pub struct AuthRequest {
     pub token: String,
     pub client_version: String,
+    /// For fast reconnect (Tier 2): the session_id from a previous auth.
+    /// `None` for first-time connections.
+    pub session_token: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
@@ -97,10 +100,24 @@ mod tests {
         let req = AuthRequest {
             token: "test-token-123".into(),
             client_version: "0.1.0".into(),
+            session_token: None,
         };
         let bytes = bitcode::encode(&req);
         let decoded: AuthRequest = bitcode::decode(&bytes).unwrap();
         assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn bitcode_roundtrip_auth_request_with_session_token() {
+        let req = AuthRequest {
+            token: "reconnect".into(),
+            client_version: "0.1.0".into(),
+            session_token: Some(42),
+        };
+        let bytes = bitcode::encode(&req);
+        let decoded: AuthRequest = bitcode::decode(&bytes).unwrap();
+        assert_eq!(req, decoded);
+        assert_eq!(decoded.session_token, Some(42));
     }
 
     #[test]
@@ -121,6 +138,7 @@ mod tests {
         let req = AuthRequest {
             token: "anything".into(),
             client_version: "0.0.1".into(),
+            session_token: None,
         };
         let resp = validator.validate(&req).unwrap();
         assert!(resp.accepted);
@@ -133,6 +151,7 @@ mod tests {
         let req = AuthRequest {
             token: "t".into(),
             client_version: "v".into(),
+            session_token: None,
         };
         let r1 = validator.validate(&req).unwrap();
         let r2 = validator.validate(&req).unwrap();

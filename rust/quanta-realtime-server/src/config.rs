@@ -17,6 +17,10 @@ pub struct EndpointConfig {
     pub rate_limit_per_sec: u32,
     pub auth_timeout: Duration,
     pub ws_port: Option<u16>,
+    /// How long to retain disconnected sessions for fast reconnect (default 30s).
+    pub session_retain_duration: Duration,
+    /// Maximum number of retained sessions before LRU eviction (default 1000).
+    pub max_retained_sessions: usize,
 }
 
 impl Default for EndpointConfig {
@@ -32,6 +36,8 @@ impl Default for EndpointConfig {
             rate_limit_per_sec: 100,
             auth_timeout: Duration::from_secs(5),
             ws_port: None,
+            session_retain_duration: Duration::from_secs(30),
+            max_retained_sessions: 1000,
         }
     }
 }

@@ -1,11 +1,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tracing::{info, warn};
 
 use crate::auth::{run_auth_handshake, AuthValidator};
 use crate::config::EndpointConfig;
 use crate::error::EndpointError;
-use crate::session::{QuicSession, Session};
+use crate::reconnect::{ConnectedClient, ReconnectTier};
+use crate::session::QuicSession;
+use crate::session_store::SessionStore;
 use crate::webtransport_session::WebTransportSession;
 
 const CLOSE_AUTH_FAILURE: quinn::VarInt = quinn::VarInt::from_u32(2);
@@ -16,7 +19,8 @@ pub async fn handle_connection(
     incoming: quinn::Incoming,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<Box<dyn Session>, EndpointError> {
+    session_store: Arc<Mutex<SessionStore>>,
+) -> Result<ConnectedClient, EndpointError> {
     let connection = incoming.await.map_err(EndpointError::Quinn)?;
 
     let alpn = connection
@@ -42,8 +46,12 @@ pub async fn handle_connection(
     );
 
     match alpn.as_deref() {
-        Some(b"quanta-v1") => handle_quanta_v1(connection, validator, config).await,
-        Some(b"h3") => handle_h3_webtransport(connection, validator, config).await,
+        Some(b"quanta-v1") => {
+            handle_quanta_v1(connection, validator, config, session_store).await
+        }
+        Some(b"h3") => {
+            handle_h3_webtransport(connection, validator, config, session_store).await
+        }
         _ => {
             warn!(remote = %connection.remote_address(), alpn = %alpn_str, "unknown ALPN");
             connection.close(1u32.into(), b"unknown ALPN");
@@ -56,7 +64,8 @@ async fn handle_quanta_v1(
     connection: quinn::Connection,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<Box<dyn Session>, EndpointError> {
+    session_store: Arc<Mutex<SessionStore>>,
+) -> Result<ConnectedClient, EndpointError> {
     let result = tokio::time::timeout(config.auth_timeout, async {
         let (mut send, mut recv) = connection
             .accept_bi()
@@ -92,14 +101,22 @@ async fn handle_quanta_v1(
         "auth succeeded"
     );
 
-    Ok(Box::new(QuicSession::new(connection)))
+    let reconnect_tier = classify_reconnect(&session_store, &response);
+
+    Ok(ConnectedClient {
+        quic_connection: Some(connection.clone()),
+        session: Box::new(QuicSession::new(connection)),
+        session_id: response.session_id,
+        reconnect_tier,
+    })
 }
 
 async fn handle_h3_webtransport(
     connection: quinn::Connection,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<Box<dyn Session>, EndpointError> {
+    session_store: Arc<Mutex<SessionStore>>,
+) -> Result<ConnectedClient, EndpointError> {
     let result = tokio::time::timeout(config.auth_timeout, async {
         let request = web_transport_quinn::Request::accept(connection.clone())
             .await
@@ -146,5 +163,32 @@ async fn handle_h3_webtransport(
         "webtransport auth succeeded"
     );
 
-    Ok(Box::new(WebTransportSession::new(session)))
+    let reconnect_tier = classify_reconnect(&session_store, &response);
+
+    Ok(ConnectedClient {
+        quic_connection: Some(connection),
+        session: Box::new(WebTransportSession::new(session)),
+        session_id: response.session_id,
+        reconnect_tier,
+    })
+}
+
+/// Classify the reconnection tier based on whether the auth request carried
+/// a session token and whether we still have a retained session for it.
+fn classify_reconnect(
+    store: &Mutex<SessionStore>,
+    response: &crate::auth::AuthResponse,
+) -> ReconnectTier {
+    // The session_token from the auth request is not available in the
+    // AuthResponse. The validator can use the token to map to a session_id.
+    // For reconnection we check if we have a retained session for the
+    // assigned session_id.
+    let mut store = store.lock().expect("session store lock poisoned");
+    match store.take(response.session_id) {
+        Some(retained) => {
+            info!(session_id = response.session_id, "fast reconnect (tier 2)");
+            ReconnectTier::Fast { retained }
+        }
+        None => ReconnectTier::Cold,
+    }
 }
