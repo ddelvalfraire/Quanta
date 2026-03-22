@@ -117,6 +117,10 @@ impl TickEngine {
         self.entities.len()
     }
 
+    pub fn entity_slots(&self) -> Vec<EntitySlot> {
+        self.entities.keys().copied().collect()
+    }
+
     pub fn fault_state(&self, entity: &EntitySlot) -> ActorHealthState {
         self.fault_tracker.get_state(entity)
     }

@@ -22,6 +22,9 @@ pub mod ws_listener;
 pub mod ws_session;
 
 #[cfg(any(test, feature = "test-utils"))]
+pub mod testing;
+
+#[cfg(any(test, feature = "test-utils"))]
 pub use auth::AcceptAllValidator;
 pub use auth::{AuthRequest, AuthResponse, AuthValidator};
 pub use config::EndpointConfig;

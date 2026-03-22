@@ -1,4 +1,4 @@
 [workspace]
 members = ["quanta-nifs", "quanta-core-rs", "quanta-realtime-server"]
-exclude = ["fixtures/counter-actor", "quanta-wasm-decoder"]
+exclude = ["fixtures/counter-actor", "quanta-wasm-decoder", "quanta-core-rs/fuzz"]
 resolver = "2"

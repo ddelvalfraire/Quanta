@@ -8,6 +8,8 @@
 /rust/target/
 /rust/fixtures/**/target/
 /rust/quanta-wasm-decoder/target/
+/rust/quanta-core-rs/fuzz/target/
+/rust/quanta-core-rs/fuzz/Cargo.lock
 **/*.rs.bk
 *.pdb
 **/mutants.out*/
