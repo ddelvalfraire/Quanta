@@ -69,14 +69,27 @@ async fn handle_quanta_v1(
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
 ) -> Result<QuicSession, EndpointError> {
-    // Auth on first bidi stream
-    let (mut send, mut recv) = connection
-        .accept_bi()
-        .await
-        .map_err(EndpointError::Quinn)?;
+    // Auth on first bidi stream, with the full auth timeout covering accept_bi + handshake
+    let result = tokio::time::timeout(config.auth_timeout, async {
+        let (mut send, mut recv) = connection
+            .accept_bi()
+            .await
+            .map_err(EndpointError::Quinn)?;
+        run_auth_handshake(&mut send, &mut recv, validator, config.auth_timeout).await
+    })
+    .await;
 
-    let response =
-        run_auth_handshake(&mut send, &mut recv, validator, config.auth_timeout).await?;
+    let response = match result {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(e)) => {
+            connection.close(2u32.into(), b"auth failed");
+            return Err(e);
+        }
+        Err(_elapsed) => {
+            connection.close(2u32.into(), b"auth timeout");
+            return Err(EndpointError::Auth("auth timeout".into()));
+        }
+    };
 
     if !response.accepted {
         connection.close(2u32.into(), b"auth rejected");
