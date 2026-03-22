@@ -8,6 +8,9 @@ const MAX_AUTH_REQUEST_BYTES: usize = 65_536;
 pub struct AuthRequest {
     pub token: String,
     pub client_version: String,
+    /// For fast reconnect (Tier 2): the session_id from a previous auth.
+    /// `None` for first-time connections.
+    pub session_token: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
@@ -49,11 +52,14 @@ impl AuthValidator for AcceptAllValidator {
     }
 }
 
+/// Run the auth handshake: read an `AuthRequest`, validate it, send the
+/// `AuthResponse`. Returns the response and the client's `session_token`
+/// (if any) for reconnection verification.
 pub async fn run_auth_handshake(
     send: &mut (impl AsyncWrite + Unpin),
     recv: &mut (impl AsyncRead + Unpin),
     validator: &dyn AuthValidator,
-) -> Result<AuthResponse, EndpointError> {
+) -> Result<(AuthResponse, Option<u64>), EndpointError> {
     let mut len_buf = [0u8; 4];
     recv.read_exact(&mut len_buf)
         .await
@@ -74,6 +80,7 @@ pub async fn run_auth_handshake(
     let req: AuthRequest =
         bitcode::decode(&buf).map_err(|e| EndpointError::Auth(format!("decode request: {e}")))?;
 
+    let session_token = req.session_token;
     let response = validator.validate(&req)?;
 
     let resp_bytes = bitcode::encode(&response);
@@ -85,7 +92,7 @@ pub async fn run_auth_handshake(
         .await
         .map_err(|e| EndpointError::Auth(format!("write response body: {e}")))?;
 
-    Ok(response)
+    Ok((response, session_token))
 }
 
 #[cfg(test)]
@@ -97,10 +104,24 @@ mod tests {
         let req = AuthRequest {
             token: "test-token-123".into(),
             client_version: "0.1.0".into(),
+            session_token: None,
         };
         let bytes = bitcode::encode(&req);
         let decoded: AuthRequest = bitcode::decode(&bytes).unwrap();
         assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn bitcode_roundtrip_auth_request_with_session_token() {
+        let req = AuthRequest {
+            token: "reconnect".into(),
+            client_version: "0.1.0".into(),
+            session_token: Some(42),
+        };
+        let bytes = bitcode::encode(&req);
+        let decoded: AuthRequest = bitcode::decode(&bytes).unwrap();
+        assert_eq!(req, decoded);
+        assert_eq!(decoded.session_token, Some(42));
     }
 
     #[test]
@@ -121,6 +142,7 @@ mod tests {
         let req = AuthRequest {
             token: "anything".into(),
             client_version: "0.0.1".into(),
+            session_token: None,
         };
         let resp = validator.validate(&req).unwrap();
         assert!(resp.accepted);
@@ -133,6 +155,7 @@ mod tests {
         let req = AuthRequest {
             token: "t".into(),
             client_version: "v".into(),
+            session_token: None,
         };
         let r1 = validator.validate(&req).unwrap();
         let r2 = validator.validate(&req).unwrap();

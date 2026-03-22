@@ -6,9 +6,10 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 
 use quanta_realtime_server::{
-    AuthRequest, AuthResponse, AuthValidator, EndpointConfig, EndpointError, QuicEndpoint, Session,
-    TlsConfig,
+    AuthRequest, AuthResponse, AuthValidator, ConnectedClient, EndpointConfig, EndpointError,
+    QuicEndpoint, TlsConfig,
 };
+use quanta_realtime_server::session_store::SessionStore;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -116,10 +117,14 @@ async fn start_server(
     config: EndpointConfig,
 ) -> (
     SocketAddr,
-    mpsc::Receiver<Box<dyn Session>>,
+    mpsc::Receiver<ConnectedClient>,
     watch::Sender<bool>,
     tokio::task::JoinHandle<()>,
 ) {
+    let store = Arc::new(std::sync::Mutex::new(SessionStore::new(
+        config.session_retain_duration,
+        config.max_retained_sessions,
+    )));
     let endpoint =
         QuicEndpoint::bind("127.0.0.1:0".parse().unwrap(), config, &TlsConfig::SelfSigned)
             .expect("bind server");
@@ -128,7 +133,7 @@ async fn start_server(
     let (session_tx, session_rx) = mpsc::channel(16);
     let validator = TestValidator::new();
     let handle = tokio::spawn(async move {
-        endpoint.run(validator, session_tx, shutdown_rx).await;
+        endpoint.run(validator, session_tx, store, shutdown_rx).await;
     });
     (addr, session_rx, shutdown_tx, handle)
 }
@@ -140,6 +145,7 @@ async fn wt_client_auth(session: &web_transport_quinn::Session) -> AuthResponse 
     let req = AuthRequest {
         token: "test-token".into(),
         client_version: "0.1.0".into(),
+        session_token: None,
     };
     let req_bytes = bitcode::encode(&req);
     let len = (req_bytes.len() as u32).to_be_bytes();
@@ -176,12 +182,12 @@ async fn webtransport_session_establishment() {
     let resp = wt_client_auth(&wt_session).await;
     assert!(resp.accepted);
 
-    let session = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
+    let connected = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
         .await
-        .expect("session should arrive")
+        .expect("client should arrive")
         .expect("channel open");
     assert_eq!(
-        session.transport_type(),
+        connected.session.transport_type(),
         quanta_realtime_server::TransportType::WebTransport,
     );
 
@@ -203,9 +209,9 @@ async fn webtransport_datagram_roundtrip() {
 
     let _resp = wt_client_auth(&wt_session).await;
 
-    let server_session = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
+    let connected = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
         .await
-        .expect("session")
+        .expect("client")
         .expect("channel");
 
     // Client sends datagram → server receives it
@@ -217,7 +223,7 @@ async fn webtransport_datagram_roundtrip() {
     let mut received = None;
     for _ in 0..50 {
         tokio::time::sleep(Duration::from_millis(10)).await;
-        if let Some(data) = server_session.recv_datagram() {
+        if let Some(data) = connected.session.recv_datagram() {
             received = Some(data);
             break;
         }

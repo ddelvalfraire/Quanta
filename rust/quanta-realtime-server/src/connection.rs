@@ -1,11 +1,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use tracing::{info, warn};
 
 use crate::auth::{run_auth_handshake, AuthValidator};
 use crate::config::EndpointConfig;
 use crate::error::EndpointError;
-use crate::session::{QuicSession, Session};
+use crate::reconnect::{ConnectedClient, ReconnectTier};
+use crate::session::QuicSession;
+use crate::session_store::SessionStore;
 use crate::webtransport_session::WebTransportSession;
 
 const CLOSE_AUTH_FAILURE: quinn::VarInt = quinn::VarInt::from_u32(2);
@@ -16,7 +19,8 @@ pub async fn handle_connection(
     incoming: quinn::Incoming,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<Box<dyn Session>, EndpointError> {
+    session_store: Arc<Mutex<SessionStore>>,
+) -> Result<ConnectedClient, EndpointError> {
     let connection = incoming.await.map_err(EndpointError::Quinn)?;
 
     let alpn = connection
@@ -42,8 +46,12 @@ pub async fn handle_connection(
     );
 
     match alpn.as_deref() {
-        Some(b"quanta-v1") => handle_quanta_v1(connection, validator, config).await,
-        Some(b"h3") => handle_h3_webtransport(connection, validator, config).await,
+        Some(b"quanta-v1") => {
+            handle_quanta_v1(connection, validator, config, session_store).await
+        }
+        Some(b"h3") => {
+            handle_h3_webtransport(connection, validator, config, session_store).await
+        }
         _ => {
             warn!(remote = %connection.remote_address(), alpn = %alpn_str, "unknown ALPN");
             connection.close(1u32.into(), b"unknown ALPN");
@@ -56,7 +64,8 @@ async fn handle_quanta_v1(
     connection: quinn::Connection,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<Box<dyn Session>, EndpointError> {
+    session_store: Arc<Mutex<SessionStore>>,
+) -> Result<ConnectedClient, EndpointError> {
     let result = tokio::time::timeout(config.auth_timeout, async {
         let (mut send, mut recv) = connection
             .accept_bi()
@@ -66,8 +75,8 @@ async fn handle_quanta_v1(
     })
     .await;
 
-    let response = match result {
-        Ok(Ok(resp)) => resp,
+    let (response, session_token) = match result {
+        Ok(Ok(pair)) => pair,
         Ok(Err(e)) => {
             connection.close(CLOSE_AUTH_FAILURE, b"auth failed");
             return Err(e);
@@ -92,14 +101,23 @@ async fn handle_quanta_v1(
         "auth succeeded"
     );
 
-    Ok(Box::new(QuicSession::new(connection)))
+    let reconnect_tier =
+        classify_reconnect(&session_store, response.session_id, session_token);
+
+    Ok(ConnectedClient {
+        quic_connection: Some(connection.clone()),
+        session: Box::new(QuicSession::new(connection)),
+        session_id: response.session_id,
+        reconnect_tier,
+    })
 }
 
 async fn handle_h3_webtransport(
     connection: quinn::Connection,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<Box<dyn Session>, EndpointError> {
+    session_store: Arc<Mutex<SessionStore>>,
+) -> Result<ConnectedClient, EndpointError> {
     let result = tokio::time::timeout(config.auth_timeout, async {
         let request = web_transport_quinn::Request::accept(connection.clone())
             .await
@@ -115,13 +133,14 @@ async fn handle_h3_webtransport(
             .await
             .map_err(|e| EndpointError::WebTransport(e.to_string()))?;
 
-        let response = run_auth_handshake(&mut send, &mut recv, validator).await?;
-        Ok::<_, EndpointError>((session, response))
+        let (response, session_token) =
+            run_auth_handshake(&mut send, &mut recv, validator).await?;
+        Ok::<_, EndpointError>((session, response, session_token))
     })
     .await;
 
-    let (session, response) = match result {
-        Ok(Ok(pair)) => pair,
+    let (session, response, session_token) = match result {
+        Ok(Ok(tuple)) => tuple,
         Ok(Err(e)) => {
             connection.close(CLOSE_AUTH_FAILURE, b"auth failed");
             return Err(e);
@@ -146,5 +165,43 @@ async fn handle_h3_webtransport(
         "webtransport auth succeeded"
     );
 
-    Ok(Box::new(WebTransportSession::new(session)))
+    let reconnect_tier =
+        classify_reconnect(&session_store, response.session_id, session_token);
+
+    Ok(ConnectedClient {
+        quic_connection: Some(connection),
+        session: Box::new(WebTransportSession::new(session)),
+        session_id: response.session_id,
+        reconnect_tier,
+    })
+}
+
+/// Classify the reconnection tier by checking the session store for a retained
+/// session and verifying the client's session_token matches.
+fn classify_reconnect(
+    store: &Mutex<SessionStore>,
+    session_id: u64,
+    client_token: Option<u64>,
+) -> ReconnectTier {
+    let mut store = match store.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            warn!("session store mutex poisoned, recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    match store.take(session_id) {
+        Some(retained) => {
+            // Verify the client-provided session_token matches what we stored.
+            if client_token == Some(retained.session_token) {
+                info!(session_id, "fast reconnect (tier 2)");
+                ReconnectTier::Fast { retained }
+            } else {
+                warn!(session_id, "session token mismatch, falling back to cold");
+                ReconnectTier::Cold
+            }
+        }
+        None => ReconnectTier::Cold,
+    }
 }

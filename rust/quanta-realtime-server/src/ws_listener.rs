@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use crate::auth::{AuthRequest, AuthValidator};
 use crate::config::EndpointConfig;
 use crate::error::EndpointError;
-use crate::session::Session;
+use crate::reconnect::{ConnectedClient, ReconnectTier};
 use crate::ws_session::{decode_frame, WsSession};
 
 pub struct WsListener {
@@ -48,7 +48,7 @@ impl WsListener {
     pub async fn run(
         self,
         validator: Arc<dyn AuthValidator>,
-        session_tx: mpsc::Sender<Box<dyn Session>>,
+        session_tx: mpsc::Sender<ConnectedClient>,
         mut shutdown_rx: watch::Receiver<bool>,
     ) {
         loop {
@@ -73,7 +73,7 @@ impl WsListener {
                     let tx = session_tx.clone();
                     tokio::spawn(async move {
                         match handle_ws_connection(stream, addr, &*validator, &config).await {
-                            Ok(session) => { let _ = tx.send(session).await; }
+                            Ok(client) => { let _ = tx.send(client).await; }
                             Err(e) => warn!(remote = %addr, error = %e, "ws connection failed"),
                         }
                     });
@@ -94,7 +94,7 @@ async fn handle_ws_connection(
     addr: SocketAddr,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<Box<dyn Session>, EndpointError> {
+) -> Result<ConnectedClient, EndpointError> {
     let ws_stream = tokio::time::timeout(
         config.auth_timeout,
         tokio_tungstenite::accept_async(stream),
@@ -111,6 +111,12 @@ async fn handle_ws_connection(
             let msg = msg.map_err(|e| EndpointError::WebSocket(e.to_string()))?;
             match msg {
                 Message::Binary(data) => {
+                    if data.len() > 65_536 {
+                        return Err(EndpointError::Auth(format!(
+                            "ws auth request too large: {} bytes",
+                            data.len()
+                        )));
+                    }
                     let req: AuthRequest = bitcode::decode(&data)
                         .map_err(|e| EndpointError::Auth(format!("decode auth: {e}")))?;
                     let response = validator.validate(&req)?;
@@ -183,5 +189,10 @@ async fn handle_ws_connection(
         }
     });
 
-    Ok(Box::new(WsSession::new(outbound_tx, inbound_rx)))
+    Ok(ConnectedClient {
+        session: Box::new(WsSession::new(outbound_tx, inbound_rx)),
+        session_id: response.session_id,
+        quic_connection: None,
+        reconnect_tier: ReconnectTier::Cold,
+    })
 }

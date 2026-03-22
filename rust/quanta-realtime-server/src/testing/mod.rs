@@ -1,5 +1,6 @@
 mod bot;
 mod certs;
+pub mod endpoint_helpers;
 mod harness;
 mod mock_session;
 mod recording;

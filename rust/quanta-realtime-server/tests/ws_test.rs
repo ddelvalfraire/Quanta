@@ -1,47 +1,24 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 
+use quanta_realtime_server::reconnect::ReconnectTier;
+use quanta_realtime_server::testing::endpoint_helpers::TestValidator;
 use quanta_realtime_server::{
-    AuthRequest, AuthResponse, AuthValidator, EndpointConfig, EndpointError, Session, WsListener,
+    AuthRequest, AuthResponse, ConnectedClient, EndpointConfig, WsListener,
 };
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-struct TestValidator {
-    counter: AtomicU64,
-}
-
-impl TestValidator {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            counter: AtomicU64::new(1),
-        })
-    }
-}
-
-impl AuthValidator for TestValidator {
-    fn validate(&self, _req: &AuthRequest) -> Result<AuthResponse, EndpointError> {
-        let session_id = self.counter.fetch_add(1, Ordering::Relaxed);
-        Ok(AuthResponse {
-            session_id,
-            accepted: true,
-            reason: String::new(),
-        })
-    }
-}
-
 async fn start_ws_server(
     config: EndpointConfig,
 ) -> (
     std::net::SocketAddr,
-    mpsc::Receiver<Box<dyn Session>>,
+    mpsc::Receiver<ConnectedClient>,
     watch::Sender<bool>,
     tokio::task::JoinHandle<()>,
 ) {
@@ -77,17 +54,16 @@ async fn ws_connect_and_auth(
         .expect("ws connect");
     let (mut sink, mut stream) = ws.split();
 
-    // Send auth as raw bitcode binary message (no length prefix).
     let req = AuthRequest {
         token: "test-token".into(),
         client_version: "0.1.0".into(),
+        session_token: None,
     };
     let req_bytes = bitcode::encode(&req);
     sink.send(Message::Binary(req_bytes.into()))
         .await
         .expect("send auth");
 
-    // Read auth response.
     let resp_msg = stream.next().await.expect("response").expect("ws read");
     let resp_bytes = match resp_msg {
         Message::Binary(b) => b,
@@ -111,14 +87,17 @@ async fn ws_connect_and_auth_succeeds() {
     assert!(resp.accepted);
     assert!(resp.session_id > 0);
 
-    let session = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
+    let connected = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
         .await
-        .expect("session arrives")
+        .expect("client arrives")
         .expect("channel open");
     assert_eq!(
-        session.transport_type(),
+        connected.session.transport_type(),
         quanta_realtime_server::TransportType::WebSocket
     );
+    // WS is a degraded fallback — always Cold reconnect.
+    assert!(matches!(connected.reconnect_tier, ReconnectTier::Cold));
+    assert!(connected.quic_connection.is_none());
 
     let _ = shutdown_tx.send(true);
     let _ = handle.await;
@@ -131,14 +110,15 @@ async fn ws_binary_frame_roundtrip() {
 
     let (mut sink, mut stream, _resp) = ws_connect_and_auth(addr).await;
 
-    let session = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
+    let connected = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
         .await
-        .expect("session arrives")
+        .expect("client arrives")
         .expect("channel open");
 
     // Server sends unreliable data to client via Session trait.
     let payload = b"hello-ws";
-    session
+    connected
+        .session
         .send_unreliable(payload)
         .expect("send_unreliable");
 
@@ -167,7 +147,7 @@ async fn ws_binary_frame_roundtrip() {
     let mut received = None;
     for _ in 0..50 {
         tokio::time::sleep(Duration::from_millis(10)).await;
-        if let Some(data) = session.recv_datagram() {
+        if let Some(data) = connected.session.recv_datagram() {
             received = Some(data);
             break;
         }
@@ -185,9 +165,9 @@ async fn ws_close_is_graceful() {
 
     let (mut sink, _stream, _resp) = ws_connect_and_auth(addr).await;
 
-    let _session = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
+    let _connected = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
         .await
-        .expect("session arrives")
+        .expect("client arrives")
         .expect("channel open");
 
     // Client sends close frame.

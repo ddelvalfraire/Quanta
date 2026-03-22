@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use governor::{Quota, RateLimiter};
 use tokio::sync::mpsc;
@@ -10,7 +10,8 @@ use crate::auth::AuthValidator;
 use crate::config::EndpointConfig;
 use crate::connection::handle_connection;
 use crate::error::EndpointError;
-use crate::session::Session;
+use crate::reconnect::ConnectedClient;
+use crate::session_store::SessionStore;
 use crate::tls::{build_server_config, TlsConfig};
 
 pub struct QuicEndpoint {
@@ -57,9 +58,13 @@ impl QuicEndpoint {
     pub async fn run(
         self,
         validator: Arc<dyn AuthValidator>,
-        session_tx: mpsc::Sender<Box<dyn Session>>,
+        session_tx: mpsc::Sender<ConnectedClient>,
+        session_store: Arc<Mutex<SessionStore>>,
         mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) {
+        let mut purge_interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        purge_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
                 incoming = self.endpoint.accept() => {
@@ -80,12 +85,20 @@ impl QuicEndpoint {
                     let validator = validator.clone();
                     let config = self.config.clone();
                     let tx = session_tx.clone();
+                    let store = session_store.clone();
                     tokio::spawn(async move {
-                        match handle_connection(incoming, &*validator, &config).await {
-                            Ok(session) => { let _ = tx.send(session).await; }
+                        match handle_connection(incoming, &*validator, &config, store).await {
+                            Ok(client) => { let _ = tx.send(client).await; }
                             Err(e) => warn!(error = %e, "connection failed"),
                         }
                     });
+                }
+                _ = purge_interval.tick() => {
+                    let mut store = match session_store.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    store.purge_expired();
                 }
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {

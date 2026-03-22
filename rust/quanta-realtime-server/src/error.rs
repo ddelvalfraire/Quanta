@@ -9,6 +9,7 @@ pub enum EndpointError {
     WebTransport(String),
     WebSocket(String),
     Send(SendError),
+    Sync(crate::sync::SyncError),
 }
 
 impl fmt::Display for EndpointError {
@@ -21,6 +22,7 @@ impl fmt::Display for EndpointError {
             Self::WebTransport(msg) => write!(f, "WebTransport error: {msg}"),
             Self::WebSocket(msg) => write!(f, "WebSocket error: {msg}"),
             Self::Send(err) => write!(f, "send error: {err}"),
+            Self::Sync(err) => write!(f, "sync error: {err}"),
         }
     }
 }
