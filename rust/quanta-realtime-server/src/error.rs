@@ -10,6 +10,7 @@ pub enum EndpointError {
     WebSocket(String),
     Send(SendError),
     Sync(crate::sync::SyncError),
+    ZoneTransfer(crate::zone_transfer::TransferError),
 }
 
 impl fmt::Display for EndpointError {
@@ -23,11 +24,18 @@ impl fmt::Display for EndpointError {
             Self::WebSocket(msg) => write!(f, "WebSocket error: {msg}"),
             Self::Send(err) => write!(f, "send error: {err}"),
             Self::Sync(err) => write!(f, "sync error: {err}"),
+            Self::ZoneTransfer(err) => write!(f, "zone transfer error: {err}"),
         }
     }
 }
 
 impl std::error::Error for EndpointError {}
+
+impl From<crate::zone_transfer::TransferError> for EndpointError {
+    fn from(err: crate::zone_transfer::TransferError) -> Self {
+        Self::ZoneTransfer(err)
+    }
+}
 
 #[derive(Debug)]
 pub enum SendError {

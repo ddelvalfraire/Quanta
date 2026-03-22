@@ -33,6 +33,11 @@ pub enum RecordedEffect {
     FireAndForget { target: String, payload: Vec<u8> },
     BridgeReply { correlation_id: [u8; 16], payload: Vec<u8> },
     EntityEvicted { entity: u32 },
+    ZoneTransferRequest {
+        player_id: String,
+        source_entity: u32,
+        target_zone: String,
+    },
 }
 
 impl From<&BridgeEffect> for RecordedEffect {
@@ -67,6 +72,16 @@ impl From<&BridgeEffect> for RecordedEffect {
             }
             BridgeEffect::EntityEvicted { entity } => RecordedEffect::EntityEvicted {
                 entity: entity.0,
+            },
+            BridgeEffect::ZoneTransferRequest {
+                player_id,
+                source_entity,
+                target_zone,
+                ..
+            } => RecordedEffect::ZoneTransferRequest {
+                player_id: player_id.clone(),
+                source_entity: source_entity.0,
+                target_zone: target_zone.0.clone(),
             },
         }
     }

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use quinn::congestion::BbrConfig;
 use quinn::{IdleTimeout, TransportConfig, VarInt};
+use crate::zone_transfer::ZoneTransferConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
@@ -72,6 +73,9 @@ pub struct ServerConfig {
     pub idle_timeout_secs: u64,
     /// Grace period seconds after last player leaves before passivation starts (default 10).
     pub grace_period_secs: u64,
+    /// Zone transfer configuration. `None` disables zone transfers.
+    #[serde(skip)]
+    pub zone_transfer: Option<ZoneTransferConfig>,
 }
 
 impl Default for ServerConfig {
@@ -84,6 +88,7 @@ impl Default for ServerConfig {
             capacity_subject: "quanta.default.realtime.capacity".to_owned(),
             idle_timeout_secs: 30,
             grace_period_secs: 10,
+            zone_transfer: None,
         }
     }
 }

@@ -28,6 +28,7 @@ pub mod webtransport_session;
 pub mod watchdog;
 pub mod ws_listener;
 pub mod ws_session;
+pub mod zone_transfer;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod testing;

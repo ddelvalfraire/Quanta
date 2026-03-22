@@ -1,6 +1,8 @@
 use crate::command::{
     ActivationError, IslandCommand, LifecycleError, ManagerCommand, ManagerMetrics,
+    ZoneTransferError,
 };
+use crate::zone_transfer::{ZoneTransferManager, ZoneTransferToken};
 use crate::config::ServerConfig;
 use crate::island::handle::{IslandHandle, ThreadModel};
 use crate::island::registry::IslandRegistry;
@@ -23,6 +25,7 @@ pub struct IslandManager {
     shutdown: Arc<AtomicBool>,
     bridge: Arc<dyn Bridge>,
     passivated: FxHashMap<String, PassivatedIsland>,
+    zone_transfer: Option<ZoneTransferManager>,
 }
 
 struct PassivatedIsland {
@@ -36,6 +39,10 @@ impl IslandManager {
         cmd_rx: mpsc::Receiver<ManagerCommand>,
         bridge: Arc<dyn Bridge>,
     ) -> Self {
+        let zone_transfer = config
+            .zone_transfer
+            .as_ref()
+            .map(|ztc| ZoneTransferManager::new(ztc.clone()));
         Self {
             config,
             registry: IslandRegistry::new(),
@@ -43,6 +50,7 @@ impl IslandManager {
             shutdown: Arc::new(AtomicBool::new(false)),
             bridge,
             passivated: FxHashMap::default(),
+            zone_transfer,
         }
     }
 
@@ -61,6 +69,7 @@ impl IslandManager {
                 }
                 _ = idle_check.tick() => {
                     self.check_passivation();
+                    self.check_zone_transfer_timeouts();
                 }
             }
         }
@@ -104,6 +113,33 @@ impl IslandManager {
             }
             ManagerCommand::PlayerInput { island_id, reply } => {
                 let result = self.handle_player_input(&island_id);
+                let _ = reply.send(result);
+            }
+            ManagerCommand::PrepareZoneTransfer {
+                player_id,
+                source_island,
+                target_island,
+                position,
+                velocity,
+                buffs,
+                reply,
+            } => {
+                let result = self.handle_prepare_zone_transfer(
+                    player_id,
+                    &source_island,
+                    &target_island,
+                    position,
+                    velocity,
+                    buffs,
+                );
+                let _ = reply.send(result);
+            }
+            ManagerCommand::AcceptZoneTransfer {
+                token_bytes,
+                target_island,
+                reply,
+            } => {
+                let result = self.handle_accept_zone_transfer(&token_bytes, &target_island);
                 let _ = reply.send(result);
             }
         }
@@ -306,6 +342,98 @@ impl IslandManager {
         }
 
         Err(LifecycleError::NotFound(island_id.clone()))
+    }
+
+    fn handle_prepare_zone_transfer(
+        &mut self,
+        player_id: String,
+        source_island: &IslandId,
+        target_island: &IslandId,
+        position: [f32; 3],
+        velocity: [f32; 3],
+        buffs: Vec<crate::zone_transfer::BuffState>,
+    ) -> Result<Vec<u8>, ZoneTransferError> {
+        if self.zone_transfer.is_none() {
+            return Err(ZoneTransferError::NotConfigured);
+        }
+
+        let handle = self
+            .registry
+            .get(source_island)
+            .ok_or_else(|| ZoneTransferError::SourceNotFound(source_island.clone()))?;
+        if handle.state != IslandState::Running {
+            return Err(ZoneTransferError::SourceNotRunning(source_island.clone()));
+        }
+
+        let zt = self.zone_transfer.as_mut().unwrap();
+        let token = zt.prepare_transfer(
+            player_id,
+            source_island.clone(),
+            target_island.clone(),
+            position,
+            velocity,
+            buffs,
+        )?;
+
+        if let Some(h) = self.registry.get_mut(source_island) {
+            h.player_count = h.player_count.saturating_sub(1);
+            if h.player_count == 0 && h.passivate_when_empty {
+                let grace = Duration::from_secs(self.config.grace_period_secs);
+                h.passivation_deadline = Some(Instant::now() + grace);
+            }
+        }
+
+        info!(
+            player_id = token.player_id.as_str(),
+            source = %source_island,
+            target = %target_island,
+            "zone transfer prepared"
+        );
+        Ok(token.to_bytes())
+    }
+
+    fn handle_accept_zone_transfer(
+        &mut self,
+        token_bytes: &[u8],
+        target_island: &IslandId,
+    ) -> Result<crate::zone_transfer::TransferredPlayer, ZoneTransferError> {
+        if self.zone_transfer.is_none() {
+            return Err(ZoneTransferError::NotConfigured);
+        }
+
+        let handle = self
+            .registry
+            .get(target_island)
+            .ok_or_else(|| ZoneTransferError::TargetNotFound(target_island.clone()))?;
+        if handle.state != IslandState::Running {
+            return Err(ZoneTransferError::TargetNotRunning(target_island.clone()));
+        }
+
+        let token = ZoneTransferToken::from_bytes(token_bytes)
+            .map_err(ZoneTransferError::Transfer)?;
+        let zt = self.zone_transfer.as_mut().unwrap();
+        let transferred = zt.accept_transfer(&token, target_island)?;
+
+        if let Some(h) = self.registry.get_mut(target_island) {
+            h.player_count += 1;
+            h.passivation_deadline = None;
+        }
+
+        info!(
+            player_id = transferred.player_id.as_str(),
+            target = %target_island,
+            "zone transfer accepted"
+        );
+        Ok(transferred)
+    }
+
+    fn check_zone_transfer_timeouts(&mut self) {
+        if let Some(zt) = &mut self.zone_transfer {
+            let rolled_back = zt.check_timeouts();
+            for player_id in &rolled_back {
+                info!(player_id, "zone transfer timed out, rolled back");
+            }
+        }
     }
 
     fn check_passivation(&mut self) {

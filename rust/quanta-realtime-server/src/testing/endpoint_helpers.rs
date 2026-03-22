@@ -159,6 +159,7 @@ pub async fn client_auth_with_token(
         token: "test-token".into(),
         client_version: "0.1.0".into(),
         session_token,
+        transfer_token: None,
     };
     let req_bytes = bitcode::encode(&req);
     let len = (req_bytes.len() as u32).to_be_bytes();
