@@ -94,7 +94,10 @@ impl QuicEndpoint {
                     });
                 }
                 _ = purge_interval.tick() => {
-                    let mut store = session_store.lock().expect("session store lock");
+                    let mut store = match session_store.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     store.purge_expired();
                 }
                 _ = shutdown_rx.changed() => {

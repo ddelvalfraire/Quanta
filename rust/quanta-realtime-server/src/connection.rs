@@ -75,8 +75,8 @@ async fn handle_quanta_v1(
     })
     .await;
 
-    let response = match result {
-        Ok(Ok(resp)) => resp,
+    let (response, session_token) = match result {
+        Ok(Ok(pair)) => pair,
         Ok(Err(e)) => {
             connection.close(CLOSE_AUTH_FAILURE, b"auth failed");
             return Err(e);
@@ -101,7 +101,8 @@ async fn handle_quanta_v1(
         "auth succeeded"
     );
 
-    let reconnect_tier = classify_reconnect(&session_store, &response);
+    let reconnect_tier =
+        classify_reconnect(&session_store, response.session_id, session_token);
 
     Ok(ConnectedClient {
         quic_connection: Some(connection.clone()),
@@ -132,13 +133,14 @@ async fn handle_h3_webtransport(
             .await
             .map_err(|e| EndpointError::WebTransport(e.to_string()))?;
 
-        let response = run_auth_handshake(&mut send, &mut recv, validator).await?;
-        Ok::<_, EndpointError>((session, response))
+        let (response, session_token) =
+            run_auth_handshake(&mut send, &mut recv, validator).await?;
+        Ok::<_, EndpointError>((session, response, session_token))
     })
     .await;
 
-    let (session, response) = match result {
-        Ok(Ok(pair)) => pair,
+    let (session, response, session_token) = match result {
+        Ok(Ok(tuple)) => tuple,
         Ok(Err(e)) => {
             connection.close(CLOSE_AUTH_FAILURE, b"auth failed");
             return Err(e);
@@ -163,7 +165,8 @@ async fn handle_h3_webtransport(
         "webtransport auth succeeded"
     );
 
-    let reconnect_tier = classify_reconnect(&session_store, &response);
+    let reconnect_tier =
+        classify_reconnect(&session_store, response.session_id, session_token);
 
     Ok(ConnectedClient {
         quic_connection: Some(connection),
@@ -173,21 +176,31 @@ async fn handle_h3_webtransport(
     })
 }
 
-/// Classify the reconnection tier based on whether the auth request carried
-/// a session token and whether we still have a retained session for it.
+/// Classify the reconnection tier by checking the session store for a retained
+/// session and verifying the client's session_token matches.
 fn classify_reconnect(
     store: &Mutex<SessionStore>,
-    response: &crate::auth::AuthResponse,
+    session_id: u64,
+    client_token: Option<u64>,
 ) -> ReconnectTier {
-    // The session_token from the auth request is not available in the
-    // AuthResponse. The validator can use the token to map to a session_id.
-    // For reconnection we check if we have a retained session for the
-    // assigned session_id.
-    let mut store = store.lock().expect("session store lock poisoned");
-    match store.take(response.session_id) {
+    let mut store = match store.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            warn!("session store mutex poisoned, recovering");
+            poisoned.into_inner()
+        }
+    };
+
+    match store.take(session_id) {
         Some(retained) => {
-            info!(session_id = response.session_id, "fast reconnect (tier 2)");
-            ReconnectTier::Fast { retained }
+            // Verify the client-provided session_token matches what we stored.
+            if client_token == Some(retained.session_token) {
+                info!(session_id, "fast reconnect (tier 2)");
+                ReconnectTier::Fast { retained }
+            } else {
+                warn!(session_id, "session token mismatch, falling back to cold");
+                ReconnectTier::Cold
+            }
         }
         None => ReconnectTier::Cold,
     }

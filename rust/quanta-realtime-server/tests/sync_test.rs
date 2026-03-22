@@ -9,6 +9,7 @@ use tokio::sync::{mpsc, watch};
 
 use quanta_realtime_server::reconnect::ReconnectTier;
 use quanta_realtime_server::session_store::{RetainedSession, SessionStore};
+use rustc_hash::FxHashMap;
 use quanta_realtime_server::sync::{
     recv_initial_state_stream, send_initial_state_stream, EntityPayload, InitialStateMessage,
 };
@@ -147,12 +148,19 @@ async fn start_server(
 }
 
 async fn client_auth(connection: &quinn::Connection) -> AuthResponse {
+    client_auth_with_token(connection, None).await
+}
+
+async fn client_auth_with_token(
+    connection: &quinn::Connection,
+    session_token: Option<u64>,
+) -> AuthResponse {
     let (mut send, mut recv) = connection.open_bi().await.expect("open bidi stream");
 
     let req = AuthRequest {
         token: "test-token".into(),
         client_version: "0.1.0".into(),
-        session_token: None,
+        session_token,
     };
     let req_bytes = bitcode::encode(&req);
     let len = (req_bytes.len() as u32).to_be_bytes();
@@ -259,27 +267,10 @@ async fn fast_reconnect_with_retained_session() {
         .expect("channel");
     assert!(matches!(connected.reconnect_tier, ReconnectTier::Cold));
 
-    // Simulate disconnect: insert a retained session for this session_id.
-    {
-        let mut s = store.lock().unwrap();
-        s.insert(
-            session_id,
-            RetainedSession {
-                baseline_tick: 500,
-                visible_entities: vec![EntitySlot(0), EntitySlot(1)],
-                input_seq: 10,
-                session_token: session_id,
-                created_at: tokio::time::Instant::now(),
-            },
-        );
-    }
-
     connection.close(0u32.into(), b"disconnect");
 
-    // Reconnect — the new connection gets the same session_id from the validator.
-    // We need a validator that returns the same session_id. Since TestValidator
-    // auto-increments, the new session_id won't match. For this test, we
-    // manually insert a retained session for the next expected session_id.
+    // Insert a retained session for the next expected session_id (TestValidator
+    // auto-increments). The session_token must match what the client sends.
     let next_session_id = session_id + 1;
     {
         let mut s = store.lock().unwrap();
@@ -290,18 +281,20 @@ async fn fast_reconnect_with_retained_session() {
                 visible_entities: vec![EntitySlot(0), EntitySlot(1)],
                 input_seq: 10,
                 session_token: next_session_id,
+                client_capabilities: FxHashMap::default(),
                 created_at: tokio::time::Instant::now(),
             },
         );
     }
 
+    // Reconnect with session_token matching the retained session_token.
     let client2 = build_test_client(&[b"quanta-v1"]);
     let connection2 = client2
         .connect(addr, "localhost")
         .expect("connect")
         .await
         .expect("handshake");
-    let resp2 = client_auth(&connection2).await;
+    let resp2 = client_auth_with_token(&connection2, Some(next_session_id)).await;
     assert!(resp2.accepted);
     assert_eq!(resp2.session_id, next_session_id);
 
@@ -317,6 +310,75 @@ async fn fast_reconnect_with_retained_session() {
         }
         ReconnectTier::Cold => panic!("expected Fast reconnect tier"),
     }
+
+    connection2.close(0u32.into(), b"done");
+    let _ = shutdown_tx.send(true);
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn cold_reconnect_after_session_expired() {
+    let mut config = EndpointConfig::default();
+    config.session_retain_duration = Duration::from_millis(200);
+
+    let (addr, mut session_rx, shutdown_tx, handle, store) = start_server(config).await;
+
+    // First connection.
+    let client = build_test_client(&[b"quanta-v1"]);
+    let connection = client
+        .connect(addr, "localhost")
+        .expect("connect")
+        .await
+        .expect("handshake");
+    let resp = client_auth(&connection).await;
+    let session_id = resp.session_id;
+
+    let _connected = tokio::time::timeout(Duration::from_secs(1), session_rx.recv())
+        .await
+        .expect("client")
+        .expect("channel");
+
+    // Insert a retained session.
+    let next_session_id = session_id + 1;
+    {
+        let mut s = store.lock().unwrap();
+        s.insert(
+            next_session_id,
+            RetainedSession {
+                baseline_tick: 100,
+                visible_entities: vec![],
+                input_seq: 5,
+                session_token: next_session_id,
+                client_capabilities: FxHashMap::default(),
+                created_at: tokio::time::Instant::now(),
+            },
+        );
+    }
+
+    connection.close(0u32.into(), b"disconnect");
+
+    // Wait for the session to expire (200ms retain + margin).
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    // Reconnect — session should have expired, resulting in Cold tier.
+    let client2 = build_test_client(&[b"quanta-v1"]);
+    let connection2 = client2
+        .connect(addr, "localhost")
+        .expect("connect")
+        .await
+        .expect("handshake");
+    let resp2 = client_auth_with_token(&connection2, Some(next_session_id)).await;
+    assert!(resp2.accepted);
+
+    let connected2 = tokio::time::timeout(Duration::from_secs(1), session_rx.recv())
+        .await
+        .expect("client")
+        .expect("channel");
+
+    assert!(
+        matches!(connected2.reconnect_tier, ReconnectTier::Cold),
+        "expected Cold tier after session expiry"
+    );
 
     connection2.close(0u32.into(), b"done");
     let _ = shutdown_tx.send(true);

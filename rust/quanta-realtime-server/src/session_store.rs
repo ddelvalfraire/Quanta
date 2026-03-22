@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::time::Duration;
 
 use rustc_hash::FxHashMap;
@@ -20,6 +21,8 @@ pub struct RetainedSession {
     pub input_seq: u32,
     /// The session_id from auth, used as reconnect token.
     pub session_token: u64,
+    /// Client capabilities retained for fast reconnect.
+    pub client_capabilities: FxHashMap<String, String>,
     /// When this retention entry was created.
     pub created_at: Instant,
 }
@@ -31,7 +34,7 @@ pub struct RetainedSession {
 pub struct SessionStore {
     sessions: FxHashMap<u64, RetainedSession>,
     /// Tracks insertion order for LRU eviction. Oldest is at front.
-    insertion_order: Vec<u64>,
+    insertion_order: VecDeque<u64>,
     expiry_duration: Duration,
     max_sessions: usize,
 }
@@ -40,7 +43,7 @@ impl SessionStore {
     pub fn new(expiry_duration: Duration, max_sessions: usize) -> Self {
         Self {
             sessions: FxHashMap::default(),
-            insertion_order: Vec::new(),
+            insertion_order: VecDeque::new(),
             expiry_duration,
             max_sessions,
         }
@@ -59,15 +62,14 @@ impl SessionStore {
 
         // Evict LRU if at capacity.
         if self.sessions.len() >= self.max_sessions {
-            if let Some(oldest_id) = self.insertion_order.first().copied() {
+            if let Some(oldest_id) = self.insertion_order.pop_front() {
                 self.sessions.remove(&oldest_id);
-                self.insertion_order.remove(0);
                 evicted = Some(oldest_id);
             }
         }
 
         self.sessions.insert(session_id, session);
-        self.insertion_order.push(session_id);
+        self.insertion_order.push_back(session_id);
         evicted
     }
 
@@ -124,6 +126,7 @@ mod tests {
             visible_entities: vec![EntitySlot(0), EntitySlot(1)],
             input_seq: 5,
             session_token: token,
+            client_capabilities: FxHashMap::default(),
             created_at: Instant::now(),
         }
     }
@@ -228,6 +231,7 @@ mod tests {
             visible_entities: vec![],
             input_seq: 1,
             session_token: 1,
+            client_capabilities: FxHashMap::default(),
             created_at: Instant::now(),
         });
         store.insert(1, RetainedSession {
@@ -235,6 +239,7 @@ mod tests {
             visible_entities: vec![],
             input_seq: 2,
             session_token: 1,
+            client_capabilities: FxHashMap::default(),
             created_at: Instant::now(),
         });
 

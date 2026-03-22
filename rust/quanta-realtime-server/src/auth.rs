@@ -52,11 +52,14 @@ impl AuthValidator for AcceptAllValidator {
     }
 }
 
+/// Run the auth handshake: read an `AuthRequest`, validate it, send the
+/// `AuthResponse`. Returns the response and the client's `session_token`
+/// (if any) for reconnection verification.
 pub async fn run_auth_handshake(
     send: &mut (impl AsyncWrite + Unpin),
     recv: &mut (impl AsyncRead + Unpin),
     validator: &dyn AuthValidator,
-) -> Result<AuthResponse, EndpointError> {
+) -> Result<(AuthResponse, Option<u64>), EndpointError> {
     let mut len_buf = [0u8; 4];
     recv.read_exact(&mut len_buf)
         .await
@@ -77,6 +80,7 @@ pub async fn run_auth_handshake(
     let req: AuthRequest =
         bitcode::decode(&buf).map_err(|e| EndpointError::Auth(format!("decode request: {e}")))?;
 
+    let session_token = req.session_token;
     let response = validator.validate(&req)?;
 
     let resp_bytes = bitcode::encode(&response);
@@ -88,7 +92,7 @@ pub async fn run_auth_handshake(
         .await
         .map_err(|e| EndpointError::Auth(format!("write response body: {e}")))?;
 
-    Ok(response)
+    Ok((response, session_token))
 }
 
 #[cfg(test)]

@@ -7,8 +7,10 @@ use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::Message;
 
 use quanta_realtime_server::{
-    AuthRequest, AuthResponse, AuthValidator, EndpointConfig, EndpointError, Session, WsListener,
+    AuthRequest, AuthResponse, AuthValidator, ConnectedClient, EndpointConfig, EndpointError,
+    WsListener,
 };
+use quanta_realtime_server::reconnect::ReconnectTier;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,7 +43,7 @@ async fn start_ws_server(
     config: EndpointConfig,
 ) -> (
     std::net::SocketAddr,
-    mpsc::Receiver<Box<dyn Session>>,
+    mpsc::Receiver<ConnectedClient>,
     watch::Sender<bool>,
     tokio::task::JoinHandle<()>,
 ) {
@@ -112,14 +114,16 @@ async fn ws_connect_and_auth_succeeds() {
     assert!(resp.accepted);
     assert!(resp.session_id > 0);
 
-    let session = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
+    let connected = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
         .await
-        .expect("session arrives")
+        .expect("client arrives")
         .expect("channel open");
     assert_eq!(
-        session.transport_type(),
+        connected.session.transport_type(),
         quanta_realtime_server::TransportType::WebSocket
     );
+    assert!(matches!(connected.reconnect_tier, ReconnectTier::Cold));
+    assert!(connected.quic_connection.is_none());
 
     let _ = shutdown_tx.send(true);
     let _ = handle.await;
@@ -132,14 +136,15 @@ async fn ws_binary_frame_roundtrip() {
 
     let (mut sink, mut stream, _resp) = ws_connect_and_auth(addr).await;
 
-    let session = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
+    let connected = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
         .await
-        .expect("session arrives")
+        .expect("client arrives")
         .expect("channel open");
 
     // Server sends unreliable data to client via Session trait.
     let payload = b"hello-ws";
-    session
+    connected
+        .session
         .send_unreliable(payload)
         .expect("send_unreliable");
 
@@ -168,7 +173,7 @@ async fn ws_binary_frame_roundtrip() {
     let mut received = None;
     for _ in 0..50 {
         tokio::time::sleep(Duration::from_millis(10)).await;
-        if let Some(data) = session.recv_datagram() {
+        if let Some(data) = connected.session.recv_datagram() {
             received = Some(data);
             break;
         }
@@ -186,9 +191,9 @@ async fn ws_close_is_graceful() {
 
     let (mut sink, _stream, _resp) = ws_connect_and_auth(addr).await;
 
-    let _session = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
+    let _connected = tokio::time::timeout(Duration::from_secs(2), session_rx.recv())
         .await
-        .expect("session arrives")
+        .expect("client arrives")
         .expect("channel open");
 
     // Client sends close frame.

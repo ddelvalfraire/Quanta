@@ -7,6 +7,18 @@ pub const FLAG_INCLUDES_SCHEMA: u8 = 0x01;
 /// Maximum entity count in a single InitialStateMessage.
 const MAX_INITIAL_ENTITIES: u32 = 10_000;
 
+/// Maximum bytes for a single entity's state during decoding.
+const MAX_ENTITY_STATE_BYTES: usize = 65_536;
+
+/// Maximum bytes for the compiled schema during decoding.
+const MAX_SCHEMA_BYTES: usize = 1_048_576;
+
+/// Maximum bytes for a BaselineAck message.
+const MAX_ACK_BYTES: usize = 1024;
+
+/// Maximum bytes for a length-prefixed InitialStateMessage on the wire.
+const MAX_INITIAL_STATE_BYTES: usize = 16 * 1024 * 1024; // 16 MB
+
 /// Minimum header size: baseline_tick(8) + flags(1) + schema_version(1) + entity_count(4).
 const HEADER_SIZE: usize = 8 + 1 + 1 + 4;
 
@@ -123,6 +135,11 @@ pub fn decode_initial_state(bytes: &[u8]) -> Result<InitialStateMessage, SyncErr
 
     let compiled_schema = if flags & FLAG_INCLUDES_SCHEMA != 0 {
         let schema_len = u32::from_be_bytes(read_array::<4>(bytes, &mut pos)?) as usize;
+        if schema_len > MAX_SCHEMA_BYTES {
+            return Err(SyncError::InvalidPayload(format!(
+                "schema too large: {schema_len} bytes, max {MAX_SCHEMA_BYTES}"
+            )));
+        }
         if pos + schema_len > bytes.len() {
             return Err(SyncError::TruncatedInput {
                 expected: pos + schema_len,
@@ -148,6 +165,11 @@ pub fn decode_initial_state(bytes: &[u8]) -> Result<InitialStateMessage, SyncErr
     for _ in 0..entity_count {
         let entity_slot = u32::from_be_bytes(read_array::<4>(bytes, &mut pos)?);
         let state_len = u32::from_be_bytes(read_array::<4>(bytes, &mut pos)?) as usize;
+        if state_len > MAX_ENTITY_STATE_BYTES {
+            return Err(SyncError::InvalidPayload(format!(
+                "entity state too large: {state_len} bytes, max {MAX_ENTITY_STATE_BYTES}"
+            )));
+        }
         if pos + state_len > bytes.len() {
             return Err(SyncError::TruncatedInput {
                 expected: pos + state_len,
@@ -200,6 +222,10 @@ pub fn decode_baseline_ack(bytes: &[u8]) -> Result<BaselineAck, SyncError> {
 // Bulk transfer over QUIC streams
 // ---------------------------------------------------------------------------
 
+fn stream_err(e: impl std::fmt::Display) -> SyncError {
+    SyncError::StreamError(e.to_string())
+}
+
 /// Server-side: open a bidirectional QUIC stream, send the `InitialStateMessage`,
 /// and wait for the client's `BaselineAck`.
 pub async fn send_initial_state_stream(
@@ -208,35 +234,27 @@ pub async fn send_initial_state_stream(
     timeout: Duration,
 ) -> Result<BaselineAck, SyncError> {
     let result = tokio::time::timeout(timeout, async {
-        let (mut send, mut recv) = connection
-            .open_bi()
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
+        let (mut send, mut recv) = connection.open_bi().await.map_err(stream_err)?;
 
-        // Write length-prefixed encoded message.
         let encoded = encode_initial_state(msg);
         let len = (encoded.len() as u32).to_be_bytes();
-        send.write_all(&len)
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
-        send.write_all(&encoded)
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
-        send.finish()
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
+        send.write_all(&len).await.map_err(stream_err)?;
+        send.write_all(&encoded).await.map_err(stream_err)?;
+        send.finish().map_err(stream_err)?;
 
         // Read length-prefixed BaselineAck from client.
         let mut ack_len_buf = [0u8; 4];
-        recv.read_exact(&mut ack_len_buf)
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
+        recv.read_exact(&mut ack_len_buf).await.map_err(stream_err)?;
         let ack_len = u32::from_be_bytes(ack_len_buf) as usize;
+        if ack_len > MAX_ACK_BYTES {
+            return Err(SyncError::InvalidPayload(format!(
+                "ack too large: {ack_len} bytes, max {MAX_ACK_BYTES}"
+            )));
+        }
         let mut ack_buf = vec![0u8; ack_len];
-        recv.read_exact(&mut ack_buf)
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
+        recv.read_exact(&mut ack_buf).await.map_err(stream_err)?;
 
-        decode_baseline_ack(&encode_baseline_ack_raw(&ack_buf))
+        decode_baseline_ack_payload(&ack_buf)
     })
     .await;
 
@@ -247,27 +265,25 @@ pub async fn send_initial_state_stream(
 }
 
 /// Client-side: accept a bidirectional QUIC stream from the server, read the
-/// `InitialStateMessage`, and return it along with the send half for acking.
+/// `InitialStateMessage`, send the `BaselineAck`, and return the decoded message.
 pub async fn recv_initial_state_stream(
     connection: &quinn::Connection,
     timeout: Duration,
 ) -> Result<InitialStateMessage, SyncError> {
     let result = tokio::time::timeout(timeout, async {
-        let (send, mut recv) = connection
-            .accept_bi()
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
+        let (mut send, mut recv) = connection.accept_bi().await.map_err(stream_err)?;
 
         // Read length-prefixed InitialStateMessage.
         let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf)
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
+        recv.read_exact(&mut len_buf).await.map_err(stream_err)?;
         let len = u32::from_be_bytes(len_buf) as usize;
+        if len > MAX_INITIAL_STATE_BYTES {
+            return Err(SyncError::InvalidPayload(format!(
+                "initial state too large: {len} bytes, max {MAX_INITIAL_STATE_BYTES}"
+            )));
+        }
         let mut buf = vec![0u8; len];
-        recv.read_exact(&mut buf)
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
+        recv.read_exact(&mut buf).await.map_err(stream_err)?;
 
         let msg = decode_initial_state(&buf)?;
 
@@ -277,15 +293,9 @@ pub async fn recv_initial_state_stream(
         };
         let ack_bytes = bitcode::encode(&ack);
         let ack_len = (ack_bytes.len() as u32).to_be_bytes();
-        let mut send = send;
-        send.write_all(&ack_len)
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
-        send.write_all(&ack_bytes)
-            .await
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
-        send.finish()
-            .map_err(|e| SyncError::StreamError(e.to_string()))?;
+        send.write_all(&ack_len).await.map_err(stream_err)?;
+        send.write_all(&ack_bytes).await.map_err(stream_err)?;
+        send.finish().map_err(stream_err)?;
 
         Ok(msg)
     })
@@ -297,12 +307,10 @@ pub async fn recv_initial_state_stream(
     }
 }
 
-/// Re-wrap raw ack bytes into the length-prefixed format expected by decode_baseline_ack.
-fn encode_baseline_ack_raw(ack_bytes: &[u8]) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(4 + ack_bytes.len());
-    buf.extend_from_slice(&(ack_bytes.len() as u32).to_be_bytes());
-    buf.extend_from_slice(ack_bytes);
-    buf
+/// Decode a `BaselineAck` directly from raw bitcode bytes (no length prefix).
+fn decode_baseline_ack_payload(bytes: &[u8]) -> Result<BaselineAck, SyncError> {
+    bitcode::decode(bytes)
+        .map_err(|e| SyncError::InvalidPayload(format!("decode BaselineAck: {e}")))
 }
 
 // ---------------------------------------------------------------------------
