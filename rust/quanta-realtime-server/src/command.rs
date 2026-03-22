@@ -3,7 +3,6 @@ use crate::types::IslandManifest;
 use std::fmt;
 use tokio::sync::oneshot;
 
-/// Commands sent from external callers to the IslandManager via tokio mpsc.
 pub enum ManagerCommand {
     Activate {
         manifest: IslandManifest,
@@ -11,18 +10,17 @@ pub enum ManagerCommand {
     },
     Drain {
         island_id: IslandId,
-        reply: oneshot::Sender<Result<(), DrainError>>,
+        reply: oneshot::Sender<Result<(), LifecycleError>>,
     },
     Stop {
         island_id: IslandId,
-        reply: oneshot::Sender<Result<(), DrainError>>,
+        reply: oneshot::Sender<Result<(), LifecycleError>>,
     },
     GetMetrics {
         reply: oneshot::Sender<ManagerMetrics>,
     },
 }
 
-/// Commands sent from the manager to an island thread via crossbeam.
 #[derive(Debug)]
 pub enum IslandCommand {
     Tick,
@@ -48,12 +46,12 @@ impl fmt::Display for ActivationError {
 impl std::error::Error for ActivationError {}
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum DrainError {
+pub enum LifecycleError {
     NotFound(IslandId),
     InvalidTransition(String),
 }
 
-impl fmt::Display for DrainError {
+impl fmt::Display for LifecycleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound(id) => write!(f, "island not found: {id}"),
@@ -62,7 +60,7 @@ impl fmt::Display for DrainError {
     }
 }
 
-impl std::error::Error for DrainError {}
+impl std::error::Error for LifecycleError {}
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ManagerMetrics {

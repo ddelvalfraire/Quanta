@@ -1,5 +1,5 @@
 use crate::command::{
-    ActivationError, DrainError, IslandCommand, ManagerCommand, ManagerMetrics,
+    ActivationError, IslandCommand, LifecycleError, ManagerCommand, ManagerMetrics,
 };
 use crate::config::ServerConfig;
 use crate::island::handle::{IslandHandle, ThreadModel};
@@ -24,7 +24,6 @@ impl IslandManager {
         }
     }
 
-    /// Run the manager loop, processing commands until the channel closes.
     pub async fn run(&mut self) {
         info!("island manager started");
         while let Some(cmd) = self.cmd_rx.recv().await {
@@ -62,6 +61,7 @@ impl IslandManager {
         let thread_model = if manifest.entity_count >= self.config.entity_threshold {
             ThreadModel::Dedicated
         } else {
+            // TODO(T45): Pooled should use a thread pool, not a dedicated thread.
             ThreadModel::Pooled
         };
 
@@ -94,21 +94,20 @@ impl IslandManager {
     fn handle_drain(
         &mut self,
         island_id: &crate::types::IslandId,
-    ) -> Result<(), DrainError> {
+    ) -> Result<(), LifecycleError> {
         let handle = self
             .registry
             .get_mut(island_id)
-            .ok_or_else(|| DrainError::NotFound(island_id.clone()))?;
+            .ok_or_else(|| LifecycleError::NotFound(island_id.clone()))?;
 
         handle.state = handle
             .state
             .transition(IslandState::Draining)
-            .map_err(|e| DrainError::InvalidTransition(e.to_string()))?;
+            .map_err(|e| LifecycleError::InvalidTransition(e.to_string()))?;
 
         let _ = handle.command_tx.send(IslandCommand::Drain);
         info!(%island_id, "island draining");
 
-        // Join the thread to complete the stop transition.
         self.finish_stop(island_id);
         Ok(())
     }
@@ -116,18 +115,17 @@ impl IslandManager {
     fn handle_stop(
         &mut self,
         island_id: &crate::types::IslandId,
-    ) -> Result<(), DrainError> {
+    ) -> Result<(), LifecycleError> {
         let handle = self
             .registry
             .get_mut(island_id)
-            .ok_or_else(|| DrainError::NotFound(island_id.clone()))?;
+            .ok_or_else(|| LifecycleError::NotFound(island_id.clone()))?;
 
-        // Allow stop from Running (go through Draining first) or from Draining.
         if handle.state == IslandState::Running {
             handle.state = handle
                 .state
                 .transition(IslandState::Draining)
-                .map_err(|e| DrainError::InvalidTransition(e.to_string()))?;
+                .map_err(|e| LifecycleError::InvalidTransition(e.to_string()))?;
         }
 
         let _ = handle.command_tx.send(IslandCommand::Stop);
@@ -137,14 +135,16 @@ impl IslandManager {
         Ok(())
     }
 
+    /// Join the island thread and remove it from the registry.
+    ///
+    /// WARNING: This blocks the async manager loop on `jh.join()`. Acceptable
+    /// while island threads are stubs, but T45 must replace this with async
+    /// completion notification (e.g., `spawn_blocking` or a oneshot channel from
+    /// the island thread) so the manager stays responsive during real WASM ticks.
     fn finish_stop(&mut self, island_id: &crate::types::IslandId) {
-        if let Some(handle) = self.registry.get_mut(island_id) {
+        if let Some(mut handle) = self.registry.remove(island_id) {
             if let Some(jh) = handle.join_handle.take() {
                 let _ = jh.join();
-            }
-            // Transition Draining -> Stopped
-            if let Ok(new_state) = handle.state.transition(IslandState::Stopped) {
-                handle.state = new_state;
             }
             info!(%island_id, "island stopped");
         }
@@ -163,16 +163,13 @@ impl IslandManager {
 fn island_thread_loop(rx: crossbeam_channel::Receiver<IslandCommand>) {
     loop {
         match rx.recv() {
-            Ok(IslandCommand::Tick) => {
-                // Stub: no-op tick
-            }
+            Ok(IslandCommand::Tick) => {}
             Ok(IslandCommand::Drain) | Ok(IslandCommand::Stop) => break,
-            Err(_) => break, // channel closed
+            Err(_) => break,
         }
     }
 }
 
-/// Create a (sender, receiver) pair for sending commands to the manager.
 pub fn manager_channel(buffer: usize) -> (mpsc::Sender<ManagerCommand>, mpsc::Receiver<ManagerCommand>) {
     mpsc::channel(buffer)
 }

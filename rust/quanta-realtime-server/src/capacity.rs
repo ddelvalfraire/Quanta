@@ -3,16 +3,23 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
-/// Periodic capacity signal published to NATS for the orchestrator.
+/// Capacity signal published to NATS for the orchestrator.
+/// Field names match the spec wire format (`quanta.{ns}.realtime.capacity.{server_id}`).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CapacitySignal {
     pub server_id: String,
+    #[serde(rename = "islands_active")]
     pub active_islands: u32,
+    #[serde(rename = "max_entities")]
     pub max_islands: u32,
+    #[serde(rename = "entities_total")]
     pub total_entities: u64,
+    pub available_slots: u32,
     /// Placeholder: always 0.0 until sysinfo is wired.
+    #[serde(rename = "cpu_load_1m")]
     pub cpu_load: f64,
     /// Placeholder: always 0 until sysinfo is wired.
+    #[serde(rename = "memory_used_mb")]
     pub memory_used: u64,
 }
 
@@ -23,14 +30,13 @@ impl CapacitySignal {
             active_islands: metrics.active_islands,
             max_islands,
             total_entities: metrics.total_entities,
+            available_slots: max_islands.saturating_sub(metrics.active_islands),
             cpu_load: 0.0,
             memory_used: 0,
         }
     }
 }
 
-/// Run the capacity publisher loop. Queries the manager for metrics every
-/// `interval` and publishes a JSON CapacitySignal to the given NATS subject.
 pub async fn run_capacity_publisher(
     manager_tx: mpsc::Sender<ManagerCommand>,
     nats_client: async_nats::Client,
@@ -95,6 +101,24 @@ mod tests {
         let parsed: CapacitySignal = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, signal);
         assert_eq!(parsed.active_islands, 5);
+        assert_eq!(parsed.available_slots, 195);
         assert_eq!(parsed.cpu_load, 0.0);
+    }
+
+    #[test]
+    fn capacity_signal_spec_field_names() {
+        let metrics = ManagerMetrics {
+            active_islands: 3,
+            total_islands: 5,
+            total_entities: 500,
+        };
+        let signal = CapacitySignal::from_metrics("srv-test", 200, &metrics);
+        let json = serde_json::to_string(&signal).unwrap();
+        assert!(json.contains("\"islands_active\""));
+        assert!(json.contains("\"entities_total\""));
+        assert!(json.contains("\"max_entities\""));
+        assert!(json.contains("\"available_slots\""));
+        assert!(json.contains("\"cpu_load_1m\""));
+        assert!(json.contains("\"memory_used_mb\""));
     }
 }

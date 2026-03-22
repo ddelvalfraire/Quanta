@@ -2,15 +2,12 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    /// NATS server URL.
     pub nats_url: String,
-    /// Maximum number of concurrent islands on this server.
     pub max_islands: u32,
-    /// Entity count threshold: islands above this get a dedicated thread.
+    /// Islands at or above this entity count get a dedicated thread.
     pub entity_threshold: u32,
-    /// Interval in seconds between capacity signal publications.
     pub capacity_interval_secs: u64,
-    /// NATS subject for capacity signals.
+    /// NATS subject template for capacity signals. `{server_id}` is replaced at runtime.
     pub capacity_subject: String,
 }
 
@@ -21,7 +18,7 @@ impl Default for ServerConfig {
             max_islands: 200,
             entity_threshold: 100,
             capacity_interval_secs: 5,
-            capacity_subject: "quanta.capacity".to_owned(),
+            capacity_subject: "quanta.default.realtime.capacity".to_owned(),
         }
     }
 }

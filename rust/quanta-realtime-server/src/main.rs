@@ -14,10 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     let config = ServerConfig::default();
-    let server_id = format!(
-        "srv-{}",
-        &uuid_v4_simple()[..8]
-    );
+    let server_id = generate_server_id();
 
     info!(%server_id, nats_url = %config.nats_url, "starting quanta-realtime-server");
 
@@ -26,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (cmd_tx, cmd_rx) = manager_channel(256);
 
-    let capacity_subject = config.capacity_subject.clone();
+    let capacity_subject = format!("{}.{}", config.capacity_subject, server_id);
     let capacity_interval = Duration::from_secs(config.capacity_interval_secs);
     let max_islands = config.max_islands;
     let server_id_clone = server_id.clone();
@@ -50,13 +47,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Generate a simple hex UUID-like identifier (no external dep needed).
-fn uuid_v4_simple() -> String {
+/// Generate a server ID from timestamp and PID. Not cryptographically random;
+/// suitable for human-readable log correlation, not for auth or trust decisions.
+fn generate_server_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     let pid = std::process::id();
-    format!("{:016x}{:08x}", nanos, pid)
+    format!("srv-{:08x}{:04x}", (nanos / 1_000_000) as u32, pid as u16)
 }

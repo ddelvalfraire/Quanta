@@ -2359,7 +2359,6 @@ version = "0.1.0"
 dependencies = [
  "async-nats",
  "crossbeam-channel",
- "quanta-core-rs",
  "rustc-hash",
  "serde",
  "serde_json",
