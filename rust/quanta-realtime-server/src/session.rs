@@ -36,14 +36,9 @@ impl QuicSession {
         let (tx, rx) = mpsc::channel(256);
         let conn = connection.clone();
         tokio::spawn(async move {
-            loop {
-                match conn.read_datagram().await {
-                    Ok(bytes) => {
-                        if tx.send(bytes.to_vec()).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+            while let Ok(bytes) = conn.read_datagram().await {
+                if tx.send(bytes.to_vec()).await.is_err() {
+                    break;
                 }
             }
         });
