@@ -12,6 +12,12 @@ pub enum TransportType {
     WebSocket,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TransportStats {
+    pub lost_packets: u64,
+    pub sent_packets: u64,
+}
+
 pub trait Session: Send + Sync {
     fn send_unreliable(&self, data: &[u8]) -> Result<(), SendError>;
 
@@ -22,6 +28,8 @@ pub trait Session: Send + Sync {
     fn transport_type(&self) -> TransportType;
 
     fn rtt(&self) -> Duration;
+
+    fn transport_stats(&self) -> TransportStats;
 
     fn close(&self, reason: &str);
 }
@@ -88,6 +96,14 @@ impl Session for QuicSession {
 
     fn rtt(&self) -> Duration {
         self.connection.rtt()
+    }
+
+    fn transport_stats(&self) -> TransportStats {
+        let stats = self.connection.stats();
+        TransportStats {
+            lost_packets: stats.path.lost_packets,
+            sent_packets: stats.path.sent_packets,
+        }
     }
 
     fn close(&self, reason: &str) {

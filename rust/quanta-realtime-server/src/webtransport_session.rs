@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use crate::error::SendError;
-use crate::session::{Session, TransportType};
+use crate::session::{Session, TransportStats, TransportType};
 
 pub struct WebTransportSession {
     session: web_transport_quinn::Session,
@@ -59,6 +59,10 @@ impl Session for WebTransportSession {
 
     fn rtt(&self) -> Duration {
         self.session.rtt()
+    }
+
+    fn transport_stats(&self) -> TransportStats {
+        TransportStats::default()
     }
 
     fn close(&self, reason: &str) {
