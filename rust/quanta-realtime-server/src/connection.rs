@@ -6,6 +6,9 @@ use crate::auth::{run_auth_handshake, AuthValidator};
 use crate::config::EndpointConfig;
 use crate::error::EndpointError;
 use crate::session::{QuicSession, Session};
+use crate::webtransport_session::WebTransportSession;
+
+const CLOSE_AUTH_FAILURE: quinn::VarInt = quinn::VarInt::from_u32(2);
 
 static CONNECTION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -40,11 +43,7 @@ pub async fn handle_connection(
 
     match alpn.as_deref() {
         Some(b"quanta-v1") => handle_quanta_v1(connection, validator, config).await,
-        Some(b"h3") => {
-            warn!(remote = %connection.remote_address(), "h3 ALPN not yet implemented");
-            connection.close(1u32.into(), b"h3 not implemented");
-            Err(EndpointError::Auth("h3 ALPN not yet implemented".into()))
-        }
+        Some(b"h3") => handle_h3_webtransport(connection, validator, config).await,
         _ => {
             warn!(remote = %connection.remote_address(), alpn = %alpn_str, "unknown ALPN");
             connection.close(1u32.into(), b"unknown ALPN");
@@ -70,11 +69,11 @@ async fn handle_quanta_v1(
     let response = match result {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => {
-            connection.close(2u32.into(), b"auth failed");
+            connection.close(CLOSE_AUTH_FAILURE, b"auth failed");
             return Err(e);
         }
         Err(_elapsed) => {
-            connection.close(2u32.into(), b"auth timeout");
+            connection.close(CLOSE_AUTH_FAILURE, b"auth timeout");
             return Err(EndpointError::Auth("auth timeout".into()));
         }
     };
@@ -94,4 +93,58 @@ async fn handle_quanta_v1(
     );
 
     Ok(Box::new(QuicSession::new(connection)))
+}
+
+async fn handle_h3_webtransport(
+    connection: quinn::Connection,
+    validator: &dyn AuthValidator,
+    config: &EndpointConfig,
+) -> Result<Box<dyn Session>, EndpointError> {
+    let result = tokio::time::timeout(config.auth_timeout, async {
+        let request = web_transport_quinn::Request::accept(connection.clone())
+            .await
+            .map_err(|e| EndpointError::WebTransport(e.to_string()))?;
+
+        let session = request
+            .ok()
+            .await
+            .map_err(|e| EndpointError::WebTransport(e.to_string()))?;
+
+        let (mut send, mut recv) = session
+            .accept_bi()
+            .await
+            .map_err(|e| EndpointError::WebTransport(e.to_string()))?;
+
+        let response = run_auth_handshake(&mut send, &mut recv, validator).await?;
+        Ok::<_, EndpointError>((session, response))
+    })
+    .await;
+
+    let (session, response) = match result {
+        Ok(Ok(pair)) => pair,
+        Ok(Err(e)) => {
+            connection.close(CLOSE_AUTH_FAILURE, b"auth failed");
+            return Err(e);
+        }
+        Err(_elapsed) => {
+            connection.close(CLOSE_AUTH_FAILURE, b"auth timeout");
+            return Err(EndpointError::Auth("auth timeout".into()));
+        }
+    };
+
+    if !response.accepted {
+        session.close(CLOSE_AUTH_FAILURE.into_inner() as u32, b"auth rejected");
+        return Err(EndpointError::Auth(format!(
+            "rejected: {}",
+            response.reason
+        )));
+    }
+
+    info!(
+        session_id = response.session_id,
+        remote = %connection.remote_address(),
+        "webtransport auth succeeded"
+    );
+
+    Ok(Box::new(WebTransportSession::new(session)))
 }

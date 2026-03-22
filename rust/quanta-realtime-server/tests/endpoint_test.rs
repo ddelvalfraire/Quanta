@@ -196,8 +196,13 @@ async fn quic_handshake_with_quanta_v1_alpn() {
 }
 
 #[tokio::test]
-async fn alpn_routing_h3_gets_closed() {
-    let (addr, _session_rx, shutdown_tx, handle) = start_server(EndpointConfig::default()).await;
+async fn h3_without_webtransport_handshake_times_out() {
+    // A raw h3 ALPN client that doesn't complete the WebTransport CONNECT
+    // handshake should be closed after auth_timeout.
+    let mut config = EndpointConfig::default();
+    config.auth_timeout = Duration::from_millis(200);
+
+    let (addr, _session_rx, shutdown_tx, handle) = start_server(config).await;
     let client = build_test_client(&[b"h3"]);
 
     let connection = client

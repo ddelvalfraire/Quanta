@@ -22,6 +22,8 @@ pub trait Session: Send + Sync {
     fn transport_type(&self) -> TransportType;
 
     fn rtt(&self) -> Duration;
+
+    fn close(&self, reason: &str);
 }
 
 pub struct QuicSession {
@@ -86,5 +88,10 @@ impl Session for QuicSession {
 
     fn rtt(&self) -> Duration {
         self.connection.rtt()
+    }
+
+    fn close(&self, reason: &str) {
+        self.connection
+            .close(0u32.into(), reason.as_bytes());
     }
 }
