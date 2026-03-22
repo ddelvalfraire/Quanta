@@ -2586,6 +2586,7 @@ dependencies = [
  "crossbeam-channel",
  "futures-util",
  "governor",
+ "quanta-core-rs",
  "quinn",
  "rcgen",
  "rustc-hash",

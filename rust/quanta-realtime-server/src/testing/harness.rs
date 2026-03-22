@@ -99,6 +99,7 @@ impl TestHarnessBuilder {
     pub fn build(self) -> TestHarness {
         let (input_tx, input_rx) = crossbeam_channel::unbounded();
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
+        let (_bridge_tx, bridge_rx) = crossbeam_channel::unbounded();
         let shutdown = Arc::new(AtomicBool::new(false));
 
         let config = TickEngineConfig {
@@ -113,6 +114,7 @@ impl TestHarnessBuilder {
             config,
             wasm,
             input_rx,
+            bridge_rx,
             cmd_rx,
             shutdown.clone(),
         );

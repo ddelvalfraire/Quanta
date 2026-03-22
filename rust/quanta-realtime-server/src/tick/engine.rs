@@ -14,6 +14,32 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
+/// Maximum effects a single WASM `handle_message` call may produce.
+/// Prevents a misbehaving module from flooding deferred_sends or effects_out.
+const MAX_EFFECTS_PER_CALL: usize = 64;
+
+fn route_effects(
+    effects: Vec<TickEffect>,
+    bridge_cid: Option<CorrelationId>,
+) -> (Vec<BridgeEffect>, Vec<TickEffect>) {
+    let Some(cid) = bridge_cid else {
+        return (Vec::new(), effects);
+    };
+    let mut bridge = Vec::new();
+    let mut remaining = Vec::new();
+    for effect in effects {
+        if let TickEffect::Reply(payload) = effect {
+            bridge.push(BridgeEffect::BridgeReply {
+                correlation_id: cid,
+                payload,
+            });
+        } else {
+            remaining.push(effect);
+        }
+    }
+    (bridge, remaining)
+}
+
 /// The core tick loop engine for a simulation island.
 ///
 /// Executes a 6-phase tick loop with fixed timestep (Gaffer on Games pattern):
@@ -41,6 +67,7 @@ pub struct TickEngine {
     deferred_sends: Vec<DeferredSend>,
     wasm: Box<dyn WasmExecutor>,
     input_rx: crossbeam_channel::Receiver<ClientInput>,
+    bridge_rx: crossbeam_channel::Receiver<BridgeMessage>,
     cmd_rx: crossbeam_channel::Receiver<IslandCommand>,
     effects_out: Vec<BridgeEffect>,
     last_input_seq: HashMap<SessionId, u32>,
@@ -58,6 +85,7 @@ impl TickEngine {
         config: TickEngineConfig,
         wasm: Box<dyn WasmExecutor>,
         input_rx: crossbeam_channel::Receiver<ClientInput>,
+        bridge_rx: crossbeam_channel::Receiver<BridgeMessage>,
         cmd_rx: crossbeam_channel::Receiver<IslandCommand>,
         shutdown: Arc<AtomicBool>,
     ) -> Self {
@@ -72,6 +100,7 @@ impl TickEngine {
             deferred_sends: Vec::new(),
             wasm,
             input_rx,
+            bridge_rx,
             cmd_rx,
             effects_out: Vec::new(),
             last_input_seq: HashMap::new(),
@@ -359,19 +388,10 @@ impl TickEngine {
         self.effects_out.clear();
         self.timers.set_current_tick(self.tick);
 
-        // Phase 1: Drain inputs
         let inputs = self.phase1_drain_inputs();
-
-        // Phase 2: Fire timers
         let timer_messages = self.phase2_fire_timers();
-
-        // Phase 3: Build per-entity message queues
         let actor_queues = self.phase3_build_queues(&inputs, &timer_messages);
-
-        // Phase 4: Simulate
         let effect_batch = self.phase4_simulate(&actor_queues);
-
-        // Phase 5: Batch effects
         self.phase5_batch_effects(effect_batch);
 
         // Phase 6: Compute deltas (state snapshot for async processing)
@@ -486,7 +506,22 @@ impl TickEngine {
                 .push(TickMessage::Timer { name: name.clone() });
         }
 
-        // Priority 2: Bridge messages (separate channel, TODO for bridge integration)
+        // Priority 2: Bridge messages
+        while let Ok(msg) = self.bridge_rx.try_recv() {
+            let tick_msg = match msg.kind {
+                BridgeMessageKind::OneWay => TickMessage::Bridge {
+                    payload: msg.payload,
+                },
+                BridgeMessageKind::Request { correlation_id } => TickMessage::BridgeRequest {
+                    correlation_id,
+                    payload: msg.payload,
+                },
+                BridgeMessageKind::SagaFailed { correlation_id } => {
+                    TickMessage::SagaFailed { correlation_id }
+                }
+            };
+            queues.entry(msg.target_entity).or_default().push(tick_msg);
+        }
 
         // Priority 3: Client inputs
         for input in inputs {
@@ -521,11 +556,10 @@ impl TickEngine {
     ) -> Vec<(EntitySlot, Vec<TickEffect>)> {
         let mut effect_batch = Vec::new();
 
-        // Split borrows to satisfy the borrow checker:
-        // we need &mut self.wasm, &mut self.entities, and &mut self.fault_tracker simultaneously.
         let entities = &mut self.entities;
         let wasm = &mut self.wasm;
         let fault_tracker = &mut self.fault_tracker;
+        let effects_out = &mut self.effects_out;
         let tick = self.tick;
 
         for (entity_slot, messages) in actor_queues {
@@ -538,16 +572,42 @@ impl TickEngine {
             }
 
             for msg in messages {
+                let bridge_cid = if let TickMessage::BridgeRequest {
+                    correlation_id, ..
+                } = msg
+                {
+                    Some(*correlation_id)
+                } else {
+                    None
+                };
+
                 let current_state = entities[entity_slot].state.clone();
                 match wasm.call_handle_message(*entity_slot, &current_state, msg) {
-                    Ok(result) => {
+                    Ok(mut result) => {
                         if let Some(e) = entities.get_mut(entity_slot) {
                             e.dirty = e.state != result.state || e.dirty;
                             e.state = result.state;
                         }
-                        if !result.effects.is_empty() {
-                            effect_batch.push((*entity_slot, result.effects));
+
+                        if result.effects.len() > MAX_EFFECTS_PER_CALL {
+                            warn!(
+                                entity = entity_slot.0,
+                                count = result.effects.len(),
+                                max = MAX_EFFECTS_PER_CALL,
+                                "effect budget exceeded, truncating"
+                            );
+                            result.effects.truncate(MAX_EFFECTS_PER_CALL);
                         }
+
+                        if !result.effects.is_empty() {
+                            let (bridge_effects, remaining) =
+                                route_effects(result.effects, bridge_cid);
+                            effects_out.extend(bridge_effects);
+                            if !remaining.is_empty() {
+                                effect_batch.push((*entity_slot, remaining));
+                            }
+                        }
+
                         fault_tracker.record_success(entity_slot);
                     }
                     Err(trap) => {
@@ -601,6 +661,17 @@ impl TickEngine {
                     }
                     TickEffect::Reply(_payload) => {
                         // Route to client session (wired when transport is connected)
+                    }
+                    TickEffect::RequestRemote { target, payload } => {
+                        self.effects_out.push(BridgeEffect::RequestRemote {
+                            source_entity: source_slot,
+                            target,
+                            payload,
+                        });
+                    }
+                    TickEffect::FireAndForget { target, payload } => {
+                        self.effects_out
+                            .push(BridgeEffect::FireAndForget { target, payload });
                     }
                     TickEffect::StopSelf => {
                         entities_to_remove.push(source_slot);

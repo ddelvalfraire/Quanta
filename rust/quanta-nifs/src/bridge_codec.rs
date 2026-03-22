@@ -21,6 +21,10 @@ mod atoms {
         state_sync,
         heartbeat,
         capacity_report,
+        request,
+        response,
+        fire_and_forget,
+        saga_failed,
     }
 }
 
@@ -97,7 +101,7 @@ fn do_decode<'a>(env: Env<'a>, frame: &[u8]) -> Result<(Term<'a>, Term<'a>), Str
     Ok((header_term, payload_binary.encode(env)))
 }
 
-const MSG_TYPE_VARIANTS: [BridgeMsgType; 8] = [
+const MSG_TYPE_VARIANTS: [BridgeMsgType; 12] = [
     BridgeMsgType::ActivateIsland,
     BridgeMsgType::DeactivateIsland,
     BridgeMsgType::PlayerJoin,
@@ -106,9 +110,13 @@ const MSG_TYPE_VARIANTS: [BridgeMsgType; 8] = [
     BridgeMsgType::StateSync,
     BridgeMsgType::Heartbeat,
     BridgeMsgType::CapacityReport,
+    BridgeMsgType::Request,
+    BridgeMsgType::Response,
+    BridgeMsgType::FireAndForget,
+    BridgeMsgType::SagaFailed,
 ];
 
-fn msg_type_atoms() -> [Atom; 8] {
+fn msg_type_atoms() -> [Atom; 12] {
     [
         atoms::activate_island(),
         atoms::deactivate_island(),
@@ -118,6 +126,10 @@ fn msg_type_atoms() -> [Atom; 8] {
         atoms::state_sync(),
         atoms::heartbeat(),
         atoms::capacity_report(),
+        atoms::request(),
+        atoms::response(),
+        atoms::fire_and_forget(),
+        atoms::saga_failed(),
     ]
 }
 
@@ -143,6 +155,10 @@ fn encode_msg_type_atom<'a>(env: Env<'a>, msg_type: BridgeMsgType) -> Term<'a> {
         BridgeMsgType::StateSync => atoms::state_sync().encode(env),
         BridgeMsgType::Heartbeat => atoms::heartbeat().encode(env),
         BridgeMsgType::CapacityReport => atoms::capacity_report().encode(env),
+        BridgeMsgType::Request => atoms::request().encode(env),
+        BridgeMsgType::Response => atoms::response().encode(env),
+        BridgeMsgType::FireAndForget => atoms::fire_and_forget().encode(env),
+        BridgeMsgType::SagaFailed => atoms::saga_failed().encode(env),
     }
 }
 

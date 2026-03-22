@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod bridge_rpc;
 pub mod checkpoint;
 pub mod capacity;
 pub mod command;

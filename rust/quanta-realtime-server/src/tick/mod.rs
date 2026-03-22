@@ -7,7 +7,8 @@ pub use engine::TickEngine;
 pub use fault::{ActorHealthState, FaultTracker};
 pub use timer::TimerManager;
 pub use types::{
-    BridgeEffect, ClientInput, DeferredSend, DeltaWorkItem, EntityState, HandleResult,
-    NoopWasmExecutor, SessionId, TickEffect, TickEngineConfig, TickMessage, WasmExecutor, WasmTrap,
+    BridgeEffect, BridgeMessage, BridgeMessageKind, ClientInput, CorrelationId, DeferredSend,
+    DeltaWorkItem, EntityState, HandleResult, NoopWasmExecutor, SessionId, TickEffect,
+    TickEngineConfig, TickMessage, WasmExecutor, WasmTrap,
 };
 

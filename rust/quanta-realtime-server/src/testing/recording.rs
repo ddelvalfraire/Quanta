@@ -44,6 +44,20 @@ impl From<&BridgeEffect> for RecordedEffect {
             BridgeEffect::EmitTelemetry { event } => RecordedEffect::EmitTelemetry {
                 event: event.clone(),
             },
+            BridgeEffect::RequestRemote { target, payload, .. } => {
+                RecordedEffect::SendRemote {
+                    target: target.clone(),
+                    payload: payload.clone(),
+                }
+            }
+            BridgeEffect::FireAndForget { target, payload } => RecordedEffect::SendRemote {
+                target: target.clone(),
+                payload: payload.clone(),
+            },
+            BridgeEffect::BridgeReply { .. } => RecordedEffect::SendRemote {
+                target: String::new(),
+                payload: Vec::new(),
+            },
         }
     }
 }

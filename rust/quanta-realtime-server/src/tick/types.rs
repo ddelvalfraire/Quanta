@@ -1,6 +1,8 @@
 use crate::types::EntitySlot;
 use std::collections::BTreeMap;
 
+pub type CorrelationId = [u8; 16];
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionId(pub String);
 
@@ -32,6 +34,20 @@ pub struct ClientInput {
     pub payload: Vec<u8>,
 }
 
+#[derive(Debug, Clone)]
+pub struct BridgeMessage {
+    pub target_entity: EntitySlot,
+    pub kind: BridgeMessageKind,
+    pub payload: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub enum BridgeMessageKind {
+    OneWay,
+    Request { correlation_id: CorrelationId },
+    SagaFailed { correlation_id: CorrelationId },
+}
+
 /// Messages delivered to entities during a tick.
 /// Added to per-entity queues in priority order: Timer > Bridge > Input > Deferred.
 #[derive(Debug, Clone)]
@@ -47,6 +63,13 @@ pub enum TickMessage {
         source: EntitySlot,
         payload: Vec<u8>,
     },
+    BridgeRequest {
+        correlation_id: CorrelationId,
+        payload: Vec<u8>,
+    },
+    SagaFailed {
+        correlation_id: CorrelationId,
+    },
 }
 
 /// Effects returned from WASM handle_message execution.
@@ -60,6 +83,8 @@ pub enum TickEffect {
     CancelTimer(String),
     EmitTelemetry { event: String },
     StopSelf,
+    RequestRemote { target: String, payload: Vec<u8> },
+    FireAndForget { target: String, payload: Vec<u8> },
 }
 
 #[derive(Debug, Clone)]
@@ -142,6 +167,19 @@ pub enum BridgeEffect {
     },
     EmitTelemetry {
         event: String,
+    },
+    RequestRemote {
+        source_entity: EntitySlot,
+        target: String,
+        payload: Vec<u8>,
+    },
+    FireAndForget {
+        target: String,
+        payload: Vec<u8>,
+    },
+    BridgeReply {
+        correlation_id: CorrelationId,
+        payload: Vec<u8>,
     },
 }
 
