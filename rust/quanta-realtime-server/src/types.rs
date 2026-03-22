@@ -19,6 +19,9 @@ impl From<&str> for IslandId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct EntitySlot(pub u32);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClientIndex(pub u16);
+
 pub type DeltaBytes = Vec<u8>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

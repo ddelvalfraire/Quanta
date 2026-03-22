@@ -7,6 +7,7 @@ pub mod connection;
 pub mod degraded;
 pub mod endpoint;
 pub mod error;
+pub mod interest;
 pub mod island;
 pub mod manager;
 pub mod pacing;
