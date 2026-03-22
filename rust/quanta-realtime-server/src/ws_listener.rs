@@ -1,21 +1,24 @@
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use futures_util::{SinkExt, StreamExt};
+use governor::{Quota, RateLimiter};
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, watch};
-use tracing::{info, warn};
 use tokio_tungstenite::tungstenite::Message;
+use tracing::{info, warn};
 
 use crate::auth::{AuthRequest, AuthValidator};
 use crate::config::EndpointConfig;
 use crate::error::EndpointError;
 use crate::session::Session;
-use crate::ws_session::WsSession;
+use crate::ws_session::{decode_frame, WsSession};
 
 pub struct WsListener {
     listener: TcpListener,
     config: EndpointConfig,
+    rate_limiter: governor::DefaultDirectRateLimiter,
 }
 
 impl WsListener {
@@ -23,8 +26,19 @@ impl WsListener {
         let listener = TcpListener::bind(addr)
             .await
             .map_err(EndpointError::Bind)?;
+
+        let quota = Quota::per_second(
+            NonZeroU32::new(config.rate_limit_per_sec)
+                .expect("rate_limit_per_sec must be > 0"),
+        );
+        let rate_limiter = RateLimiter::direct(quota);
+
         info!(addr = %listener.local_addr().unwrap_or(addr), "WebSocket listener bound");
-        Ok(Self { listener, config })
+        Ok(Self {
+            listener,
+            config,
+            rate_limiter,
+        })
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, EndpointError> {
@@ -47,6 +61,12 @@ impl WsListener {
                             continue;
                         }
                     };
+
+                    if self.rate_limiter.check().is_err() {
+                        warn!(remote = %addr, "ws rate limited, dropping connection");
+                        drop(stream);
+                        continue;
+                    }
 
                     let validator = validator.clone();
                     let config = self.config.clone();
@@ -126,13 +146,16 @@ async fn handle_ws_connection(
         "ws auth succeeded"
     );
 
-    // Set up bidirectional channels for the WsSession.
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(256);
     let (inbound_tx, inbound_rx) = mpsc::channel::<Vec<u8>>(256);
 
-    // Background write task: outbound channel → WS sink.
+    // Background write task: outbound channel -> WS sink.
+    // An empty Vec is the shutdown sentinel from WsSession::close().
     tokio::spawn(async move {
         while let Some(data) = outbound_rx.recv().await {
+            if data.is_empty() {
+                break;
+            }
             if sink.send(Message::Binary(data.into())).await.is_err() {
                 break;
             }
@@ -140,18 +163,20 @@ async fn handle_ws_connection(
         let _ = sink.send(Message::Close(None)).await;
     });
 
-    // Background read task: WS stream → inbound channel.
+    // Background read task: WS stream -> inbound channel.
     tokio::spawn(async move {
         while let Some(Ok(msg)) = stream.next().await {
             match msg {
-                Message::Binary(data) => {
-                    // Strip the flags byte before delivering.
-                    if data.len() > 1 {
-                        if inbound_tx.send(data[1..].to_vec()).await.is_err() {
+                Message::Binary(data) => match decode_frame(&data) {
+                    Some(payload) => {
+                        if inbound_tx.send(payload.to_vec()).await.is_err() {
                             break;
                         }
                     }
-                }
+                    None => {
+                        warn!("ws: dropping malformed frame ({} bytes)", data.len());
+                    }
+                },
                 Message::Close(_) => break,
                 _ => continue,
             }

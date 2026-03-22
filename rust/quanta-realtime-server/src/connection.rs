@@ -8,6 +8,8 @@ use crate::error::EndpointError;
 use crate::session::{QuicSession, Session};
 use crate::webtransport_session::WebTransportSession;
 
+const CLOSE_AUTH_FAILURE: quinn::VarInt = quinn::VarInt::from_u32(2);
+
 static CONNECTION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub async fn handle_connection(
@@ -67,11 +69,11 @@ async fn handle_quanta_v1(
     let response = match result {
         Ok(Ok(resp)) => resp,
         Ok(Err(e)) => {
-            connection.close(2u32.into(), b"auth failed");
+            connection.close(CLOSE_AUTH_FAILURE, b"auth failed");
             return Err(e);
         }
         Err(_elapsed) => {
-            connection.close(2u32.into(), b"auth timeout");
+            connection.close(CLOSE_AUTH_FAILURE, b"auth timeout");
             return Err(EndpointError::Auth("auth timeout".into()));
         }
     };
@@ -121,17 +123,17 @@ async fn handle_h3_webtransport(
     let (session, response) = match result {
         Ok(Ok(pair)) => pair,
         Ok(Err(e)) => {
-            connection.close(2u32.into(), b"auth failed");
+            connection.close(CLOSE_AUTH_FAILURE, b"auth failed");
             return Err(e);
         }
         Err(_elapsed) => {
-            connection.close(2u32.into(), b"auth timeout");
+            connection.close(CLOSE_AUTH_FAILURE, b"auth timeout");
             return Err(EndpointError::Auth("auth timeout".into()));
         }
     };
 
     if !response.accepted {
-        session.close(2, b"auth rejected");
+        session.close(CLOSE_AUTH_FAILURE.into_inner() as u32, b"auth rejected");
         return Err(EndpointError::Auth(format!(
             "rejected: {}",
             response.reason

@@ -10,12 +10,12 @@ pub mod island;
 pub mod manager;
 pub mod session;
 pub mod stubs;
-pub mod webtransport_session;
-pub mod ws_listener;
-pub mod ws_session;
 pub mod tls;
 pub mod traits;
 pub mod types;
+pub mod webtransport_session;
+pub mod ws_listener;
+pub mod ws_session;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use auth::AcceptAllValidator;
