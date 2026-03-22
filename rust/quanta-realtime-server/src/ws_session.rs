@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::error::SendError;
-use crate::session::{Session, TransportType};
+use crate::session::{Session, TransportStats, TransportType};
 
 pub const FLAG_RELIABLE: u8 = 0x00;
 pub const FLAG_UNRELIABLE: u8 = 0x01;
@@ -70,6 +70,10 @@ impl Session for WsSession {
 
     fn rtt(&self) -> Duration {
         WS_RTT_ESTIMATE
+    }
+
+    fn transport_stats(&self) -> TransportStats {
+        TransportStats::default()
     }
 
     /// Sends a shutdown sentinel to the background write task, which closes the socket.

@@ -37,6 +37,9 @@ impl QuicEndpoint {
         let rate_limiter = RateLimiter::direct(quota);
 
         info!(addr = %endpoint.local_addr().unwrap_or(addr), "QUIC endpoint bound");
+        if !cfg!(target_os = "linux") {
+            info!("GSO not available on this platform");
+        }
 
         Ok(Self {
             endpoint,
