@@ -1,9 +1,13 @@
 use crate::types::EntitySlot;
 
+/// Maximum supported entity slots. Prevents accidental OOM from huge slot values.
+const MAX_ENTITIES: u32 = 65_536;
+
 /// SoA (Structure of Arrays) position and velocity table for cache-friendly access.
 ///
-/// 24 bytes per entity (6 x f32). For 2000 entities this is ~47KB,
-/// fitting comfortably in L1/L2 cache for bulk iteration.
+/// Positions alone are 12 bytes per entity (3 x f32) — 24KB for 2000 entities
+/// fits L1 cache. With velocity the full table is 24 bytes per entity (~47KB
+/// for 2000 entities).
 pub struct PositionTable {
     pub x: Vec<f32>,
     pub y: Vec<f32>,
@@ -26,7 +30,15 @@ impl PositionTable {
     }
 
     /// Grow all vectors so that `slot.0` is a valid index.
+    ///
+    /// Panics if `slot.0 >= MAX_ENTITIES` (65536).
     pub fn ensure_capacity(&mut self, slot: EntitySlot) {
+        assert!(
+            slot.0 < MAX_ENTITIES,
+            "EntitySlot({}) exceeds MAX_ENTITIES ({})",
+            slot.0,
+            MAX_ENTITIES
+        );
         let needed = slot.0 as usize + 1;
         if self.x.len() < needed {
             self.x.resize(needed, 0.0);
@@ -131,11 +143,17 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "exceeds MAX_ENTITIES")]
+    fn ensure_capacity_rejects_huge_slot() {
+        let mut table = PositionTable::new();
+        table.ensure_capacity(EntitySlot(MAX_ENTITIES));
+    }
+
+    #[test]
     fn soa_contiguity() {
         let mut table = PositionTable::new();
         table.ensure_capacity(EntitySlot(9));
 
-        // Verify Vec elements are contiguous in memory
         for i in 0..9 {
             unsafe {
                 assert_eq!(

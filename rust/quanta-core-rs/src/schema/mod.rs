@@ -8,6 +8,7 @@ pub mod position;
 pub mod types;
 pub mod validation;
 
+pub use position::PositionLayout;
 pub use types::*;
 
 use layout::LayoutResult;

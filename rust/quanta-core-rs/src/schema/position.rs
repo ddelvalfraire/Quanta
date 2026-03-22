@@ -1,4 +1,5 @@
 use super::{CompiledSchema, QuantizationParams};
+use crate::delta::encoder::dequantize;
 
 /// Cached field slot for direct bit extraction without iteration.
 #[derive(Debug, Clone)]
@@ -21,8 +22,7 @@ pub struct PositionLayout {
 }
 
 impl PositionLayout {
-    /// Build a `PositionLayout` by scanning `schema` for fields named
-    /// `pos-x`, `pos-y`, `pos-z`. Returns `None` if any are missing.
+    /// Returns `None` if any position field is missing.
     pub fn from_schema(schema: &CompiledSchema) -> Option<Self> {
         let mut x = None;
         let mut y = None;
@@ -50,9 +50,6 @@ impl PositionLayout {
     }
 
     /// Extract `[x, y, z]` from bit-packed state using cached offsets.
-    ///
-    /// Uses direct byte math at known offsets rather than sequential
-    /// `BitReader` iteration over all fields.
     pub fn extract(&self, state: &[u8]) -> [f32; 3] {
         [
             Self::read_field(&self.x, state),
@@ -64,10 +61,7 @@ impl PositionLayout {
     fn read_field(slot: &FieldSlot, state: &[u8]) -> f32 {
         let raw = read_bits_at(state, slot.bit_offset, slot.bit_width);
         match &slot.quantization {
-            Some(params) => {
-                let masked = raw & params.mask;
-                (params.min + (masked as f64) * params.precision) as f32
-            }
+            Some(params) => dequantize(raw, params) as f32,
             None => f32::from_bits(raw as u32),
         }
     }
@@ -75,12 +69,17 @@ impl PositionLayout {
 
 /// Read `bit_width` bits starting at `bit_offset` from `data` (MSB-first).
 ///
-/// Standalone function for direct offset reads without `BitReader` state.
+/// Returns 0 if the requested range extends past the end of `data`.
 pub fn read_bits_at(data: &[u8], bit_offset: u32, bit_width: u8) -> u64 {
-    debug_assert!(
-        (1..=64).contains(&bit_width),
-        "bit_width must be 1..=64, got {bit_width}"
-    );
+    if bit_width == 0 || bit_width > 64 {
+        return 0;
+    }
+
+    let end_bit = bit_offset as u64 + bit_width as u64;
+    let needed_bytes = ((end_bit + 7) / 8) as usize;
+    if data.len() < needed_bytes {
+        return 0;
+    }
 
     let mut value: u64 = 0;
     let mut bits_left = bit_width;
@@ -164,7 +163,6 @@ record entity-state {
         let schema = quantized_pos_schema();
         let layout = PositionLayout::from_schema(&schema).unwrap();
 
-        // Quantize positions and write state
         let px = &schema.fields.iter().find(|f| f.name == "pos-x").unwrap();
         let py = &schema.fields.iter().find(|f| f.name == "pos-y").unwrap();
         let pz = &schema.fields.iter().find(|f| f.name == "pos-z").unwrap();
@@ -176,7 +174,6 @@ record entity-state {
         let vy = crate::delta::encoder::quantize(-500.0, qy).unwrap();
         let vz = crate::delta::encoder::quantize(9999.99, qz).unwrap();
 
-        // Build values array in field order
         let mut values = vec![0u64; schema.fields.len()];
         for (i, field) in schema.fields.iter().enumerate() {
             match field.name.as_str() {
@@ -191,7 +188,6 @@ record entity-state {
         let state = write_state(&schema, &values);
         let [ex, ey, ez] = layout.extract(&state);
 
-        // Verify against full decode
         let full = read_state(&schema, &state).unwrap();
         let fx_idx = schema.fields.iter().position(|f| f.name == "pos-x").unwrap();
         let fy_idx = schema.fields.iter().position(|f| f.name == "pos-y").unwrap();
@@ -267,33 +263,23 @@ record entity-state {
 "#;
         let (schema, _) =
             compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
-        // Missing pos-z
         assert!(PositionLayout::from_schema(&schema).is_none());
     }
 
     #[test]
     fn read_bits_at_various_offsets() {
-        // Pack known values at specific offsets and verify read_bits_at
         let data = [0b10110011, 0b01010101, 0b11110000];
 
-        // First 4 bits: 1011 = 11
         assert_eq!(read_bits_at(&data, 0, 4), 0b1011);
-        // Next 4 bits: 0011 = 3
         assert_eq!(read_bits_at(&data, 4, 4), 0b0011);
-        // Cross-byte: bits 6..14 = 11_01010101 → wait, bits 6..14 = "11 0101 01" = 0b11010101
         assert_eq!(read_bits_at(&data, 6, 8), 0b11010101);
-        // Single bit at offset 0: 1
         assert_eq!(read_bits_at(&data, 0, 1), 1);
-        // Single bit at offset 1: 0
         assert_eq!(read_bits_at(&data, 1, 1), 0);
-        // 16 bits at offset 0
         assert_eq!(read_bits_at(&data, 0, 16), 0b10110011_01010101);
     }
 
     #[test]
     fn read_bits_at_matches_sequential_read() {
-        // Build a state with known bit layout and verify read_bits_at matches
-        // what BitReader produces at the same offsets
         use crate::delta::BitReader;
 
         let data = [0xDE, 0xAD, 0xBE, 0xEF, 0x42];
@@ -311,5 +297,30 @@ record entity-state {
             );
             offset += width as u32;
         }
+    }
+
+    #[test]
+    fn read_bits_at_short_buffer_returns_zero() {
+        let data = [0xFF];
+        // Requesting bits past the end of the buffer
+        assert_eq!(read_bits_at(&data, 0, 16), 0);
+        assert_eq!(read_bits_at(&data, 8, 1), 0);
+        // Empty data
+        assert_eq!(read_bits_at(&[], 0, 8), 0);
+    }
+
+    #[test]
+    fn read_bits_at_zero_width_returns_zero() {
+        let data = [0xFF];
+        assert_eq!(read_bits_at(&data, 0, 0), 0);
+    }
+
+    #[test]
+    fn extract_from_short_state_does_not_panic() {
+        let schema = quantized_pos_schema();
+        let layout = PositionLayout::from_schema(&schema).unwrap();
+        // Truncated state — must not panic (returns fallback values)
+        let _ = layout.extract(&[0u8; 2]);
+        let _ = layout.extract(&[]);
     }
 }
