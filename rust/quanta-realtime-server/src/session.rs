@@ -5,7 +5,6 @@ use tokio::sync::mpsc;
 
 use crate::error::SendError;
 
-/// Transport protocol type for a session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportType {
     Quic,
@@ -13,13 +12,9 @@ pub enum TransportType {
     WebSocket,
 }
 
-/// Cross-transport session interface.
-///
-/// Consumed by T49 (WebTransport), T51 (reconnection), T57 (zone transitions).
 pub trait Session: Send + Sync {
     fn send_unreliable(&self, data: &[u8]) -> Result<(), SendError>;
 
-    /// Stub for now — full stream multiplexing belongs to T49.
     fn send_reliable(&self, stream_id: u32, data: &[u8]) -> Result<(), SendError>;
 
     fn recv_datagram(&self) -> Option<Vec<u8>>;
@@ -29,17 +24,12 @@ pub trait Session: Send + Sync {
     fn rtt(&self) -> Duration;
 }
 
-/// QUIC session backed by a `quinn::Connection`.
-///
-/// A background task drains datagrams from the Quinn connection into an
-/// mpsc channel, allowing `recv_datagram` to be sync.
 pub struct QuicSession {
     connection: quinn::Connection,
     datagram_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
 }
 
 impl QuicSession {
-    /// Create a new QuicSession, spawning a background datagram reader task.
     pub fn new(connection: quinn::Connection) -> Self {
         let (tx, rx) = mpsc::channel(256);
         let conn = connection.clone();
@@ -83,7 +73,6 @@ impl Session for QuicSession {
     }
 
     fn send_reliable(&self, _stream_id: u32, _data: &[u8]) -> Result<(), SendError> {
-        // Stub — full stream multiplexing belongs to T49
         Err(SendError::StreamClosed)
     }
 

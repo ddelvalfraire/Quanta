@@ -1,6 +1,5 @@
 use std::fmt;
 
-/// Errors produced by the QUIC endpoint.
 #[derive(Debug)]
 pub enum EndpointError {
     Tls(String),
@@ -24,7 +23,6 @@ impl fmt::Display for EndpointError {
 
 impl std::error::Error for EndpointError {}
 
-/// Errors produced when sending data on a session.
 #[derive(Debug)]
 pub enum SendError {
     DatagramTooLarge { size: usize, max: usize },

@@ -1,8 +1,3 @@
-//! QUIC realtime transport server for the Quanta platform.
-//!
-//! Provides the endpoint, session, auth, and TLS plumbing for
-//! direct QUIC connections (quanta-v1 ALPN) with WebTransport planned.
-
 pub mod auth;
 pub mod config;
 pub mod connection;

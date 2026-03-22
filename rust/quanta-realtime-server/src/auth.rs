@@ -2,17 +2,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::error::EndpointError;
 
-/// Maximum auth request size in bytes.
 const MAX_AUTH_REQUEST_BYTES: usize = 65_536;
 
-/// Client auth request sent on the first bidi stream.
 #[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
 pub struct AuthRequest {
     pub token: String,
     pub client_version: String,
 }
 
-/// Server auth response.
 #[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
 pub struct AuthResponse {
     pub session_id: u64,
@@ -20,12 +17,10 @@ pub struct AuthResponse {
     pub reason: String,
 }
 
-/// Pluggable auth validator.
 pub trait AuthValidator: Send + Sync {
     fn validate(&self, req: &AuthRequest) -> Result<AuthResponse, EndpointError>;
 }
 
-/// Test validator that accepts all connections.
 #[cfg(any(test, feature = "test-utils"))]
 pub struct AcceptAllValidator {
     counter: std::sync::atomic::AtomicU64,
@@ -54,12 +49,6 @@ impl AuthValidator for AcceptAllValidator {
     }
 }
 
-/// Run the auth handshake on a bidi stream.
-///
-/// Protocol: read `[len:4 BE][bitcode AuthRequest]`, validate,
-/// write `[len:4 BE][bitcode AuthResponse]`.
-///
-/// The caller is responsible for applying a timeout around this function.
 pub async fn run_auth_handshake(
     send: &mut (impl AsyncWrite + Unpin),
     recv: &mut (impl AsyncRead + Unpin),

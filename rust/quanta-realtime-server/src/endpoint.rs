@@ -13,7 +13,6 @@ use crate::error::EndpointError;
 use crate::session::Session;
 use crate::tls::{build_server_config, TlsConfig};
 
-/// QUIC server endpoint.
 pub struct QuicEndpoint {
     endpoint: quinn::Endpoint,
     config: EndpointConfig,
@@ -21,7 +20,6 @@ pub struct QuicEndpoint {
 }
 
 impl QuicEndpoint {
-    /// Bind a QUIC endpoint to the given address.
     pub fn bind(
         addr: SocketAddr,
         config: EndpointConfig,
@@ -47,17 +45,12 @@ impl QuicEndpoint {
         })
     }
 
-    /// Returns the local address the endpoint is bound to.
     pub fn local_addr(&self) -> Result<SocketAddr, EndpointError> {
         self.endpoint
             .local_addr()
             .map_err(EndpointError::Bind)
     }
 
-    /// Run the accept loop until shutdown is signalled.
-    ///
-    /// Authenticated sessions are sent through `session_tx` for the
-    /// application layer to consume (T50 pacing, T51 reconnection, etc).
     pub async fn run(
         self,
         validator: Arc<dyn AuthValidator>,

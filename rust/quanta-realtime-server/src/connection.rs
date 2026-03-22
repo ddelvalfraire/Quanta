@@ -7,15 +7,8 @@ use crate::config::EndpointConfig;
 use crate::error::EndpointError;
 use crate::session::{QuicSession, Session};
 
-/// Monotonic counter for pre-auth connection logging.
 static CONNECTION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-/// Handle an incoming QUIC connection.
-///
-/// 1. Accepts the connection
-/// 2. Reads ALPN from handshake data
-/// 3. Runs auth handshake on the first bidi stream
-/// 4. Creates a QuicSession on success
 pub async fn handle_connection(
     incoming: quinn::Incoming,
     validator: &dyn AuthValidator,
@@ -48,7 +41,6 @@ pub async fn handle_connection(
     match alpn.as_deref() {
         Some(b"quanta-v1") => handle_quanta_v1(connection, validator, config).await,
         Some(b"h3") => {
-            // WebTransport upgrade — stub for T49
             warn!(remote = %connection.remote_address(), "h3 ALPN not yet implemented");
             connection.close(1u32.into(), b"h3 not implemented");
             Err(EndpointError::Auth("h3 ALPN not yet implemented".into()))

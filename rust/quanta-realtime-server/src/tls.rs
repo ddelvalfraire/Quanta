@@ -6,21 +6,15 @@ use tracing::warn;
 
 use crate::error::EndpointError;
 
-/// ALPN protocols supported by the server.
 pub const ALPN_PROTOCOLS: &[&[u8]] = &[b"h3", b"quanta-v1"];
 
-/// TLS certificate source.
 pub enum TlsConfig {
-    /// Load cert and key from PEM files.
     File {
         cert_path: String,
         key_path: String,
     },
-    /// Generate a self-signed certificate (dev/test only).
     SelfSigned,
 }
-
-/// Build a Quinn `ServerConfig` from TLS config and transport config.
 pub fn build_server_config(
     tls: &TlsConfig,
     transport: quinn::TransportConfig,
@@ -42,8 +36,6 @@ pub fn build_server_config(
         .map_err(|e| EndpointError::Tls(e.to_string()))?;
 
     rustls_config.alpn_protocols = ALPN_PROTOCOLS.iter().map(|&p| p.to_vec()).collect();
-    // TODO: 0-RTT requires application-level replay protection before enabling.
-    // See https://www.rfc-editor.org/rfc/rfc9001#section-9.2
 
     let quic_config = QuicServerConfig::try_from(rustls_config)
         .map_err(|e| EndpointError::Tls(e.to_string()))?;
@@ -74,7 +66,6 @@ fn load_pem_files(
     Ok((certs, key))
 }
 
-/// Generate a self-signed certificate for localhost (dev/test).
 fn generate_self_signed(
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), EndpointError> {
     let rcgen::CertifiedKey { cert, key_pair } =

@@ -4,7 +4,6 @@ use std::time::Duration;
 use quinn::congestion::BbrConfig;
 use quinn::{IdleTimeout, TransportConfig, VarInt};
 
-/// Configuration for a QUIC endpoint.
 #[derive(Debug, Clone)]
 pub struct EndpointConfig {
     pub idle_timeout: Duration,
@@ -35,7 +34,6 @@ impl Default for EndpointConfig {
 }
 
 impl EndpointConfig {
-    /// Build a Quinn transport config from these settings.
     pub fn build_transport_config(&self) -> TransportConfig {
         let mut transport = TransportConfig::default();
 
