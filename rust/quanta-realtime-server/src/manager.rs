@@ -5,7 +5,11 @@ use crate::config::ServerConfig;
 use crate::island::handle::{IslandHandle, ThreadModel};
 use crate::island::registry::IslandRegistry;
 use crate::island::state_machine::IslandState;
+use crate::tick::types::{ClientInput, NoopWasmExecutor, TickEngineConfig};
+use crate::tick::TickEngine;
 use crate::types::IslandManifest;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::info;
 
@@ -13,6 +17,7 @@ pub struct IslandManager {
     config: ServerConfig,
     registry: IslandRegistry,
     cmd_rx: mpsc::Receiver<ManagerCommand>,
+    shutdown: Arc<AtomicBool>,
 }
 
 impl IslandManager {
@@ -21,6 +26,7 @@ impl IslandManager {
             config,
             registry: IslandRegistry::new(),
             cmd_rx,
+            shutdown: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -45,6 +51,7 @@ impl IslandManager {
                 }
             }
         }
+        self.shutdown.store(true, Ordering::Relaxed);
         info!("island manager shutting down");
     }
 
@@ -65,10 +72,17 @@ impl IslandManager {
         };
 
         let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded::<IslandCommand>();
+        let (input_tx, input_rx) = crossbeam_channel::bounded::<ClientInput>(256);
         let island_id = manifest.island_id.clone();
+        let shutdown = self.shutdown.clone();
 
+        let engine_island_id = island_id.clone();
         let join_handle = std::thread::spawn(move || {
-            island_thread_loop(cmd_rx);
+            let config = TickEngineConfig::default();
+            let wasm = Box::new(NoopWasmExecutor);
+            let mut engine =
+                TickEngine::new(engine_island_id, config, wasm, input_rx, cmd_rx, shutdown);
+            engine.run();
         });
 
         let handle = IslandHandle {
@@ -77,6 +91,7 @@ impl IslandManager {
             thread_model,
             entity_count: manifest.entity_count,
             command_tx: cmd_tx,
+            input_tx,
             join_handle: Some(join_handle),
         };
 
@@ -151,16 +166,11 @@ impl IslandManager {
     }
 }
 
-fn island_thread_loop(rx: crossbeam_channel::Receiver<IslandCommand>) {
-    loop {
-        match rx.recv() {
-            Ok(IslandCommand::Tick) => {}
-            Ok(IslandCommand::Drain) | Ok(IslandCommand::Stop) => break,
-            Err(_) => break,
-        }
-    }
-}
-
-pub fn manager_channel(buffer: usize) -> (mpsc::Sender<ManagerCommand>, mpsc::Receiver<ManagerCommand>) {
+pub fn manager_channel(
+    buffer: usize,
+) -> (
+    mpsc::Sender<ManagerCommand>,
+    mpsc::Receiver<ManagerCommand>,
+) {
     mpsc::channel(buffer)
 }

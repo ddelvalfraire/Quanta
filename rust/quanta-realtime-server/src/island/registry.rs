@@ -68,12 +68,15 @@ mod tests {
 
     fn make_handle(id: &str, entity_count: u32, state: IslandState) -> IslandHandle {
         let (tx, _rx) = crossbeam_channel::unbounded::<IslandCommand>();
+        let (input_tx, _input_rx) =
+            crossbeam_channel::unbounded::<crate::tick::ClientInput>();
         IslandHandle {
             island_id: IslandId::from(id),
             state,
             thread_model: ThreadModel::Pooled,
             entity_count,
             command_tx: tx,
+            input_tx,
             join_handle: None,
         }
     }
