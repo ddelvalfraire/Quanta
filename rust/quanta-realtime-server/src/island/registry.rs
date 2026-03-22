@@ -8,6 +8,12 @@ pub struct IslandRegistry {
     islands: FxHashMap<String, IslandHandle>,
 }
 
+impl Default for IslandRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IslandRegistry {
     pub fn new() -> Self {
         Self {
