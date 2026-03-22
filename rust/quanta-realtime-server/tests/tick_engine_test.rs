@@ -1,77 +1,12 @@
+mod common;
+
 use quanta_realtime_server::command::IslandCommand;
 use quanta_realtime_server::tick::*;
 use quanta_realtime_server::types::{EntitySlot, IslandId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-fn slot(n: u32) -> EntitySlot {
-    EntitySlot(n)
-}
-
-/// Create a TickEngine with a custom WasmExecutor for testing.
-/// Returns (engine, input_tx, cmd_tx).
-fn test_engine(
-    wasm: Box<dyn WasmExecutor>,
-) -> (
-    TickEngine,
-    crossbeam_channel::Sender<ClientInput>,
-    crossbeam_channel::Sender<IslandCommand>,
-) {
-    let (input_tx, input_rx) = crossbeam_channel::unbounded();
-    let (cmd_tx, cmd_rx) = crossbeam_channel::unbounded();
-    let config = TickEngineConfig {
-        tick_rate_hz: 20,
-        max_catchup_ticks: 3,
-    };
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let engine = TickEngine::new(
-        IslandId::from("test-island"),
-        config,
-        wasm,
-        input_rx,
-        cmd_rx,
-        shutdown,
-    );
-    (engine, input_tx, cmd_tx)
-}
-
-fn noop_engine() -> (
-    TickEngine,
-    crossbeam_channel::Sender<ClientInput>,
-    crossbeam_channel::Sender<IslandCommand>,
-) {
-    test_engine(Box::new(NoopWasmExecutor))
-}
-
-/// A mock WASM executor backed by a closure.
-struct MockWasm {
-    handler:
-        Box<dyn FnMut(EntitySlot, &[u8], &TickMessage) -> Result<HandleResult, WasmTrap> + Send>,
-}
-
-impl MockWasm {
-    fn new<F>(handler: F) -> Self
-    where
-        F: FnMut(EntitySlot, &[u8], &TickMessage) -> Result<HandleResult, WasmTrap>
-            + Send
-            + 'static,
-    {
-        Self {
-            handler: Box::new(handler),
-        }
-    }
-}
-
-impl WasmExecutor for MockWasm {
-    fn call_handle_message(
-        &mut self,
-        entity: EntitySlot,
-        state: &[u8],
-        message: &TickMessage,
-    ) -> Result<HandleResult, WasmTrap> {
-        (self.handler)(entity, state, message)
-    }
-}
+use common::{noop_engine, slot, test_engine, MockWasm};
 
 // ── Deterministic tick ordering ────────────────────────────────────
 
