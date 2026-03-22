@@ -5,7 +5,11 @@
 mod certs;
 mod harness;
 mod mock_session;
+mod recording;
 
 pub use certs::generate_test_certs;
 pub use harness::{TestHarness, TestHarnessBuilder};
 pub use mock_session::MockSession;
+pub use recording::{
+    replay, Divergence, IslandRecording, RecordedEffect, RecordedInput, ReplayResult, TickRecord,
+};

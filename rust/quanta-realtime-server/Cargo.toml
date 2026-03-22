@@ -33,3 +33,4 @@ futures-util = "0.3"
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "test-util"] }
 url = "2"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
