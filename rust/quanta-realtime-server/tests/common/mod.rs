@@ -6,6 +6,7 @@ use std::sync::Arc;
 use quanta_realtime_server::command::{ActivationError, IslandCommand, LifecycleError, ManagerCommand};
 use quanta_realtime_server::config::ServerConfig;
 use quanta_realtime_server::manager::{manager_channel, IslandManager};
+use quanta_realtime_server::stubs::StubBridge;
 use quanta_realtime_server::tick::*;
 use quanta_realtime_server::types::{EntitySlot, IslandId, IslandManifest};
 use tokio::sync::oneshot;
@@ -16,6 +17,7 @@ pub fn test_manifest(id: &str, entity_count: u32) -> IslandManifest {
         entity_count,
         wasm_module: "test.wasm".into(),
         initial_state: vec![],
+        passivate_when_empty: true,
     }
 }
 
@@ -71,10 +73,79 @@ pub async fn get_metrics(
     reply_rx.await.unwrap()
 }
 
+pub async fn player_joined(
+    tx: &tokio::sync::mpsc::Sender<ManagerCommand>,
+    island_id: &str,
+) -> Result<(), LifecycleError> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    tx.send(ManagerCommand::PlayerJoined {
+        island_id: IslandId::from(island_id),
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    reply_rx.await.unwrap()
+}
+
+pub async fn player_left(
+    tx: &tokio::sync::mpsc::Sender<ManagerCommand>,
+    island_id: &str,
+) -> Result<(), LifecycleError> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    tx.send(ManagerCommand::PlayerLeft {
+        island_id: IslandId::from(island_id),
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    reply_rx.await.unwrap()
+}
+
+pub async fn bridge_message(
+    tx: &tokio::sync::mpsc::Sender<ManagerCommand>,
+    island_id: &str,
+    payload: Vec<u8>,
+) -> Result<(), LifecycleError> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    tx.send(ManagerCommand::BridgeMessage {
+        island_id: IslandId::from(island_id),
+        payload,
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    reply_rx.await.unwrap()
+}
+
+pub fn test_manifest_no_passivate(id: &str, entity_count: u32) -> IslandManifest {
+    IslandManifest {
+        island_id: IslandId::from(id),
+        entity_count,
+        wasm_module: "test.wasm".into(),
+        initial_state: vec![],
+        passivate_when_empty: false,
+    }
+}
+
+pub async fn player_input(
+    tx: &tokio::sync::mpsc::Sender<ManagerCommand>,
+    island_id: &str,
+) -> Result<(), LifecycleError> {
+    let (reply_tx, reply_rx) = oneshot::channel();
+    tx.send(ManagerCommand::PlayerInput {
+        island_id: IslandId::from(island_id),
+        reply: reply_tx,
+    })
+    .await
+    .unwrap();
+    reply_rx.await.unwrap()
+}
+
 pub fn spawn_manager(config: ServerConfig) -> tokio::sync::mpsc::Sender<ManagerCommand> {
     let (tx, rx) = manager_channel(256);
+    let bridge = Arc::new(StubBridge);
     tokio::spawn(async move {
-        let mut mgr = IslandManager::new(config, rx);
+        let mut mgr = IslandManager::new(config, rx, bridge);
         mgr.run().await;
     });
     tx

@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::error::SendError;
-use crate::session::{Session, TransportType};
+use crate::session::{Session, TransportStats, TransportType};
 
 pub struct MockSession {
     inner: Mutex<MockSessionInner>,
@@ -99,6 +99,10 @@ impl Session for MockSession {
 
     fn rtt(&self) -> Duration {
         self.rtt
+    }
+
+    fn transport_stats(&self) -> TransportStats {
+        TransportStats::default()
     }
 
     fn close(&self, _reason: &str) {

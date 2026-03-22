@@ -58,6 +58,12 @@ impl IslandRegistry {
     pub fn is_empty(&self) -> bool {
         self.islands.is_empty()
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&crate::types::IslandId, &IslandHandle)> {
+        self.islands
+            .values()
+            .map(|h| (&h.island_id, h))
+    }
 }
 
 #[cfg(test)]
@@ -78,6 +84,16 @@ mod tests {
             command_tx: tx,
             input_tx,
             join_handle: None,
+            manifest: crate::types::IslandManifest {
+                island_id: IslandId::from(id),
+                entity_count,
+                wasm_module: String::new(),
+                initial_state: vec![],
+                passivate_when_empty: true,
+            },
+            player_count: 0,
+            passivation_deadline: None,
+            passivate_when_empty: true,
         }
     }
 

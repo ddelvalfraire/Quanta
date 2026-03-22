@@ -62,6 +62,10 @@ pub struct ServerConfig {
     pub entity_threshold: u32,
     pub capacity_interval_secs: u64,
     pub capacity_subject: String,
+    /// Seconds with 0 players before an island passivates (default 30).
+    pub idle_timeout_secs: u64,
+    /// Grace period seconds after last player leaves before passivation starts (default 10).
+    pub grace_period_secs: u64,
 }
 
 impl Default for ServerConfig {
@@ -72,6 +76,8 @@ impl Default for ServerConfig {
             entity_threshold: 100,
             capacity_interval_secs: 5,
             capacity_subject: "quanta.default.realtime.capacity".to_owned(),
+            idle_timeout_secs: 30,
+            grace_period_secs: 10,
         }
     }
 }

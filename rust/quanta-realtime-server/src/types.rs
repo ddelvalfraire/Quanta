@@ -36,6 +36,13 @@ pub struct IslandManifest {
     pub entity_count: u32,
     pub wasm_module: String,
     pub initial_state: Vec<u8>,
+    /// If false, the island stays running even with 0 players (e.g. NPC-active zones).
+    #[serde(default = "default_passivate_when_empty")]
+    pub passivate_when_empty: bool,
+}
+
+fn default_passivate_when_empty() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
