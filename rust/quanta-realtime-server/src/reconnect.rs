@@ -8,7 +8,8 @@ use crate::session_store::RetainedSession;
 #[derive(Debug)]
 pub enum ReconnectTier {
     /// Tier 2: Client reconnected within the retention window.
-    /// The server has retained session state and can send a delta catchup.
+    /// The retained session provides `baseline_tick` and `visible_entities`
+    /// so the caller can compute and send deltas from baseline to current.
     Fast { retained: RetainedSession },
     /// Tier 3: Cold connect (first time or session expired).
     /// Full authentication and initial state sync required.

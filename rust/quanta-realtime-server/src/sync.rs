@@ -228,6 +228,9 @@ fn stream_err(e: impl std::fmt::Display) -> SyncError {
 
 /// Server-side: open a bidirectional QUIC stream, send the `InitialStateMessage`,
 /// and wait for the client's `BaselineAck`.
+///
+/// The message is written with a 4-byte big-endian length prefix for stream
+/// framing (not part of the `InitialStateMessage` wire format itself).
 pub async fn send_initial_state_stream(
     connection: &quinn::Connection,
     msg: &InitialStateMessage,
@@ -264,16 +267,20 @@ pub async fn send_initial_state_stream(
     }
 }
 
-/// Client-side: accept a bidirectional QUIC stream from the server, read the
-/// `InitialStateMessage`, send the `BaselineAck`, and return the decoded message.
+/// Client-side: accept a bidirectional QUIC stream from the server and read the
+/// `InitialStateMessage`. Returns the decoded message and the send half of
+/// the stream so the caller can inspect the message before acking.
+///
+/// Call [`send_baseline_ack`] on the returned `SendStream` to complete the
+/// handshake. The message is read with a 4-byte big-endian length prefix for
+/// stream framing.
 pub async fn recv_initial_state_stream(
     connection: &quinn::Connection,
     timeout: Duration,
-) -> Result<InitialStateMessage, SyncError> {
+) -> Result<(InitialStateMessage, quinn::SendStream), SyncError> {
     let result = tokio::time::timeout(timeout, async {
-        let (mut send, mut recv) = connection.accept_bi().await.map_err(stream_err)?;
+        let (send, mut recv) = connection.accept_bi().await.map_err(stream_err)?;
 
-        // Read length-prefixed InitialStateMessage.
         let mut len_buf = [0u8; 4];
         recv.read_exact(&mut len_buf).await.map_err(stream_err)?;
         let len = u32::from_be_bytes(len_buf) as usize;
@@ -286,18 +293,7 @@ pub async fn recv_initial_state_stream(
         recv.read_exact(&mut buf).await.map_err(stream_err)?;
 
         let msg = decode_initial_state(&buf)?;
-
-        // Send BaselineAck back to server.
-        let ack = BaselineAck {
-            baseline_tick: msg.baseline_tick,
-        };
-        let ack_bytes = bitcode::encode(&ack);
-        let ack_len = (ack_bytes.len() as u32).to_be_bytes();
-        send.write_all(&ack_len).await.map_err(stream_err)?;
-        send.write_all(&ack_bytes).await.map_err(stream_err)?;
-        send.finish().map_err(stream_err)?;
-
-        Ok(msg)
+        Ok((msg, send))
     })
     .await;
 
@@ -305,6 +301,20 @@ pub async fn recv_initial_state_stream(
         Ok(inner) => inner,
         Err(_) => Err(SyncError::Timeout),
     }
+}
+
+/// Send a `BaselineAck` on the given stream. Call this after
+/// [`recv_initial_state_stream`] once the client has validated the message.
+pub async fn send_baseline_ack(
+    send: &mut quinn::SendStream,
+    ack: &BaselineAck,
+) -> Result<(), SyncError> {
+    let ack_bytes = bitcode::encode(ack);
+    let ack_len = (ack_bytes.len() as u32).to_be_bytes();
+    send.write_all(&ack_len).await.map_err(stream_err)?;
+    send.write_all(&ack_bytes).await.map_err(stream_err)?;
+    send.finish().map_err(stream_err)?;
+    Ok(())
 }
 
 /// Decode a `BaselineAck` directly from raw bitcode bytes (no length prefix).
@@ -318,6 +328,11 @@ fn decode_baseline_ack_payload(bytes: &[u8]) -> Result<BaselineAck, SyncError> {
 // ---------------------------------------------------------------------------
 
 /// Configuration for bandwidth ramping during initial sync.
+///
+/// This provides the entity splitting policy via [`split_for_ramping`].
+/// Runtime enforcement of the `ramp_multiplier` during the `ramp_duration`
+/// window is the caller's responsibility when integrating with the pacing
+/// send loop — the deferred batch should be fed into the priority queue.
 #[derive(Debug, Clone)]
 pub struct BandwidthRampConfig {
     /// Duration of the ramp-up period after connect (default 500ms).

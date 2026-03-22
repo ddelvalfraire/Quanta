@@ -1,185 +1,16 @@
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use quinn::crypto::rustls::QuicClientConfig;
-use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use tokio::sync::{mpsc, watch};
+use rustc_hash::FxHashMap;
 
 use quanta_realtime_server::reconnect::ReconnectTier;
-use quanta_realtime_server::session_store::{RetainedSession, SessionStore};
-use rustc_hash::FxHashMap;
+use quanta_realtime_server::session_store::RetainedSession;
 use quanta_realtime_server::sync::{
-    recv_initial_state_stream, send_initial_state_stream, EntityPayload, InitialStateMessage,
+    recv_initial_state_stream, send_baseline_ack, send_initial_state_stream, BaselineAck,
+    EntityPayload, InitialStateMessage,
 };
+use quanta_realtime_server::testing::endpoint_helpers::*;
 use quanta_realtime_server::types::EntitySlot;
-use quanta_realtime_server::{
-    AuthRequest, AuthResponse, AuthValidator, ConnectedClient, EndpointConfig, EndpointError,
-    QuicEndpoint, TlsConfig,
-};
-
-// ---------------------------------------------------------------------------
-// Helpers (duplicated from endpoint_test.rs — minimal subset)
-// ---------------------------------------------------------------------------
-
-struct TestValidator {
-    counter: AtomicU64,
-}
-
-impl TestValidator {
-    fn new() -> Arc<Self> {
-        Arc::new(Self {
-            counter: AtomicU64::new(1),
-        })
-    }
-}
-
-impl AuthValidator for TestValidator {
-    fn validate(&self, _req: &AuthRequest) -> Result<AuthResponse, EndpointError> {
-        let session_id = self.counter.fetch_add(1, Ordering::Relaxed);
-        Ok(AuthResponse {
-            session_id,
-            accepted: true,
-            reason: String::new(),
-        })
-    }
-}
-
-#[derive(Debug)]
-struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
-
-impl SkipServerVerification {
-    fn new() -> Arc<Self> {
-        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
-    }
-}
-
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp: &[u8],
-        _now: UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
-    }
-
-    fn verify_tls12_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
-    }
-
-    fn verify_tls13_signature(
-        &self,
-        message: &[u8],
-        cert: &CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
-            message,
-            cert,
-            dss,
-            &self.0.signature_verification_algorithms,
-        )
-    }
-
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
-        self.0.signature_verification_algorithms.supported_schemes()
-    }
-}
-
-fn build_test_client(alpn: &[&[u8]]) -> quinn::Endpoint {
-    let mut rustls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_no_client_auth();
-
-    rustls_config.alpn_protocols = alpn.iter().map(|&p| p.to_vec()).collect();
-
-    let quic_config =
-        QuicClientConfig::try_from(rustls_config).expect("valid client crypto config");
-    let client_config = quinn::ClientConfig::new(Arc::new(quic_config));
-
-    let mut endpoint =
-        quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).expect("bind client");
-    endpoint.set_default_client_config(client_config);
-    endpoint
-}
-
-async fn start_server(
-    config: EndpointConfig,
-) -> (
-    SocketAddr,
-    mpsc::Receiver<ConnectedClient>,
-    watch::Sender<bool>,
-    tokio::task::JoinHandle<()>,
-    Arc<Mutex<SessionStore>>,
-) {
-    let store = Arc::new(Mutex::new(SessionStore::new(
-        config.session_retain_duration,
-        config.max_retained_sessions,
-    )));
-    let endpoint =
-        QuicEndpoint::bind("127.0.0.1:0".parse().unwrap(), config, &TlsConfig::SelfSigned)
-            .expect("bind server");
-    let addr = endpoint.local_addr().unwrap();
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let (session_tx, session_rx) = mpsc::channel(16);
-    let validator = TestValidator::new();
-    let store_clone = store.clone();
-    let handle = tokio::spawn(async move {
-        endpoint
-            .run(validator, session_tx, store_clone, shutdown_rx)
-            .await;
-    });
-    (addr, session_rx, shutdown_tx, handle, store)
-}
-
-async fn client_auth(connection: &quinn::Connection) -> AuthResponse {
-    client_auth_with_token(connection, None).await
-}
-
-async fn client_auth_with_token(
-    connection: &quinn::Connection,
-    session_token: Option<u64>,
-) -> AuthResponse {
-    let (mut send, mut recv) = connection.open_bi().await.expect("open bidi stream");
-
-    let req = AuthRequest {
-        token: "test-token".into(),
-        client_version: "0.1.0".into(),
-        session_token,
-    };
-    let req_bytes = bitcode::encode(&req);
-    let len = (req_bytes.len() as u32).to_be_bytes();
-    send.write_all(&len).await.expect("write req len");
-    send.write_all(&req_bytes).await.expect("write req body");
-
-    let mut resp_len_buf = [0u8; 4];
-    recv.read_exact(&mut resp_len_buf)
-        .await
-        .expect("read resp len");
-    let resp_len = u32::from_be_bytes(resp_len_buf) as usize;
-
-    let mut resp_buf = vec![0u8; resp_len];
-    recv.read_exact(&mut resp_buf)
-        .await
-        .expect("read resp body");
-
-    bitcode::decode(&resp_buf).expect("decode AuthResponse")
-}
+use quanta_realtime_server::EndpointConfig;
 
 fn make_entities(count: usize) -> Vec<EntityPayload> {
     (0..count)
@@ -190,7 +21,6 @@ fn make_entities(count: usize) -> Vec<EntityPayload> {
         .collect()
 }
 
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -198,7 +28,7 @@ fn make_entities(count: usize) -> Vec<EntityPayload> {
 #[tokio::test]
 async fn bulk_transfer_200_entities() {
     let (addr, mut session_rx, shutdown_tx, handle, _store) =
-        start_server(EndpointConfig::default()).await;
+        start_test_server(EndpointConfig::default()).await;
 
     let client_endpoint = build_test_client(&[b"quanta-v1"]);
     let connection = client_endpoint
@@ -229,9 +59,21 @@ async fn bulk_transfer_200_entities() {
     let msg_clone = msg.clone();
     let timeout = Duration::from_secs(5);
 
+    let client_fut = async {
+        let (received, mut send) = recv_initial_state_stream(&connection, timeout).await?;
+        send_baseline_ack(
+            &mut send,
+            &BaselineAck {
+                baseline_tick: received.baseline_tick,
+            },
+        )
+        .await?;
+        Ok::<_, quanta_realtime_server::sync::SyncError>(received)
+    };
+
     let (server_result, client_result) = tokio::join!(
         send_initial_state_stream(&server_conn, &msg_clone, timeout),
-        recv_initial_state_stream(&connection, timeout),
+        client_fut,
     );
 
     let ack = server_result.expect("server should get ack");
@@ -248,7 +90,7 @@ async fn bulk_transfer_200_entities() {
 #[tokio::test]
 async fn fast_reconnect_with_retained_session() {
     let config = EndpointConfig::default();
-    let (addr, mut session_rx, shutdown_tx, handle, store) = start_server(config).await;
+    let (addr, mut session_rx, shutdown_tx, handle, store) = start_test_server(config).await;
 
     // First connection.
     let client = build_test_client(&[b"quanta-v1"]);
@@ -321,7 +163,7 @@ async fn cold_reconnect_after_session_expired() {
     let mut config = EndpointConfig::default();
     config.session_retain_duration = Duration::from_millis(200);
 
-    let (addr, mut session_rx, shutdown_tx, handle, store) = start_server(config).await;
+    let (addr, mut session_rx, shutdown_tx, handle, store) = start_test_server(config).await;
 
     // First connection.
     let client = build_test_client(&[b"quanta-v1"]);
