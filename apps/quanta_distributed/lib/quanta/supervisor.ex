@@ -34,6 +34,7 @@ defmodule Quanta.Supervisor do
       Quanta.Actor.DynSup,
       {Task.Supervisor, name: Quanta.SideEffect.TaskSupervisor},
       Quanta.Actor.CommandRouter,
+      Quanta.Bridge.Subscriptions,
       Quanta.Actor.CompactionScheduler
     ]
 
