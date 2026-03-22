@@ -1,6 +1,7 @@
 mod macros;
 mod safety;
 mod resources;
+mod bridge_codec;
 mod codec;
 mod wasm_runtime;
 mod nats_jetstream;
