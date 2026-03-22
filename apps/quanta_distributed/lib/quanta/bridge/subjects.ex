@@ -8,33 +8,50 @@ defmodule Quanta.Bridge.Subjects do
   """
 
   @doc "Specific d2r subject for a given island, type, and id."
-  @spec d2r(String.t(), String.t(), String.t(), String.t()) :: String.t()
+  @spec d2r(String.t(), String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :invalid_subject_segment}
   def d2r(ns, island_id, type, id) do
-    "quanta.#{ns}.bridge.d2r.#{island_id}.#{type}.#{id}"
+    with :ok <- validate_segments([ns, island_id, type, id]) do
+      {:ok, "quanta.#{ns}.bridge.d2r.#{island_id}.#{type}.#{id}"}
+    end
   end
 
   @doc "Wildcard subscription for all d2r messages on a specific island."
-  @spec d2r_wildcard(String.t(), String.t()) :: String.t()
+  @spec d2r_wildcard(String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :invalid_subject_segment}
   def d2r_wildcard(ns, island_id) do
-    "quanta.#{ns}.bridge.d2r.#{island_id}.>"
+    with :ok <- validate_segments([ns, island_id]) do
+      {:ok, "quanta.#{ns}.bridge.d2r.#{island_id}.>"}
+    end
   end
 
   @doc "Catch-all subscription for all d2r messages across all islands."
-  @spec d2r_catch_all(String.t()) :: String.t()
+  @spec d2r_catch_all(String.t()) :: {:ok, String.t()} | {:error, :invalid_subject_segment}
   def d2r_catch_all(ns) do
-    "quanta.#{ns}.bridge.d2r.>"
+    with :ok <- validate_segments([ns]) do
+      {:ok, "quanta.#{ns}.bridge.d2r.>"}
+    end
   end
 
+  @doc "Queue group name for d2r subscriptions."
+  @spec d2r_queue_group() :: String.t()
+  def d2r_queue_group, do: "quanta-bridge-d2r"
+
   @doc "Specific r2d subject for a given type and id."
-  @spec r2d(String.t(), String.t(), String.t()) :: String.t()
+  @spec r2d(String.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:error, :invalid_subject_segment}
   def r2d(ns, type, id) do
-    "quanta.#{ns}.bridge.r2d.#{type}.#{id}"
+    with :ok <- validate_segments([ns, type, id]) do
+      {:ok, "quanta.#{ns}.bridge.r2d.#{type}.#{id}"}
+    end
   end
 
   @doc "Wildcard subscription for all r2d messages."
-  @spec r2d_wildcard(String.t()) :: String.t()
+  @spec r2d_wildcard(String.t()) :: {:ok, String.t()} | {:error, :invalid_subject_segment}
   def r2d_wildcard(ns) do
-    "quanta.#{ns}.bridge.r2d.>"
+    with :ok <- validate_segments([ns]) do
+      {:ok, "quanta.#{ns}.bridge.r2d.>"}
+    end
   end
 
   @doc "Queue group name for r2d subscriptions."
@@ -51,5 +68,13 @@ defmodule Quanta.Bridge.Subjects do
       _ ->
         {:error, "subject does not match quanta.{ns}.bridge.d2r.{island_id}.{type}.{id}"}
     end
+  end
+
+  defp validate_segments(segments) do
+    if Enum.all?(segments, &valid_segment?/1), do: :ok, else: {:error, :invalid_subject_segment}
+  end
+
+  defp valid_segment?(s) when is_binary(s) do
+    s != "" and not String.contains?(s, [".", "*", ">"])
   end
 end

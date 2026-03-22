@@ -3,12 +3,10 @@
 //! Wire format: `[version:1][header_len:4 BE][header_bitcode][payload]`
 //! Reuses the same framing pattern as the actor wire codec.
 
-use crate::CodecError;
+use crate::{CodecError, decode_frame, encode_frame};
 
-/// Bridge protocol version.
 pub const BRIDGE_VERSION: u8 = 0x01;
 
-/// Bridge message type discriminant.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BridgeMsgType {
@@ -22,7 +20,6 @@ pub enum BridgeMsgType {
     CapacityReport = 7,
 }
 
-/// Bridge envelope header, bitcode-encoded.
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone, PartialEq)]
 pub struct BridgeHeader {
     pub msg_type: BridgeMsgType,
@@ -31,50 +28,12 @@ pub struct BridgeHeader {
     pub correlation_id: Option<[u8; 16]>,
 }
 
-/// Encode a bridge frame: `[version:1][header_len:4 BE][header][payload]`.
 pub fn encode_bridge_frame(header: &BridgeHeader, payload: &[u8]) -> Vec<u8> {
-    let header_bytes = bitcode::encode(header);
-    let header_len = header_bytes.len() as u32;
-    let mut frame = Vec::with_capacity(1 + 4 + header_bytes.len() + payload.len());
-    frame.push(BRIDGE_VERSION);
-    frame.extend_from_slice(&header_len.to_be_bytes());
-    frame.extend_from_slice(&header_bytes);
-    frame.extend_from_slice(payload);
-    frame
+    encode_frame(BRIDGE_VERSION, header, payload)
 }
 
-/// Decode a bridge frame, returning the header and payload slice.
 pub fn decode_bridge_frame(frame: &[u8]) -> Result<(BridgeHeader, &[u8]), CodecError> {
-    if frame.len() < 5 {
-        return Err(CodecError::TruncatedInput {
-            expected: 5,
-            got: frame.len(),
-        });
-    }
-
-    let version = frame[0];
-    if version != BRIDGE_VERSION {
-        return Err(CodecError::UnsupportedVersion {
-            expected: BRIDGE_VERSION,
-            got: version,
-        });
-    }
-
-    let header_len = u32::from_be_bytes(frame[1..5].try_into().unwrap()) as usize;
-    if frame.len() < 5 + header_len {
-        return Err(CodecError::TruncatedInput {
-            expected: 5 + header_len,
-            got: frame.len(),
-        });
-    }
-
-    let header_bytes = &frame[5..5 + header_len];
-    let payload = &frame[5 + header_len..];
-
-    let header =
-        bitcode::decode(header_bytes).map_err(|e| CodecError::InvalidHeader(e.to_string()))?;
-
-    Ok((header, payload))
+    decode_frame(BRIDGE_VERSION, frame)
 }
 
 #[cfg(test)]
@@ -169,7 +128,6 @@ mod tests {
 
     #[test]
     fn truncated_input_header_exceeds_frame() {
-        // Version byte + header_len claims 100 bytes but frame is only 5 bytes total
         let frame = [0x01, 0, 0, 0, 100];
         let err = decode_bridge_frame(&frame).unwrap_err();
         assert_eq!(

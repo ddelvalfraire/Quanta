@@ -5,9 +5,7 @@ defmodule Quanta.Bridge.SubscriptionsTest do
   alias Quanta.Codec.Bridge, as: BridgeCodec
   alias Quanta.Nats.Core
 
-  @describetag :nats
-
-  defp unique_ns, do: "test-#{System.unique_integer([:positive])}"
+  @moduletag :nats
 
   defp build_frame(msg_type \\ :heartbeat) do
     header = %{msg_type: msg_type, sequence: 1, timestamp: 1_000, correlation_id: nil}
@@ -16,7 +14,7 @@ defmodule Quanta.Bridge.SubscriptionsTest do
   end
 
   describe "subscribe_island/unsubscribe_island" do
-    test "subscribe_island adds per-island subscription" do
+    test "subscribe_island registers island for routing" do
       assert :ok = Subscriptions.subscribe_island("test-island-1")
       assert :ok = Subscriptions.unsubscribe_island("test-island-1")
     end
@@ -35,13 +33,13 @@ defmodule Quanta.Bridge.SubscriptionsTest do
   describe "message dispatch" do
     test "receives and decodes d2r messages via catch-all" do
       ns = Application.get_env(:quanta_distributed, :bridge_namespace, "default")
-      subject = Subjects.d2r(ns, "island-99", "player", "p1")
+      {:ok, subject} = Subjects.d2r(ns, "island-99", "player", "p1")
       frame = build_frame(:player_join)
 
       Process.sleep(50)
       Core.publish(subject, frame)
 
-      # The GenServer handles the message internally (logs it).
+      # The GenServer handles the message internally (logs via dispatch/5).
       # We verify no crash by checking the process is still alive.
       Process.sleep(100)
       assert Process.whereis(Subscriptions) != nil

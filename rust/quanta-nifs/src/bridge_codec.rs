@@ -13,7 +13,6 @@ mod atoms {
         sequence,
         timestamp,
         correlation_id,
-        // msg_type atoms
         activate_island,
         deactivate_island,
         player_join,
@@ -98,29 +97,40 @@ fn do_decode<'a>(env: Env<'a>, frame: &[u8]) -> Result<(Term<'a>, Term<'a>), Str
     Ok((header_term, payload_binary.encode(env)))
 }
 
+const MSG_TYPE_VARIANTS: [BridgeMsgType; 8] = [
+    BridgeMsgType::ActivateIsland,
+    BridgeMsgType::DeactivateIsland,
+    BridgeMsgType::PlayerJoin,
+    BridgeMsgType::PlayerLeave,
+    BridgeMsgType::EntityCommand,
+    BridgeMsgType::StateSync,
+    BridgeMsgType::Heartbeat,
+    BridgeMsgType::CapacityReport,
+];
+
+fn msg_type_atoms() -> [Atom; 8] {
+    [
+        atoms::activate_island(),
+        atoms::deactivate_island(),
+        atoms::player_join(),
+        atoms::player_leave(),
+        atoms::entity_command(),
+        atoms::state_sync(),
+        atoms::heartbeat(),
+        atoms::capacity_report(),
+    ]
+}
+
 fn decode_msg_type_atom<'a>(env: Env<'a>, map: Term<'a>) -> Result<BridgeMsgType, String> {
     let term = map_get(env, map, atoms::msg_type())?;
     let atom: Atom = term.decode().map_err(|_| "msg_type must be an atom".to_string())?;
 
-    if atom == atoms::activate_island() {
-        Ok(BridgeMsgType::ActivateIsland)
-    } else if atom == atoms::deactivate_island() {
-        Ok(BridgeMsgType::DeactivateIsland)
-    } else if atom == atoms::player_join() {
-        Ok(BridgeMsgType::PlayerJoin)
-    } else if atom == atoms::player_leave() {
-        Ok(BridgeMsgType::PlayerLeave)
-    } else if atom == atoms::entity_command() {
-        Ok(BridgeMsgType::EntityCommand)
-    } else if atom == atoms::state_sync() {
-        Ok(BridgeMsgType::StateSync)
-    } else if atom == atoms::heartbeat() {
-        Ok(BridgeMsgType::Heartbeat)
-    } else if atom == atoms::capacity_report() {
-        Ok(BridgeMsgType::CapacityReport)
-    } else {
-        Err("unknown msg_type atom".into())
+    for (a, variant) in msg_type_atoms().iter().zip(MSG_TYPE_VARIANTS.iter()) {
+        if atom == *a {
+            return Ok(*variant);
+        }
     }
+    Err("unknown msg_type atom".into())
 }
 
 fn encode_msg_type_atom<'a>(env: Env<'a>, msg_type: BridgeMsgType) -> Term<'a> {

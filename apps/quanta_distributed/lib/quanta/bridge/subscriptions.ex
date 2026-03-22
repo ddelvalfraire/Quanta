@@ -3,10 +3,11 @@ defmodule Quanta.Bridge.Subscriptions do
   Manages NATS subscriptions for the bridge protocol.
 
   On startup, subscribes to:
-  - `d2r_catch_all` — all distributed-to-realtime messages
-  - `r2d_wildcard` — all realtime-to-distributed messages (queue group)
+  - `d2r_catch_all` with queue group — all distributed-to-realtime messages
+  - `r2d_wildcard` with queue group — all realtime-to-distributed messages
 
-  Per-island subscriptions can be added/removed dynamically.
+  Per-island routing is tracked in GenServer state (not as separate NATS
+  subscriptions) to avoid duplicate delivery against the catch-all.
   """
 
   use GenServer
@@ -21,13 +22,13 @@ defmodule Quanta.Bridge.Subscriptions do
     GenServer.start_link(__MODULE__, opts, name: __MODULE__)
   end
 
-  @doc "Subscribe to d2r messages for a specific island."
+  @doc "Register an island for d2r message routing."
   @spec subscribe_island(String.t()) :: :ok | {:error, term()}
   def subscribe_island(island_id) do
     GenServer.call(__MODULE__, {:subscribe_island, island_id})
   end
 
-  @doc "Unsubscribe from d2r messages for a specific island."
+  @doc "Unregister an island from d2r message routing."
   @spec unsubscribe_island(String.t()) :: :ok
   def unsubscribe_island(island_id) do
     GenServer.call(__MODULE__, {:unsubscribe_island, island_id})
@@ -39,7 +40,7 @@ defmodule Quanta.Bridge.Subscriptions do
       namespace: namespace(),
       catch_all_sub: nil,
       r2d_sub: nil,
-      island_subs: %{}
+      active_islands: MapSet.new()
     }
 
     if Process.whereis(Quanta.Nats.Core.connection(0)) do
@@ -54,14 +55,12 @@ defmodule Quanta.Bridge.Subscriptions do
   def handle_continue(:subscribe, state) do
     ns = state.namespace
 
-    with {:ok, catch_all} <-
-           Quanta.Nats.Core.subscribe(Subjects.d2r_catch_all(ns), nil, self()),
+    with {:ok, catch_all_subject} <- Subjects.d2r_catch_all(ns),
+         {:ok, catch_all} <-
+           Quanta.Nats.Core.subscribe(catch_all_subject, Subjects.d2r_queue_group(), self()),
+         {:ok, r2d_subject} <- Subjects.r2d_wildcard(ns),
          {:ok, r2d} <-
-           Quanta.Nats.Core.subscribe(
-             Subjects.r2d_wildcard(ns),
-             Subjects.r2d_queue_group(),
-             self()
-           ) do
+           Quanta.Nats.Core.subscribe(r2d_subject, Subjects.r2d_queue_group(), self()) do
       Logger.info("Bridge.Subscriptions connected (ns=#{ns})")
       {:noreply, %{state | catch_all_sub: catch_all, r2d_sub: r2d}}
     else
@@ -79,38 +78,19 @@ defmodule Quanta.Bridge.Subscriptions do
 
   @impl true
   def handle_call({:subscribe_island, island_id}, _from, state) do
-    if Map.has_key?(state.island_subs, island_id) do
-      {:reply, :ok, state}
-    else
-      subject = Subjects.d2r_wildcard(state.namespace, island_id)
-
-      case Quanta.Nats.Core.subscribe(subject, nil, self()) do
-        {:ok, sub} ->
-          {:reply, :ok, %{state | island_subs: Map.put(state.island_subs, island_id, sub)}}
-
-        {:error, _} = err ->
-          {:reply, err, state}
-      end
-    end
+    {:reply, :ok, %{state | active_islands: MapSet.put(state.active_islands, island_id)}}
   end
 
   @impl true
   def handle_call({:unsubscribe_island, island_id}, _from, state) do
-    case Map.pop(state.island_subs, island_id) do
-      {nil, _} ->
-        {:reply, :ok, state}
-
-      {sub, rest} ->
-        Quanta.Nats.Core.unsubscribe(sub)
-        {:reply, :ok, %{state | island_subs: rest}}
-    end
+    {:reply, :ok, %{state | active_islands: MapSet.delete(state.active_islands, island_id)}}
   end
 
   @impl true
-  def handle_info({:msg, %{topic: topic, body: body}}, state) do
+  def handle_info({:msg, %{topic: topic, body: body, reply_to: reply_to}}, state) do
     case BridgeCodec.decode(body) do
-      {:ok, header, _payload} ->
-        Logger.debug("Bridge msg on #{topic}: #{inspect(header.msg_type)}")
+      {:ok, header, payload} ->
+        dispatch(topic, header, payload, reply_to, state)
 
       {:error, reason} ->
         Logger.warning("Bridge.Subscriptions: decode error on #{topic}: #{reason}")
@@ -127,6 +107,10 @@ defmodule Quanta.Bridge.Subscriptions do
   @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
+  end
+
+  defp dispatch(topic, header, _payload, _reply_to, _state) do
+    Logger.debug("Bridge msg on #{topic}: #{inspect(header.msg_type)}")
   end
 
   defp namespace do
