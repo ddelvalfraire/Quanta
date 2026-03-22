@@ -94,6 +94,8 @@ mod tests {
             player_count: 0,
             passivation_deadline: None,
             passivate_when_empty: true,
+            heartbeat: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            panicked: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 

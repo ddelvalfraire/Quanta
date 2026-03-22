@@ -4,11 +4,11 @@ pub mod timer;
 pub mod types;
 
 pub use engine::TickEngine;
-pub use fault::{ActorHealthState, FaultTracker};
+pub use fault::{ActorHealthState, FaultTracker, TrapResponse};
 pub use timer::TimerManager;
 pub use types::{
     BridgeEffect, BridgeMessage, BridgeMessageKind, ClientInput, CorrelationId, DeferredSend,
-    DeltaWorkItem, EntityState, HandleResult, NoopWasmExecutor, SessionId, TickEffect,
-    TickEngineConfig, TickMessage, WasmExecutor, WasmTrap,
+    EntityState, HandleResult, NoopWasmExecutor, SessionId, TickEffect, TickEngineConfig,
+    TickMessage, WasmExecutor, WasmTrap,
 };
 

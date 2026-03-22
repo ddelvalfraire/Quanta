@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod bridge_health;
 pub mod bridge_rpc;
 pub mod checkpoint;
 pub mod capacity;
@@ -6,6 +7,7 @@ pub mod command;
 pub mod config;
 pub mod connection;
 pub mod degraded;
+pub mod effect_io;
 pub mod endpoint;
 pub mod error;
 pub mod interest;
@@ -20,6 +22,7 @@ pub mod tls;
 pub mod traits;
 pub mod types;
 pub mod webtransport_session;
+pub mod watchdog;
 pub mod ws_listener;
 pub mod ws_session;
 

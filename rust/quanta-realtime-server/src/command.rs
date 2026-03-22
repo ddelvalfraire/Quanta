@@ -41,7 +41,6 @@ pub enum ManagerCommand {
 }
 
 pub enum IslandCommand {
-    Tick,
     Drain,
     Stop,
     /// Passivate: complete current tick, capture entity state snapshot, then stop.
@@ -53,7 +52,6 @@ pub enum IslandCommand {
 impl std::fmt::Debug for IslandCommand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Tick => write!(f, "Tick"),
             Self::Drain => write!(f, "Drain"),
             Self::Stop => write!(f, "Stop"),
             Self::Passivate { .. } => write!(f, "Passivate"),

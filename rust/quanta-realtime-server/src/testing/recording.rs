@@ -58,6 +58,9 @@ impl From<&BridgeEffect> for RecordedEffect {
                 target: String::new(),
                 payload: Vec::new(),
             },
+            BridgeEffect::EntityEvicted { .. } => RecordedEffect::EmitTelemetry {
+                event: "entity_evicted".to_string(),
+            },
         }
     }
 }

@@ -3,12 +3,12 @@ use crate::checkpoint::writer::{CheckpointHandle, CheckpointRequest};
 use crate::command::IslandCommand;
 use crate::types::{EntitySlot, IslandId};
 
-use super::fault::{ActorHealthState, FaultTracker};
+use super::fault::{ActorHealthState, FaultTracker, TrapResponse};
 use super::timer::TimerManager;
 use super::types::*;
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,6 +17,9 @@ use tracing::{info, warn};
 /// Maximum effects a single WASM `handle_message` call may produce.
 /// Prevents a misbehaving module from flooding deferred_sends or effects_out.
 const MAX_EFFECTS_PER_CALL: usize = 64;
+
+/// Below this threshold, busy-wait is cheaper than the OS scheduler overhead.
+const MIN_SLEEP_DURATION: Duration = Duration::from_micros(500);
 
 fn route_effects(
     effects: Vec<TickEffect>,
@@ -42,7 +45,7 @@ fn route_effects(
 
 /// The core tick loop engine for a simulation island.
 ///
-/// Executes a 6-phase tick loop with fixed timestep (Gaffer on Games pattern):
+/// Executes a 5-phase tick loop with fixed timestep (Gaffer on Games pattern):
 /// 1. Drain inputs (crossbeam MPSC → per-entity input buffer)
 /// 2. Fire timers
 /// 3. Build per-entity message queues (priority: Timer > Bridge > Input > Deferred)
@@ -77,6 +80,8 @@ pub struct TickEngine {
     checkpoint_interval_ticks: u64,
     last_checkpoint_tick: u64,
     snapshot_buffer: BTreeMap<EntitySlot, SnapshotEntry>,
+    heartbeat: Arc<AtomicU64>,
+    effect_tx: Option<crate::effect_io::EffectSender>,
 }
 
 impl TickEngine {
@@ -88,6 +93,7 @@ impl TickEngine {
         bridge_rx: crossbeam_channel::Receiver<BridgeMessage>,
         cmd_rx: crossbeam_channel::Receiver<IslandCommand>,
         shutdown: Arc<AtomicBool>,
+        heartbeat: Arc<AtomicU64>,
     ) -> Self {
         let tick_rate_hz = config.tick_rate_hz;
         Self {
@@ -109,6 +115,8 @@ impl TickEngine {
             checkpoint_interval_ticks: 0,
             last_checkpoint_tick: 0,
             snapshot_buffer: BTreeMap::new(),
+            heartbeat,
+            effect_tx: None,
         }
     }
 
@@ -118,6 +126,7 @@ impl TickEngine {
         match bitcode::decode::<Vec<(u32, Vec<u8>)>>(&snapshot.state) {
             Ok(entries) => {
                 for (slot_id, state) in entries {
+                    let init_state = state.clone();
                     self.entities.insert(
                         EntitySlot(slot_id),
                         EntityState {
@@ -125,6 +134,8 @@ impl TickEngine {
                             state,
                             owner_session: None,
                             dirty: false,
+                            init_state,
+                            checkpoint_state: None,
                         },
                     );
                 }
@@ -140,7 +151,12 @@ impl TickEngine {
         }
     }
 
+    pub fn set_effect_sender(&mut self, tx: crate::effect_io::EffectSender) {
+        self.effect_tx = Some(tx);
+    }
+
     pub fn add_entity(&mut self, slot: EntitySlot, state: Vec<u8>, owner: Option<SessionId>) {
+        let init_state = state.clone();
         self.entities.insert(
             slot,
             EntityState {
@@ -148,6 +164,8 @@ impl TickEngine {
                 state,
                 owner_session: owner,
                 dirty: true,
+                init_state,
+                checkpoint_state: None,
             },
         );
     }
@@ -165,7 +183,6 @@ impl TickEngine {
         self.entities.get(slot).map(|e| e.state.as_slice())
     }
 
-    /// Take all bridge effects emitted during the last tick.
     pub fn take_effects(&mut self) -> Vec<BridgeEffect> {
         std::mem::take(&mut self.effects_out)
     }
@@ -186,12 +203,19 @@ impl TickEngine {
         self.deferred_sends.len()
     }
 
-    /// Set a timer on an entity. Delegates to the internal TimerManager.
+    fn flush_effects(&mut self) {
+        if let Some(tx) = &self.effect_tx {
+            let effects = std::mem::take(&mut self.effects_out);
+            if !effects.is_empty() {
+                tx.send_batch(effects);
+            }
+        }
+    }
+
     pub fn set_timer(&mut self, entity: EntitySlot, name: String, delay_ms: u32) {
         self.timers.set_timer(entity, name, delay_ms);
     }
 
-    /// Cancel a timer on an entity.
     pub fn cancel_timer(&mut self, entity: &EntitySlot, name: &str) -> bool {
         self.timers.cancel_timer(entity, name)
     }
@@ -216,6 +240,7 @@ impl TickEngine {
         self.effects_out.clear();
         for entity in &payload.entities {
             let slot = EntitySlot(entity.slot);
+            let init_state = entity.state.clone();
             self.entities.insert(
                 slot,
                 EntityState {
@@ -226,6 +251,8 @@ impl TickEngine {
                         .as_ref()
                         .map(|s| SessionId(s.clone())),
                     dirty: false,
+                    init_state,
+                    checkpoint_state: None,
                 },
             );
             self.snapshot_buffer.insert(
@@ -272,21 +299,18 @@ impl TickEngine {
         CheckpointPayload { entities }
     }
 
-    /// Execute one tick and advance the tick counter.
     pub fn tick(&mut self) {
         self.execute_tick();
         self.tick += 1;
     }
 
-    /// Execute N ticks.
     pub fn tick_n(&mut self, n: u32) {
         for _ in 0..n {
             self.tick();
         }
     }
 
-    /// Run the fixed-timestep outer loop. Blocks until shutdown or Stop/Drain command.
-    pub fn run(&mut self) {
+    pub fn run(&mut self) -> bool {
         let tick_period = Duration::from_secs_f64(1.0 / self.config.tick_rate_hz as f64);
         let max_catchup = self.config.max_catchup_ticks;
         let mut accumulator = Duration::ZERO;
@@ -321,8 +345,44 @@ impl TickEngine {
             }
 
             while accumulator >= tick_period {
-                self.execute_tick();
-                self.tick += 1;
+                let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    self.execute_tick();
+                }));
+
+                match tick_result {
+                    Ok(()) => {
+                        self.tick += 1;
+                        self.heartbeat.store(self.tick, Ordering::Relaxed);
+                        self.flush_effects();
+                    }
+                    Err(panic_info) => {
+                        let bt = std::backtrace::Backtrace::force_capture();
+                        let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_info.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unknown panic".to_string()
+                        };
+                        tracing::error!(
+                            island_id = %self.island_id,
+                            tick = self.tick,
+                            panic = %msg,
+                            backtrace = %bt,
+                            "island thread panicked during tick execution"
+                        );
+                        self.effects_out.clear();
+                        self.effects_out.push(BridgeEffect::EmitTelemetry {
+                            event: format!(
+                                "island_panic:{}:tick={}",
+                                self.island_id, self.tick
+                            ),
+                        });
+                        self.flush_effects();
+                        return false;
+                    }
+                }
+
                 accumulator -= tick_period;
 
                 if self.drain_commands() {
@@ -331,7 +391,7 @@ impl TickEngine {
             }
 
             let sleep_time = tick_period - accumulator;
-            if sleep_time > Duration::from_micros(500) {
+            if sleep_time > MIN_SLEEP_DURATION {
                 std::thread::sleep(sleep_time);
             }
         }
@@ -343,13 +403,12 @@ impl TickEngine {
             tick = self.tick,
             "tick engine stopped"
         );
+        true
     }
 
-    /// Check for pending commands. Returns true if the engine should stop.
     fn drain_commands(&mut self) -> bool {
         loop {
             match self.cmd_rx.try_recv() {
-                Ok(IslandCommand::Tick) => {} // legacy no-op
                 Ok(IslandCommand::Drain) | Ok(IslandCommand::Stop) => return true,
                 Ok(IslandCommand::Passivate { snapshot_tx }) => {
                     self.send_passivation_snapshot(snapshot_tx);
@@ -383,7 +442,6 @@ impl TickEngine {
         bitcode::encode(&entries)
     }
 
-    /// Execute one tick (6 phases). Does NOT advance the tick counter.
     fn execute_tick(&mut self) {
         self.effects_out.clear();
         self.timers.set_current_tick(self.tick);
@@ -498,7 +556,6 @@ impl TickEngine {
     ) -> BTreeMap<EntitySlot, Vec<TickMessage>> {
         let mut queues: BTreeMap<EntitySlot, Vec<TickMessage>> = BTreeMap::new();
 
-        // Priority 1: Timers
         for (entity, name) in timer_messages {
             queues
                 .entry(*entity)
@@ -535,7 +592,6 @@ impl TickEngine {
                 });
         }
 
-        // Priority 4: Deferred sends from previous tick
         let deferred = std::mem::take(&mut self.deferred_sends);
         for send in deferred {
             queues
@@ -555,6 +611,7 @@ impl TickEngine {
         actor_queues: &BTreeMap<EntitySlot, Vec<TickMessage>>,
     ) -> Vec<(EntitySlot, Vec<TickEffect>)> {
         let mut effect_batch = Vec::new();
+        let mut entities_to_evict = Vec::new();
 
         let entities = &mut self.entities;
         let wasm = &mut self.wasm;
@@ -616,11 +673,42 @@ impl TickEngine {
                             trap = %trap,
                             "WASM trap"
                         );
-                        fault_tracker.record_fault(entity_slot, tick);
+                        let response = fault_tracker.record_fault(entity_slot, tick);
+                        match response {
+                            TrapResponse::Skip => {}
+                            TrapResponse::Reset => {
+                                if let Some(e) = entities.get_mut(entity_slot) {
+                                    let restore = e
+                                        .checkpoint_state
+                                        .clone()
+                                        .unwrap_or_else(|| e.init_state.clone());
+                                    e.state = restore;
+                                    warn!(entity = entity_slot.0, "entity reset to checkpoint");
+                                }
+                            }
+                            TrapResponse::Recreate => {
+                                if let Some(e) = entities.get_mut(entity_slot) {
+                                    e.state = e.init_state.clone();
+                                    e.checkpoint_state = None;
+                                    warn!(entity = entity_slot.0, "entity recreated with init state");
+                                }
+                            }
+                            TrapResponse::Evict => {
+                                entities_to_evict.push(*entity_slot);
+                                warn!(entity = entity_slot.0, "entity evicted");
+                            }
+                        }
                         break;
                     }
                 }
             }
+        }
+
+        for slot in entities_to_evict {
+            self.entities.remove(&slot);
+            self.timers.clear_entity(&slot);
+            self.effects_out
+                .push(BridgeEffect::EntityEvicted { entity: slot });
         }
 
         effect_batch
@@ -680,8 +768,12 @@ impl TickEngine {
             }
         }
 
-        // Coalesce persist: one checkpoint per island per tick
         if !persist_entities.is_empty() {
+            for (slot, state) in &persist_entities {
+                if let Some(entity) = self.entities.get_mut(slot) {
+                    entity.checkpoint_state = Some(state.clone());
+                }
+            }
             self.effects_out.push(BridgeEffect::Persist {
                 entity_states: persist_entities,
             });

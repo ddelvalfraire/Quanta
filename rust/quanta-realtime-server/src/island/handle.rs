@@ -3,6 +3,8 @@ use crate::island::state_machine::IslandState;
 use crate::tick::ClientInput;
 use crate::types::{IslandId, IslandManifest};
 use crossbeam_channel::Sender;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -25,4 +27,6 @@ pub struct IslandHandle {
     /// Deadline after which the island should be passivated (None = not scheduled).
     pub passivation_deadline: Option<Instant>,
     pub passivate_when_empty: bool,
+    pub heartbeat: Arc<AtomicU64>,
+    pub panicked: Arc<std::sync::atomic::AtomicBool>,
 }
