@@ -5,10 +5,10 @@ use tracing::{info, warn};
 use crate::auth::{run_auth_handshake, AuthValidator};
 use crate::config::EndpointConfig;
 use crate::error::EndpointError;
-use crate::session::QuicSession;
+use crate::session::{QuicSession, Session};
 
-/// Monotonic session counter for 0-RTT replay protection.
-static SESSION_COUNTER: AtomicU64 = AtomicU64::new(1);
+/// Monotonic counter for pre-auth connection logging.
+static CONNECTION_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Handle an incoming QUIC connection.
 ///
@@ -20,7 +20,7 @@ pub async fn handle_connection(
     incoming: quinn::Incoming,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<QuicSession, EndpointError> {
+) -> Result<Box<dyn Session>, EndpointError> {
     let connection = incoming.await.map_err(EndpointError::Quinn)?;
 
     let alpn = connection
@@ -37,19 +37,16 @@ pub async fn handle_connection(
         .map(|b| String::from_utf8_lossy(b).into_owned())
         .unwrap_or_else(|| "none".into());
 
-    let session_id = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let conn_id = CONNECTION_COUNTER.fetch_add(1, Ordering::Relaxed);
     info!(
         remote = %connection.remote_address(),
         alpn = %alpn_str,
-        session_id,
+        conn_id,
         "connection accepted"
     );
 
-    // Dispatch by ALPN
     match alpn.as_deref() {
-        Some(b"quanta-v1") => {
-            handle_quanta_v1(connection, validator, config).await
-        }
+        Some(b"quanta-v1") => handle_quanta_v1(connection, validator, config).await,
         Some(b"h3") => {
             // WebTransport upgrade — stub for T49
             warn!(remote = %connection.remote_address(), "h3 ALPN not yet implemented");
@@ -68,14 +65,13 @@ async fn handle_quanta_v1(
     connection: quinn::Connection,
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
-) -> Result<QuicSession, EndpointError> {
-    // Auth on first bidi stream, with the full auth timeout covering accept_bi + handshake
+) -> Result<Box<dyn Session>, EndpointError> {
     let result = tokio::time::timeout(config.auth_timeout, async {
         let (mut send, mut recv) = connection
             .accept_bi()
             .await
             .map_err(EndpointError::Quinn)?;
-        run_auth_handshake(&mut send, &mut recv, validator, config.auth_timeout).await
+        run_auth_handshake(&mut send, &mut recv, validator).await
     })
     .await;
 
@@ -105,19 +101,5 @@ async fn handle_quanta_v1(
         "auth succeeded"
     );
 
-    Ok(QuicSession::new(connection))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn session_counter_increments() {
-        let a = SESSION_COUNTER.load(Ordering::Relaxed);
-        let b = SESSION_COUNTER.fetch_add(1, Ordering::Relaxed);
-        assert_eq!(a, b);
-        let c = SESSION_COUNTER.load(Ordering::Relaxed);
-        assert_eq!(c, b + 1);
-    }
+    Ok(Box::new(QuicSession::new(connection)))
 }

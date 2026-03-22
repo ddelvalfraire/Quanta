@@ -1,9 +1,9 @@
-use std::sync::Arc;
-use std::time::Duration;
-
-use tokio::time::timeout;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::error::EndpointError;
+
+/// Maximum auth request size in bytes.
+const MAX_AUTH_REQUEST_BYTES: usize = 65_536;
 
 /// Client auth request sent on the first bidi stream.
 #[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
@@ -26,18 +26,21 @@ pub trait AuthValidator: Send + Sync {
 }
 
 /// Test validator that accepts all connections.
+#[cfg(any(test, feature = "test-utils"))]
 pub struct AcceptAllValidator {
     counter: std::sync::atomic::AtomicU64,
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl AcceptAllValidator {
-    pub fn new() -> Arc<Self> {
-        Arc::new(Self {
+    pub fn new() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
             counter: std::sync::atomic::AtomicU64::new(1),
         })
     }
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 impl AuthValidator for AcceptAllValidator {
     fn validate(&self, _req: &AuthRequest) -> Result<AuthResponse, EndpointError> {
         let session_id = self
@@ -55,51 +58,45 @@ impl AuthValidator for AcceptAllValidator {
 ///
 /// Protocol: read `[len:4 BE][bitcode AuthRequest]`, validate,
 /// write `[len:4 BE][bitcode AuthResponse]`.
+///
+/// The caller is responsible for applying a timeout around this function.
 pub async fn run_auth_handshake(
-    send: &mut quinn::SendStream,
-    recv: &mut quinn::RecvStream,
+    send: &mut (impl AsyncWrite + Unpin),
+    recv: &mut (impl AsyncRead + Unpin),
     validator: &dyn AuthValidator,
-    auth_timeout: Duration,
 ) -> Result<AuthResponse, EndpointError> {
-    timeout(auth_timeout, async {
-        // Read length-prefixed AuthRequest
-        let mut len_buf = [0u8; 4];
-        recv.read_exact(&mut len_buf)
-            .await
-            .map_err(|e| EndpointError::Auth(format!("read request length: {e}")))?;
-        let len = u32::from_be_bytes(len_buf) as usize;
+    let mut len_buf = [0u8; 4];
+    recv.read_exact(&mut len_buf)
+        .await
+        .map_err(|e| EndpointError::Auth(format!("read request length: {e}")))?;
+    let len = u32::from_be_bytes(len_buf) as usize;
 
-        if len > 65_536 {
-            return Err(EndpointError::Auth(format!(
-                "request too large: {len} bytes"
-            )));
-        }
+    if len > MAX_AUTH_REQUEST_BYTES {
+        return Err(EndpointError::Auth(format!(
+            "request too large: {len} bytes, max {MAX_AUTH_REQUEST_BYTES}"
+        )));
+    }
 
-        let mut buf = vec![0u8; len];
-        recv.read_exact(&mut buf)
-            .await
-            .map_err(|e| EndpointError::Auth(format!("read request body: {e}")))?;
+    let mut buf = vec![0u8; len];
+    recv.read_exact(&mut buf)
+        .await
+        .map_err(|e| EndpointError::Auth(format!("read request body: {e}")))?;
 
-        let req: AuthRequest =
-            bitcode::decode(&buf).map_err(|e| EndpointError::Auth(format!("decode request: {e}")))?;
+    let req: AuthRequest =
+        bitcode::decode(&buf).map_err(|e| EndpointError::Auth(format!("decode request: {e}")))?;
 
-        // Validate
-        let response = validator.validate(&req)?;
+    let response = validator.validate(&req)?;
 
-        // Write length-prefixed AuthResponse
-        let resp_bytes = bitcode::encode(&response);
-        let resp_len = (resp_bytes.len() as u32).to_be_bytes();
-        send.write_all(&resp_len)
-            .await
-            .map_err(|e| EndpointError::Auth(format!("write response length: {e}")))?;
-        send.write_all(&resp_bytes)
-            .await
-            .map_err(|e| EndpointError::Auth(format!("write response body: {e}")))?;
+    let resp_bytes = bitcode::encode(&response);
+    let resp_len = (resp_bytes.len() as u32).to_be_bytes();
+    send.write_all(&resp_len)
+        .await
+        .map_err(|e| EndpointError::Auth(format!("write response length: {e}")))?;
+    send.write_all(&resp_bytes)
+        .await
+        .map_err(|e| EndpointError::Auth(format!("write response body: {e}")))?;
 
-        Ok(response)
-    })
-    .await
-    .map_err(|_| EndpointError::Auth("auth timeout".into()))?
+    Ok(response)
 }
 
 #[cfg(test)]

@@ -3,12 +3,14 @@ use std::num::NonZeroU32;
 use std::sync::Arc;
 
 use governor::{Quota, RateLimiter};
+use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::auth::AuthValidator;
 use crate::config::EndpointConfig;
 use crate::connection::handle_connection;
 use crate::error::EndpointError;
+use crate::session::Session;
 use crate::tls::{build_server_config, TlsConfig};
 
 /// QUIC server endpoint.
@@ -53,9 +55,13 @@ impl QuicEndpoint {
     }
 
     /// Run the accept loop until shutdown is signalled.
+    ///
+    /// Authenticated sessions are sent through `session_tx` for the
+    /// application layer to consume (T50 pacing, T51 reconnection, etc).
     pub async fn run(
         self,
         validator: Arc<dyn AuthValidator>,
+        session_tx: mpsc::Sender<Box<dyn Session>>,
         mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) {
         loop {
@@ -66,7 +72,6 @@ impl QuicEndpoint {
                         break;
                     };
 
-                    // Rate limiting
                     if self.rate_limiter.check().is_err() {
                         warn!(
                             remote = %incoming.remote_address(),
@@ -78,9 +83,11 @@ impl QuicEndpoint {
 
                     let validator = validator.clone();
                     let config = self.config.clone();
+                    let tx = session_tx.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = handle_connection(incoming, &*validator, &config).await {
-                            warn!(error = %e, "connection failed");
+                        match handle_connection(incoming, &*validator, &config).await {
+                            Ok(session) => { let _ = tx.send(session).await; }
+                            Err(e) => warn!(error = %e, "connection failed"),
                         }
                     });
                 }

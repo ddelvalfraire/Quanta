@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use quinn::crypto::rustls::QuicServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use tracing::warn;
 
 use crate::error::EndpointError;
 
@@ -29,7 +30,10 @@ pub fn build_server_config(
             cert_path,
             key_path,
         } => load_pem_files(cert_path, key_path)?,
-        TlsConfig::SelfSigned => generate_self_signed()?,
+        TlsConfig::SelfSigned => {
+            warn!("using self-signed TLS certificate — not suitable for production");
+            generate_self_signed()?
+        }
     };
 
     let mut rustls_config = rustls::ServerConfig::builder()
@@ -38,7 +42,8 @@ pub fn build_server_config(
         .map_err(|e| EndpointError::Tls(e.to_string()))?;
 
     rustls_config.alpn_protocols = ALPN_PROTOCOLS.iter().map(|&p| p.to_vec()).collect();
-    rustls_config.max_early_data_size = u32::MAX; // Enable 0-RTT
+    // TODO: 0-RTT requires application-level replay protection before enabling.
+    // See https://www.rfc-editor.org/rfc/rfc9001#section-9.2
 
     let quic_config = QuicServerConfig::try_from(rustls_config)
         .map_err(|e| EndpointError::Tls(e.to_string()))?;

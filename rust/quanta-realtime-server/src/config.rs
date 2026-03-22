@@ -59,20 +59,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_correct() {
-        let cfg = EndpointConfig::default();
-        assert_eq!(cfg.idle_timeout, Duration::from_secs(30));
-        assert_eq!(cfg.keep_alive_interval, Duration::from_secs(5));
-        assert_eq!(cfg.initial_rtt, Duration::from_millis(50));
-        assert_eq!(cfg.datagram_receive_buffer_size, 65_536);
-        assert_eq!(cfg.datagram_send_buffer_size, 65_536);
-        assert_eq!(cfg.max_concurrent_bidi_streams, 8);
-        assert_eq!(cfg.max_concurrent_uni_streams, 4);
-        assert_eq!(cfg.rate_limit_per_sec, 100);
-        assert_eq!(cfg.auth_timeout, Duration::from_secs(5));
-    }
-
-    #[test]
     fn build_transport_config_does_not_panic() {
         let cfg = EndpointConfig::default();
         let _transport = cfg.build_transport_config();

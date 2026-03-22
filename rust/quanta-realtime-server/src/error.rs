@@ -7,8 +7,6 @@ pub enum EndpointError {
     Bind(std::io::Error),
     Quinn(quinn::ConnectionError),
     Auth(String),
-    RateLimited,
-    DatagramTooLarge { size: usize, max: usize },
     Send(SendError),
 }
 
@@ -19,10 +17,6 @@ impl fmt::Display for EndpointError {
             Self::Bind(err) => write!(f, "bind error: {err}"),
             Self::Quinn(err) => write!(f, "QUIC connection error: {err}"),
             Self::Auth(msg) => write!(f, "auth error: {msg}"),
-            Self::RateLimited => write!(f, "rate limited"),
-            Self::DatagramTooLarge { size, max } => {
-                write!(f, "datagram too large: {size} bytes, max {max}")
-            }
             Self::Send(err) => write!(f, "send error: {err}"),
         }
     }
@@ -61,11 +55,8 @@ mod tests {
         let err = EndpointError::Tls("bad cert".into());
         assert_eq!(err.to_string(), "TLS error: bad cert");
 
-        let err = EndpointError::RateLimited;
-        assert_eq!(err.to_string(), "rate limited");
-
-        let err = EndpointError::DatagramTooLarge { size: 2000, max: 1200 };
-        assert_eq!(err.to_string(), "datagram too large: 2000 bytes, max 1200");
+        let err = EndpointError::Auth("forbidden".into());
+        assert_eq!(err.to_string(), "auth error: forbidden");
     }
 
     #[test]
