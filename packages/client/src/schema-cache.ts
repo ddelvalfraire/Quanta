@@ -1,9 +1,7 @@
 import type { SchemaHandle, QuantaDecoder } from "@quanta/delta-decoder";
 
 /**
- * Caches parsed SchemaHandle instances keyed by a string identifier
- * (typically "namespace:type"). Falls back to localStorage for persistence
- * of the raw QSCH bytes across page reloads.
+ * In-memory SchemaHandle cache with localStorage persistence for QSCH bytes.
  */
 export class SchemaCache {
   private handles = new Map<string, SchemaHandle>();
@@ -13,7 +11,6 @@ export class SchemaCache {
     this.storagePrefix = storagePrefix;
   }
 
-  /** Get or create a SchemaHandle from raw QSCH bytes. */
   getOrCreate(key: string, bytes: Uint8Array, decoder: QuantaDecoder): SchemaHandle {
     const existing = this.handles.get(key);
     if (existing) return existing;
@@ -24,7 +21,6 @@ export class SchemaCache {
     return handle;
   }
 
-  /** Try to restore a schema from localStorage. Returns null if not found. */
   restore(key: string, decoder: QuantaDecoder): SchemaHandle | null {
     const existing = this.handles.get(key);
     if (existing) return existing;
@@ -42,7 +38,6 @@ export class SchemaCache {
     }
   }
 
-  /** Remove a cached schema. */
   remove(key: string): void {
     const handle = this.handles.get(key);
     if (handle) {
@@ -52,7 +47,6 @@ export class SchemaCache {
     this.removeBytes(key);
   }
 
-  /** Clear all cached schemas and their localStorage entries. */
   clear(): void {
     for (const [key, handle] of this.handles) {
       handle.free();
