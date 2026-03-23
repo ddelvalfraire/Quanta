@@ -1,14 +1,10 @@
 import type { QuantaDecoder, SchemaHandle, DecodedState } from "@quanta/delta-decoder";
 import type { ActorChannelEvents, EventName } from "./types.js";
+import type { Connection } from "./connection.js";
+import { TypedEmitter } from "./emitter.js";
 
-/**
- * Per-actor channel wrapper.
- *
- * Manages the binary state for a single actor, applies incoming deltas,
- * and emits typed events. Designed to be used with a Phoenix Channel
- * transport (provided by QuantaClient).
- */
-export class ActorChannel {
+export class ActorChannel extends TypedEmitter<ActorChannelEvents> {
+  readonly entitySlot: number;
   readonly namespace: string;
   readonly actorType: string;
   readonly actorId: string;
@@ -19,45 +15,65 @@ export class ActorChannel {
   private state: Uint8Array;
   private decoded: DecodedState;
   private seq = 0;
-  private listeners = new Map<EventName, Set<(...args: unknown[]) => void>>();
+  private inputSeq = 0;
+  private schemaVersion: number;
+  private connection: Connection | null;
 
   constructor(
+    entitySlot: number,
     namespace: string,
     actorType: string,
     actorId: string,
     decoder: QuantaDecoder,
     schema: SchemaHandle,
+    schemaVersion: number,
     initialState: Uint8Array,
+    connection: Connection | null,
   ) {
+    super();
+    this.entitySlot = entitySlot;
     this.namespace = namespace;
     this.actorType = actorType;
     this.actorId = actorId;
     this.topic = `actor:${namespace}:${actorType}:${actorId}`;
     this.decoder = decoder;
     this.schema = schema;
+    this.schemaVersion = schemaVersion;
     this.state = initialState;
     this.decoded = decoder.decodeState(schema, initialState);
+    this.connection = connection;
   }
 
-  /** Current decoded state. */
   getState(): DecodedState {
     return this.decoded;
   }
 
-  /** Current raw state bytes. */
   getRawState(): Uint8Array {
     return this.state;
   }
 
-  /** Current sequence number (incremented on each delta). */
   getSeq(): number {
     return this.seq;
   }
 
-  /**
-   * Apply a binary delta received from the server.
-   * Emits a "delta" event with the new decoded state.
-   */
+  getSchemaVersion(): number {
+    return this.schemaVersion;
+  }
+
+  /** Frames as [entity_slot:u32 BE][input_seq:u32 BE][payload] per ClientInput. */
+  send(payload: Uint8Array): void {
+    if (!this.connection) {
+      throw new Error("ActorChannel not connected");
+    }
+    const seq = this.inputSeq++;
+    const frame = new Uint8Array(8 + payload.length);
+    const view = new DataView(frame.buffer);
+    view.setUint32(0, this.entitySlot);
+    view.setUint32(4, seq);
+    frame.set(payload, 8);
+    this.connection.sendDatagram(frame);
+  }
+
   applyDelta(delta: Uint8Array): void {
     const prev = this.decoded;
     try {
@@ -78,40 +94,28 @@ export class ActorChannel {
     }
   }
 
-  /** Handle server-side node draining signal. */
+  handleSnapshot(
+    stateBytes: Uint8Array,
+    schemaVersion: number,
+    seq: number,
+  ): void {
+    this.state = stateBytes;
+    this.schemaVersion = schemaVersion;
+    this.seq = seq;
+    this.decoded = this.decoder.decodeState(this.schema, stateBytes);
+    this.emit("fullState", this.decoded);
+  }
+
   handleDraining(reconnectMs: number): void {
     this.emit("draining", reconnectMs);
   }
 
-  /** Handle actor stopped signal. */
   handleStopped(): void {
     this.emit("stopped");
   }
 
-  /** Subscribe to channel events. */
-  on<E extends EventName>(event: E, callback: ActorChannelEvents[E]): void {
-    let set = this.listeners.get(event);
-    if (!set) {
-      set = new Set();
-      this.listeners.set(event, set);
-    }
-    set.add(callback as (...args: unknown[]) => void);
-  }
-
-  /** Unsubscribe from channel events. */
-  off<E extends EventName>(event: E, callback: ActorChannelEvents[E]): void {
-    this.listeners.get(event)?.delete(callback as (...args: unknown[]) => void);
-  }
-
-  private emit(event: EventName, ...args: unknown[]): void {
-    const set = this.listeners.get(event);
-    if (!set) return;
-    for (const cb of set) {
-      try {
-        cb(...args);
-      } catch {
-        // Don't let listener errors break the channel
-      }
-    }
+  disconnect(): void {
+    this.connection = null;
+    this.clearListeners();
   }
 }
