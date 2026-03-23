@@ -2,12 +2,13 @@ use crate::command::{
     ActivationError, IslandCommand, LifecycleError, ManagerCommand, ManagerMetrics,
     ZoneTransferError,
 };
+use crate::effect_io;
 use crate::zone_transfer::{ZoneTransferManager, ZoneTransferToken};
 use crate::config::ServerConfig;
 use crate::island::handle::{IslandHandle, ThreadModel};
 use crate::island::registry::IslandRegistry;
 use crate::island::state_machine::IslandState;
-use crate::tick::types::{BridgeMessage, ClientInput, NoopWasmExecutor, TickEngineConfig};
+use crate::tick::types::{BridgeEffect, BridgeMessage, ClientInput, NoopWasmExecutor, TickEngineConfig};
 use crate::tick::TickEngine;
 use crate::traits::Bridge;
 use crate::types::{IslandId, IslandManifest, IslandSnapshot};
@@ -174,6 +175,8 @@ impl IslandManager {
         let passivate_when_empty = manifest.passivate_when_empty;
         let shutdown = self.shutdown.clone();
 
+        let (effect_tx, effect_rx) = effect_io::effect_channel();
+
         let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let engine_heartbeat = heartbeat.clone();
         let engine_island_id = island_id.clone();
@@ -192,6 +195,7 @@ impl IslandManager {
                 shutdown,
                 engine_heartbeat,
             );
+            engine.set_effect_sender(effect_tx);
 
             if let Some(snap) = snapshot {
                 engine.restore_from_snapshot(&snap);
@@ -201,6 +205,17 @@ impl IslandManager {
             if !clean {
                 engine_panicked.store(true, Ordering::Relaxed);
             }
+        });
+
+        // Spawn effect consumer task — routes effects to their handlers.
+        // Exits when the island thread drops the EffectSender.
+        let effect_island_id = island_id.clone();
+        let effect_bridge = self.bridge.clone();
+        tokio::spawn(async move {
+            effect_io::run_effect_drain(effect_rx, move |effect| {
+                handle_effect(&effect_island_id, &*effect_bridge, effect);
+            })
+            .await;
         });
 
         let idle_timeout = Duration::from_secs(self.config.idle_timeout_secs);
@@ -535,4 +550,53 @@ pub fn manager_channel(
     mpsc::Receiver<ManagerCommand>,
 ) {
     mpsc::channel(buffer)
+}
+
+/// Route a single BridgeEffect to the appropriate handler.
+///
+/// Currently handles Persist (via checkpoint — TODO: wire checkpoint handle),
+/// EmitTelemetry (log), and EntityEvicted (log). Remote sends and bridge
+/// replies require Bridge trait extensions (future tickets).
+fn handle_effect(island_id: &IslandId, _bridge: &dyn Bridge, effect: BridgeEffect) {
+    match effect {
+        BridgeEffect::Persist { entity_states } => {
+            info!(
+                %island_id,
+                entity_count = entity_states.len(),
+                "persist effect received (checkpoint routing TODO)"
+            );
+        }
+        BridgeEffect::EmitTelemetry { event } => {
+            info!(%island_id, %event, "telemetry");
+        }
+        BridgeEffect::EntityEvicted { entity } => {
+            info!(%island_id, ?entity, "entity evicted");
+        }
+        BridgeEffect::ZoneTransferRequest {
+            player_id,
+            source_entity,
+            target_zone,
+            ..
+        } => {
+            info!(
+                %island_id,
+                %player_id,
+                ?source_entity,
+                %target_zone,
+                "zone transfer request from entity"
+            );
+        }
+        BridgeEffect::SendRemote { target, .. } => {
+            info!(%island_id, %target, "remote send (bridge routing TODO)");
+        }
+        BridgeEffect::RequestRemote { target, .. } => {
+            info!(%island_id, %target, "remote request (bridge routing TODO)");
+        }
+        BridgeEffect::FireAndForget { target, .. } => {
+            info!(%island_id, %target, "fire-and-forget (bridge routing TODO)");
+        }
+        BridgeEffect::BridgeReply { correlation_id, .. } => {
+            info!(%island_id, ?correlation_id, "bridge reply (routing TODO)");
+        }
+    }
 }
