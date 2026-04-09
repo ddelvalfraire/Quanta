@@ -161,4 +161,22 @@ defmodule Quanta.Nifs.WasmRuntimeTest do
     garbage = :crypto.strong_rand_bytes(64)
     assert {:error, _reason} = WasmRuntime.component_compile(engine, garbage)
   end
+
+  # 16. call_handle_message("log") → log effect with message
+  test "handle_message log returns log effect", %{engine: engine, component: component, linker: linker} do
+    {:ok, state, _} = WasmRuntime.call_init(engine, component, linker, <<>>, @fuel, @mem)
+
+    envelope = %{"source" => "test", "payload" => "log"}
+    {:ok, new_state, effects} = WasmRuntime.call_handle_message(engine, component, linker, state, envelope, @fuel, @mem)
+
+    # State unchanged (log doesn't modify counter)
+    assert new_state == state
+
+    # Log effect returned
+    assert [%{"type" => "log", "message" => "hello from actor"}] = effects
+
+    # Verify decoder handles it
+    decoded = EffectDecoder.decode_all(effects)
+    assert [{:log, "hello from actor"}] = decoded
+  end
 end

@@ -164,6 +164,11 @@ defmodule Quanta.Actor.EffectExecutor do
     acc
   end
 
+  defp execute_one({:log, message}, acc, context) do
+    Logger.info("[actor:#{inspect(context.actor_id)}] #{message}")
+    acc
+  end
+
   defp execute_one(:stop_self, acc, _context) do
     %{acc | stop_self: true}
   end

@@ -4,6 +4,7 @@ use sha2::Sha256;
 use std::collections::HashMap;
 use wasmtime::component::{Component, ComponentExportIndex, Linker, ResourceTable};
 use wasmtime::{Config, Engine, Store, StoreLimits, StoreLimitsBuilder, Trap};
+use wasmtime_wasi::p2::pipe::MemoryOutputPipe;
 use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
 
 use crate::resources::{ComponentResource, EngineResource, LinkerResource};
@@ -87,20 +88,50 @@ fn verify_hmac(key: &[u8], data: &[u8], tag: &[u8]) -> bool {
 // Store / export helpers
 // ---------------------------------------------------------------------------
 
-fn create_store(engine: &Engine, fuel: u64, memory_limit: usize) -> Store<ActorStoreData> {
+const STDOUT_CAPACITY: usize = 65_536;
+
+fn create_store(
+    engine: &Engine, fuel: u64, memory_limit: usize,
+) -> (Store<ActorStoreData>, MemoryOutputPipe, MemoryOutputPipe) {
+    let stdout_pipe = MemoryOutputPipe::new(STDOUT_CAPACITY);
+    let stderr_pipe = MemoryOutputPipe::new(STDOUT_CAPACITY);
+    let stdout_reader = stdout_pipe.clone();
+    let stderr_reader = stderr_pipe.clone();
+
     let limits = StoreLimitsBuilder::new()
         .memory_size(memory_limit)
         .trap_on_grow_failure(true)
         .build();
     let data = ActorStoreData {
         limits,
-        wasi_ctx: WasiCtxBuilder::new().build(),
+        wasi_ctx: WasiCtxBuilder::new()
+            .stdout(stdout_pipe)
+            .stderr(stderr_pipe)
+            .build(),
         resource_table: ResourceTable::new(),
     };
     let mut store = Store::new(engine, data);
     store.limiter(|d| &mut d.limits);
     store.set_fuel(fuel).expect("fuel should be settable");
-    store
+    (store, stdout_reader, stderr_reader)
+}
+
+fn collect_stdout(
+    mut result: WitHandleResult, stdout: &MemoryOutputPipe, stderr: &MemoryOutputPipe,
+) -> WitHandleResult {
+    let out = stdout.contents();
+    if !out.is_empty() {
+        result.effects.push(WitEffect::Log(
+            String::from_utf8_lossy(&out).into_owned(),
+        ));
+    }
+    let err = stderr.contents();
+    if !err.is_empty() {
+        result.effects.push(WitEffect::Log(
+            format!("[stderr] {}", String::from_utf8_lossy(&err)),
+        ));
+    }
+    result
 }
 
 fn get_actor_func_index(
@@ -408,13 +439,13 @@ fn call_init_inner(
     engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
     payload: &[u8], fuel: u64, mem: usize,
 ) -> Result<WitHandleResult, wasmtime::Error> {
-    let mut store = create_store(engine, fuel, mem);
+    let (mut store, stdout, stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
     let idx = get_actor_func_index(component, "init").map_err(wasmtime::Error::msg)?;
     let func = instance.get_typed_func::<(Vec<u8>,), (WitHandleResult,)>(&mut store, &idx)?;
     let (result,) = func.call(&mut store, (payload.to_vec(),))?;
     func.post_return(&mut store)?;
-    Ok(result)
+    Ok(collect_stdout(result, &stdout, &stderr))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -444,13 +475,13 @@ fn call_handle_message_inner(
     engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
     state: &[u8], envelope: WitEnvelope, fuel: u64, mem: usize,
 ) -> Result<WitHandleResult, wasmtime::Error> {
-    let mut store = create_store(engine, fuel, mem);
+    let (mut store, stdout, stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
     let idx = get_actor_func_index(component, "handle-message").map_err(wasmtime::Error::msg)?;
     let func = instance.get_typed_func::<(Vec<u8>, WitEnvelope), (WitHandleResult,)>(&mut store, &idx)?;
     let (result,) = func.call(&mut store, (state.to_vec(), envelope))?;
     func.post_return(&mut store)?;
-    Ok(result)
+    Ok(collect_stdout(result, &stdout, &stderr))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -476,13 +507,13 @@ fn call_handle_timer_inner(
     engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
     state: &[u8], timer_name: &str, fuel: u64, mem: usize,
 ) -> Result<WitHandleResult, wasmtime::Error> {
-    let mut store = create_store(engine, fuel, mem);
+    let (mut store, stdout, stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
     let idx = get_actor_func_index(component, "handle-timer").map_err(wasmtime::Error::msg)?;
     let func = instance.get_typed_func::<(Vec<u8>, String), (WitHandleResult,)>(&mut store, &idx)?;
     let (result,) = func.call(&mut store, (state.to_vec(), timer_name.to_string()))?;
     func.post_return(&mut store)?;
-    Ok(result)
+    Ok(collect_stdout(result, &stdout, &stderr))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -511,13 +542,13 @@ fn call_migrate_inner(
     engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
     state: &[u8], from_version: u32, fuel: u64, mem: usize,
 ) -> Result<WitHandleResult, wasmtime::Error> {
-    let mut store = create_store(engine, fuel, mem);
+    let (mut store, stdout, stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
     let idx = get_actor_func_index(component, "migrate").map_err(wasmtime::Error::msg)?;
     let func = instance.get_typed_func::<(Vec<u8>, u32), (WitHandleResult,)>(&mut store, &idx)?;
     let (result,) = func.call(&mut store, (state.to_vec(), from_version))?;
     func.post_return(&mut store)?;
-    Ok(result)
+    Ok(collect_stdout(result, &stdout, &stderr))
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -549,7 +580,7 @@ fn call_on_passivate_inner(
     engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
     state: &[u8], fuel: u64, mem: usize,
 ) -> Result<Vec<u8>, wasmtime::Error> {
-    let mut store = create_store(engine, fuel, mem);
+    let (mut store, _stdout, _stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
     let idx = get_actor_func_index(component, "on-passivate").map_err(wasmtime::Error::msg)?;
     let func = instance.get_typed_func::<(Vec<u8>,), (Vec<u8>,)>(&mut store, &idx)?;

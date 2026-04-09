@@ -25,4 +25,5 @@ defmodule Quanta.Effect do
           | :stop_self
           | {:side_effect, {module(), atom(), [term()]}}
           | {:crdt_ops, [crdt_op()]}
+          | {:log, String.t()}
 end

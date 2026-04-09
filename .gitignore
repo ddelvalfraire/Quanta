@@ -55,3 +55,7 @@ propcheck.ctex
 # Claude Code
 CLAUDE.md
 .claude/
+
+# Planning / research artifacts
+tickets/
+rust/fixtures/counter-actor/src/bindings.rs

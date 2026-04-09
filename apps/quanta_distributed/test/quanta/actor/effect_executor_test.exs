@@ -357,4 +357,40 @@ defmodule Quanta.Actor.EffectExecutorTest do
       assert_receive {:msg, %{topic: ^subject, body: "pub_payload"}}, 1_000
     end
   end
+
+  describe ":log" do
+    test "logs message and returns accumulator unchanged" do
+      ctx = make_context()
+
+      log_output =
+        capture_log(fn ->
+          result = EffectExecutor.execute([{:log, "test log message"}], ctx)
+          assert result.reply == nil
+          assert result.server_state == ctx.server_state
+          assert result.stop_self == false
+          assert result.sent_ids == []
+        end)
+
+      assert log_output =~ "test log message"
+    end
+
+    test "handles multiple log effects" do
+      ctx = make_context()
+
+      log_output =
+        capture_log(fn ->
+          result =
+            EffectExecutor.execute(
+              [{:log, "first message"}, {:log, "second message"}],
+              ctx
+            )
+
+          assert result.reply == nil
+          assert result.stop_self == false
+        end)
+
+      assert log_output =~ "first message"
+      assert log_output =~ "second message"
+    end
+  end
 end
