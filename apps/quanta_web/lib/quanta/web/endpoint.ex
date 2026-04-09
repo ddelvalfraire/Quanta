@@ -14,5 +14,11 @@ defmodule Quanta.Web.Endpoint do
 
   plug Quanta.Web.Plugs.RequestId
 
+  plug Plug.Static,
+    at: "/",
+    from: {:quanta_web, "priv/static"},
+    gzip: false,
+    only: ~w(assets index.html favicon.ico)
+
   plug Quanta.Web.Router
 end
