@@ -35,6 +35,10 @@ impl Guest for CounterActor {
                 state,
                 effects: vec![Effect::Reply(counter.to_le_bytes().to_vec())],
             },
+            "log" => HandleResult {
+                state,
+                effects: vec![Effect::Log("hello from actor".to_string())],
+            },
             _ => HandleResult {
                 state,
                 effects: vec![],
