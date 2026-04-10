@@ -4,6 +4,7 @@ import { connectAndJoin } from "./connection";
 import { setupSync } from "./sync";
 import { setupEphemeralSync } from "./ephemeral-sync";
 import { setupPresence } from "./presence";
+import { setupExecution } from "./execution";
 import type { ConnectionStatus } from "./connection";
 
 const COLORS = [
@@ -19,7 +20,7 @@ function pickColor(index: number) {
 }
 
 const app = document.getElementById("app")!;
-const { editorContainer, statusBar } = createLayout(app);
+const { editorContainer, statusBar, runBtn, clearBtn } = createLayout(app);
 
 const statusEl = document.getElementById("conn-status")!;
 const outputLog = document.getElementById("output-log")!;
@@ -42,7 +43,7 @@ const userIndex = Math.floor(Math.random() * 1000);
 const userColor = pickColor(userIndex);
 const userName = `User-${userIndex}`;
 
-const { doc, ephemeral } = createEditor(editorContainer, {
+const { doc, ephemeral, view } = createEditor(editorContainer, {
   name: userName,
   ...userColor,
 });
@@ -51,6 +52,13 @@ const { channel } = connectAndJoin("crdt:dev:file:demo", doc, updateStatus);
 
 setupSync(doc, channel);
 setupEphemeralSync(ephemeral, channel);
+setupExecution(
+  channel,
+  () => view.state.doc.toString(),
+  outputLog,
+  runBtn,
+  clearBtn
+);
 
 setupPresence(channel, (users) => {
   const countEl = document.querySelector(".user-count");

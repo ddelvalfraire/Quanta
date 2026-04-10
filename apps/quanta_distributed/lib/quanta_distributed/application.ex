@@ -7,6 +7,7 @@ defmodule QuantaDistributed.Application do
     :syn.set_event_handler(Quanta.Actor.SynEventHandler)
 
     children = [
+      Quanta.Wasm.JsExecutor,
       Quanta.Supervisor
     ]
 

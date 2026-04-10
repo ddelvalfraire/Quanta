@@ -169,6 +169,16 @@ defmodule Quanta.Actor.EffectExecutor do
     acc
   end
 
+  defp execute_one({:broadcast_output, payload}, acc, _context) when is_map(payload) do
+    encoded = Jason.encode!(payload)
+
+    for {pid, {_user_id, _ref}} <- acc.server_state.subscribers do
+      send(pid, {:execution_output, encoded})
+    end
+
+    acc
+  end
+
   defp execute_one(:stop_self, acc, _context) do
     %{acc | stop_self: true}
   end

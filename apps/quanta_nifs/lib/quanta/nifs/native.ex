@@ -345,6 +345,13 @@ defmodule Quanta.Nifs.Native do
           :ok | {:error, String.t()}
   def ephemeral_store_apply_encoded(_store, _bytes), do: :erlang.nif_error(:nif_not_loaded)
 
+  # --- JS Executor (Javy/QuickJS) ---
+
+  @spec execute_js(binary(), binary(), pos_integer(), pos_integer()) ::
+          {:ok, binary(), binary()} | {:error, atom() | String.t()}
+  def execute_js(_wasm_bytes, _js_source, _fuel, _memory_limit),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   # --- Schema Compiler ---
 
   @spec schema_compile(

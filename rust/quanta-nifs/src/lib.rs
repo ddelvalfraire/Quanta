@@ -10,6 +10,7 @@ mod ephemeral_store;
 mod nats;
 mod schema_compiler;
 mod delta_encoder;
+mod js_executor;
 
 use rustler::Env;
 

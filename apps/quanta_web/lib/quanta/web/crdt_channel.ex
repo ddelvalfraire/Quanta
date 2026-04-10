@@ -150,6 +150,12 @@ defmodule Quanta.Web.CrdtChannel do
   end
 
   @impl true
+  def handle_info({:execution_output, json_payload}, socket) do
+    push(socket, "execution_output", %{data: json_payload})
+    {:noreply, socket}
+  end
+
+  @impl true
   def handle_info({:ephemeral_update, encoded_bytes, sender_pid}, socket) do
     if sender_pid != self() do
       push(socket, "ephemeral_update", %{data: Base.encode64(encoded_bytes)})

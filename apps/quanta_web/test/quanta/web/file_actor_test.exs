@@ -56,4 +56,70 @@ defmodule Quanta.Web.FileActorTest do
       assert_reply ref, :error, %{reason: "insufficient_scope"}
     end
   end
+
+  describe "code execution" do
+    @tag timeout: 30_000
+
+    test "run command broadcasts output to subscriber" do
+      {:ok, sock_a} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})
+
+      {:ok, _reply, sock_a} =
+        subscribe_and_join(sock_a, "crdt:test:file:exec-1", %{})
+
+      payload = Jason.encode!(%{"type" => "run", "code" => ~s[console.log("hello")]})
+      ref = push(sock_a, "message", %{"payload" => Base.encode64(payload)})
+      assert_reply ref, :ok, %{}, 10_000
+
+      assert_push "execution_output", %{data: json_data}, 5_000
+      data = Jason.decode!(json_data)
+      assert data["status"] == "ok"
+      assert data["stdout"] =~ "hello"
+    end
+
+    test "run command error broadcasts error" do
+      {:ok, sock_a} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})
+
+      {:ok, _reply, sock_a} =
+        subscribe_and_join(sock_a, "crdt:test:file:exec-2", %{})
+
+      payload = Jason.encode!(%{"type" => "run", "code" => "while(true){}"})
+      ref = push(sock_a, "message", %{"payload" => Base.encode64(payload)})
+      assert_reply ref, :ok, %{}, 10_000
+
+      assert_push "execution_output", %{data: json_data}, 5_000
+      data = Jason.decode!(json_data)
+      assert data["status"] == "error"
+    end
+
+    test "ro scope cannot execute" do
+      {:ok, socket} = connect(Quanta.Web.ActorSocket, %{"token" => @ro_key})
+
+      {:ok, _reply, socket} =
+        subscribe_and_join(socket, "crdt:test:file:exec-3", %{})
+
+      payload = Jason.encode!(%{"type" => "run", "code" => ~s[console.log("hi")]})
+      ref = push(socket, "message", %{"payload" => Base.encode64(payload)})
+      assert_reply ref, :error, %{reason: "insufficient_scope"}
+    end
+
+    test "both subscribers receive execution output" do
+      {:ok, sock_a} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})
+
+      {:ok, _reply, sock_a} =
+        subscribe_and_join(sock_a, "crdt:test:file:exec-4", %{})
+
+      {:ok, sock_b} = connect(Quanta.Web.ActorSocket, %{"token" => @rw_key})
+
+      {:ok, _reply, _sock_b} =
+        subscribe_and_join(sock_b, "crdt:test:file:exec-4", %{"user_id" => "bob"})
+
+      payload = Jason.encode!(%{"type" => "run", "code" => ~s[console.log("shared")]})
+      ref = push(sock_a, "message", %{"payload" => Base.encode64(payload)})
+      assert_reply ref, :ok, %{}, 10_000
+
+      assert_push "execution_output", %{data: json_data}, 5_000
+      data = Jason.decode!(json_data)
+      assert data["stdout"] =~ "shared"
+    end
+  end
 end
