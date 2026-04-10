@@ -8,13 +8,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "codemirror": "^6.0.0",
     "@codemirror/lang-javascript": "^6.0.0",
     "@codemirror/lang-python": "^6.0.0",
+    "codemirror": "^6.0.0",
+    "loro-codemirror": "^0.3.3",
+    "loro-crdt": "^1.10.0",
     "phoenix": "^1.8.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vite-plugin-wasm": "^3.6.0"
   }
 }

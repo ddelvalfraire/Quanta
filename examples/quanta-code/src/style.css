@@ -162,3 +162,70 @@ body {
   font-size: 11px;
   color: var(--text-secondary);
 }
+
+/* Remote cursor colors — class names match awareness user.colorClassName */
+.user-blue .loro-cursor {
+  background: #4A9EFF;
+}
+.user-blue .loro-cursor::before {
+  background: #4A9EFF;
+  color: #fff;
+}
+.user-blue.loro-selection {
+  background: rgba(74, 158, 255, 0.25);
+}
+
+.user-red .loro-cursor {
+  background: #FF6B6B;
+}
+.user-red .loro-cursor::before {
+  background: #FF6B6B;
+  color: #fff;
+}
+.user-red.loro-selection {
+  background: rgba(255, 107, 107, 0.25);
+}
+
+.user-green .loro-cursor {
+  background: #51CF66;
+}
+.user-green .loro-cursor::before {
+  background: #51CF66;
+  color: #000;
+}
+.user-green.loro-selection {
+  background: rgba(81, 207, 102, 0.25);
+}
+
+.user-yellow .loro-cursor {
+  background: #FFD43B;
+}
+.user-yellow .loro-cursor::before {
+  background: #FFD43B;
+  color: #000;
+}
+.user-yellow.loro-selection {
+  background: rgba(255, 212, 59, 0.25);
+}
+
+.user-purple .loro-cursor {
+  background: #CC5DE8;
+}
+.user-purple .loro-cursor::before {
+  background: #CC5DE8;
+  color: #fff;
+}
+.user-purple.loro-selection {
+  background: rgba(204, 93, 232, 0.25);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+}

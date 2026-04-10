@@ -9,7 +9,7 @@ export function createLayout(root: HTMLElement): LayoutElements {
   root.innerHTML = "";
 
   const header = el("header", "header");
-  header.innerHTML = `<span class="logo">Quanta Code</span><span class="status" id="conn-status">disconnected</span>`;
+  header.innerHTML = `<span class="logo">Quanta Code</span><div class="header-right"><span class="user-count"></span><span class="status" id="conn-status">disconnected</span></div>`;
 
   const sidebar = el("aside", "sidebar");
   sidebar.innerHTML = `<div class="sidebar-heading">Files</div><div class="sidebar-placeholder">Phase 5</div>`;

@@ -360,6 +360,22 @@ defmodule Quanta.Actor.Server do
   end
 
   @impl true
+  def handle_cast({:ephemeral_sync, bytes, sender_pid}, state) do
+    if state.ephemeral_store do
+      case EphemeralStore.apply_encoded(state.ephemeral_store, bytes) do
+        :ok ->
+          {:ok, canonical} = EphemeralStore.encode_all(state.ephemeral_store)
+          broadcast_ephemeral(state, canonical, sender_pid)
+
+        {:error, _} ->
+          :ok
+      end
+    end
+
+    {:noreply, state}
+  end
+
+  @impl true
   def handle_info(:passivate, state) do
     idle_ms = idle_timeout_ms(state)
     elapsed_ms = System.convert_time_unit(System.monotonic_time() - state.last_active_at, :native, :millisecond)

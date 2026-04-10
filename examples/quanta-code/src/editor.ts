@@ -1,23 +1,38 @@
 import { EditorView, basicSetup } from "codemirror";
 import { javascript } from "@codemirror/lang-javascript";
 import { EditorState } from "@codemirror/state";
+import { LoroExtensions } from "loro-codemirror";
+import { LoroDoc, EphemeralStore, UndoManager } from "loro-crdt";
 
-const INITIAL_DOC = `// Welcome to Quanta Code
-// Start typing — collaborative editing comes in Phase 3
-
-function greet(name) {
-  console.log("Hello, " + name + "!");
+export interface UserInfo {
+  name: string;
+  colorClassName: string;
 }
 
-greet("Quanta");
-`;
+export interface EditorContext {
+  view: EditorView;
+  doc: LoroDoc;
+  ephemeral: EphemeralStore;
+  undoManager: UndoManager;
+}
 
-export function createEditor(parent: HTMLElement): EditorView {
+export function createEditor(
+  parent: HTMLElement,
+  user: UserInfo
+): EditorContext {
+  const doc = new LoroDoc();
+  const ephemeral = new EphemeralStore();
+  const undoManager = new UndoManager(doc, {});
+
   const state = EditorState.create({
-    doc: INITIAL_DOC,
     extensions: [
       basicSetup,
       javascript(),
+      LoroExtensions(
+        doc,
+        { user: { name: user.name, colorClassName: user.colorClassName }, ephemeral },
+        undoManager
+      ),
       EditorView.theme({
         "&": { height: "100%" },
         ".cm-scroller": { overflow: "auto" },
@@ -25,5 +40,6 @@ export function createEditor(parent: HTMLElement): EditorView {
     ],
   });
 
-  return new EditorView({ state, parent });
+  const view = new EditorView({ state, parent });
+  return { view, doc, ephemeral, undoManager };
 }
