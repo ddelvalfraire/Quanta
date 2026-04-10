@@ -3,13 +3,15 @@ export interface LayoutElements {
   editorContainer: HTMLElement;
   outputPanel: HTMLElement;
   statusBar: HTMLElement;
+  runBtn: HTMLElement;
+  clearBtn: HTMLElement;
 }
 
 export function createLayout(root: HTMLElement): LayoutElements {
   root.innerHTML = "";
 
   const header = el("header", "header");
-  header.innerHTML = `<span class="logo">Quanta Code</span><span class="status" id="conn-status">disconnected</span>`;
+  header.innerHTML = `<span class="logo">Quanta Code</span><div class="header-right"><span class="user-count"></span><span class="status" id="conn-status">disconnected</span></div>`;
 
   const sidebar = el("aside", "sidebar");
   sidebar.innerHTML = `<div class="sidebar-heading">Files</div><div class="sidebar-placeholder">Phase 5</div>`;
@@ -17,7 +19,23 @@ export function createLayout(root: HTMLElement): LayoutElements {
   const editorContainer = el("div", "editor-container");
 
   const outputPanel = el("div", "output-panel");
-  outputPanel.innerHTML = `<div class="panel-heading">Output</div><pre class="output-log" id="output-log"></pre>`;
+
+  const panelHeading = el("div", "panel-heading");
+  panelHeading.innerHTML = `<span>Output</span>`;
+
+  const panelActions = el("div", "panel-actions");
+  const runBtn = el("button", "btn-run");
+  runBtn.textContent = "Run";
+  runBtn.title = "Ctrl+Enter";
+  const clearBtn = el("button", "btn-clear");
+  clearBtn.textContent = "Clear";
+  panelActions.append(runBtn, clearBtn);
+  panelHeading.appendChild(panelActions);
+
+  const outputLog = el("pre", "output-log");
+  outputLog.id = "output-log";
+
+  outputPanel.append(panelHeading, outputLog);
 
   const main = el("main", "main-area");
   main.append(editorContainer, outputPanel);
@@ -29,7 +47,7 @@ export function createLayout(root: HTMLElement): LayoutElements {
   statusBar.textContent = "Ready";
 
   root.append(header, workspace, statusBar);
-  return { sidebar, editorContainer, outputPanel, statusBar };
+  return { sidebar, editorContainer, outputPanel, statusBar, runBtn, clearBtn };
 }
 
 function el(tag: string, className: string): HTMLElement {

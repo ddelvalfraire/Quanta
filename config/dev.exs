@@ -16,3 +16,16 @@ config :quanta_web, Quanta.Web.Endpoint,
   http: [port: 4000],
   server: true,
   check_origin: false
+
+config :quanta_distributed,
+  actor_modules: %{
+    {"dev", "file"} => Quanta.Web.Actors.FileActor
+  },
+  dev_manifests: [
+    %{
+      version: "1",
+      namespace: "dev",
+      type: "file",
+      state_kind: {:crdt, :text}
+    }
+  ]

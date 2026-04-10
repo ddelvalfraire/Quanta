@@ -73,6 +73,31 @@ defmodule Quanta.Web.CrdtChannel do
   end
 
   @impl true
+  def handle_in("ephemeral_sync", %{"data" => data_b64}, socket) do
+    if socket.assigns.auth_scope == :ro do
+      {:noreply, socket}
+    else
+      now = System.monotonic_time(:millisecond)
+
+      if now - socket.assigns.last_ephemeral_at < @ephemeral_throttle_ms do
+        {:noreply, socket}
+      else
+        with {:ok, bytes} <- Base.decode64(data_b64),
+             true <- byte_size(bytes) <= @max_ephemeral_bytes do
+          GenServer.cast(
+            socket.assigns.actor_pid,
+            {:ephemeral_sync, bytes, self()}
+          )
+
+          {:noreply, assign(socket, :last_ephemeral_at, now)}
+        else
+          _ -> {:noreply, socket}
+        end
+      end
+    end
+  end
+
+  @impl true
   def handle_in("ephemeral_update", %{"key" => key, "value" => value_b64}, socket) do
     if socket.assigns.auth_scope == :ro do
       {:noreply, socket}
@@ -121,6 +146,12 @@ defmodule Quanta.Web.CrdtChannel do
   @impl true
   def handle_info(:node_draining, socket) do
     push(socket, "node_draining", %{reconnect_ms: 1_000})
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info({:execution_output, json_payload}, socket) do
+    push(socket, "execution_output", %{data: json_payload})
     {:noreply, socket}
   end
 

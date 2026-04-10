@@ -135,6 +135,9 @@ body {
 }
 
 .panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 6px 12px;
   font-size: 11px;
   font-weight: 600;
@@ -142,6 +145,66 @@ body {
   letter-spacing: 0.06em;
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border);
+}
+
+.panel-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-run,
+.btn-clear {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms;
+}
+
+.btn-run {
+  background: oklch(35% 0.1 155);
+  color: oklch(90% 0.05 155);
+  border-color: oklch(40% 0.12 155);
+}
+
+.btn-run:hover {
+  background: oklch(40% 0.13 155);
+}
+
+.btn-run:active {
+  background: oklch(30% 0.08 155);
+}
+
+.btn-clear {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.btn-clear:hover {
+  background: var(--border);
+}
+
+.output-entry {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.output-stdout {
+  color: var(--text-primary);
+}
+
+.output-stderr {
+  color: var(--status-connecting);
+}
+
+.output-error {
+  color: var(--status-error);
 }
 
 .output-log {
@@ -159,6 +222,73 @@ body {
   padding: 0 12px;
   background: var(--bg-tertiary);
   border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Remote cursor colors — class names match awareness user.colorClassName */
+.user-blue .loro-cursor {
+  background: #4A9EFF;
+}
+.user-blue .loro-cursor::before {
+  background: #4A9EFF;
+  color: #fff;
+}
+.user-blue.loro-selection {
+  background: rgba(74, 158, 255, 0.25);
+}
+
+.user-red .loro-cursor {
+  background: #FF6B6B;
+}
+.user-red .loro-cursor::before {
+  background: #FF6B6B;
+  color: #fff;
+}
+.user-red.loro-selection {
+  background: rgba(255, 107, 107, 0.25);
+}
+
+.user-green .loro-cursor {
+  background: #51CF66;
+}
+.user-green .loro-cursor::before {
+  background: #51CF66;
+  color: #000;
+}
+.user-green.loro-selection {
+  background: rgba(81, 207, 102, 0.25);
+}
+
+.user-yellow .loro-cursor {
+  background: #FFD43B;
+}
+.user-yellow .loro-cursor::before {
+  background: #FFD43B;
+  color: #000;
+}
+.user-yellow.loro-selection {
+  background: rgba(255, 212, 59, 0.25);
+}
+
+.user-purple .loro-cursor {
+  background: #CC5DE8;
+}
+.user-purple .loro-cursor::before {
+  background: #CC5DE8;
+  color: #fff;
+}
+.user-purple.loro-selection {
+  background: rgba(204, 93, 232, 0.25);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.user-count {
   font-size: 11px;
   color: var(--text-secondary);
 }

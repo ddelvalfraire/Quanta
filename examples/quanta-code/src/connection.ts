@@ -1,51 +1,45 @@
 import { Socket } from "phoenix";
 import type { Channel } from "phoenix";
+import { base64ToUint8 } from "./sync";
+import type { LoroDoc } from "loro-crdt";
 
-export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
-
-export interface ConnectionState {
-  socket: Socket;
-  channel: Channel | null;
-  status: ConnectionStatus;
-}
+export type ConnectionStatus =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "error";
 
 const DEV_TOKEN = "qk_rw_dev_devdevdevdevdevdevdevdevdevdevde";
 
-export function createConnection(
+export function connectAndJoin(
+  topic: string,
+  doc: LoroDoc,
   onStatus: (status: ConnectionStatus, detail?: string) => void
-): ConnectionState {
+): { socket: Socket; channel: Channel } {
   const socket = new Socket("/ws", { params: { token: DEV_TOKEN } });
 
   socket.onOpen(() => onStatus("connecting"));
   socket.onClose(() => onStatus("disconnected"));
   socket.onError(() => onStatus("error", "WebSocket error"));
 
-  const state: ConnectionState = { socket, channel: null, status: "disconnected" };
-
   socket.connect();
   onStatus("connecting");
 
-  return state;
-}
-
-export function joinChannel(
-  conn: ConnectionState,
-  topic: string,
-  onStatus: (status: ConnectionStatus, detail?: string) => void
-): Channel {
-  const channel = conn.socket.channel(topic, {});
+  const channel = socket.channel(topic, {});
 
   channel
     .join()
-    .receive("ok", () => {
-      conn.status = "connected";
+    .receive("ok", (resp: unknown) => {
+      const { snapshot } = resp as { snapshot: string };
+      if (snapshot) {
+        const bytes = base64ToUint8(snapshot);
+        doc.import(bytes);
+      }
       onStatus("connected", `Joined ${topic}`);
     })
-    .receive("error", (resp) => {
-      conn.status = "error";
+    .receive("error", (resp: unknown) => {
       onStatus("error", `Join failed: ${JSON.stringify(resp)}`);
     });
 
-  conn.channel = channel;
-  return channel;
+  return { socket, channel };
 }
