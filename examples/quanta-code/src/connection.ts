@@ -11,11 +11,9 @@ export type ConnectionStatus =
 
 const DEV_TOKEN = "qk_rw_dev_devdevdevdevdevdevdevdevdevdevde";
 
-export function connectAndJoin(
-  topic: string,
-  doc: LoroDoc,
+export function createSocket(
   onStatus: (status: ConnectionStatus, detail?: string) => void
-): { socket: Socket; channel: Channel } {
+): Socket {
   const socket = new Socket("/ws", { params: { token: DEV_TOKEN } });
 
   socket.onOpen(() => onStatus("connecting"));
@@ -25,6 +23,16 @@ export function connectAndJoin(
   socket.connect();
   onStatus("connecting");
 
+  return socket;
+}
+
+export function joinChannel(
+  socket: Socket,
+  topic: string,
+  doc: LoroDoc,
+  onStatus: (status: ConnectionStatus, detail?: string) => void,
+  onJoin?: () => void
+): { channel: Channel; cleanup: () => void } {
   const channel = socket.channel(topic, {});
 
   channel
@@ -36,10 +44,11 @@ export function connectAndJoin(
         doc.import(bytes);
       }
       onStatus("connected", `Joined ${topic}`);
+      onJoin?.();
     })
     .receive("error", (resp: unknown) => {
       onStatus("error", `Join failed: ${JSON.stringify(resp)}`);
     });
 
-  return { socket, channel };
+  return { channel, cleanup: () => channel.leave() };
 }

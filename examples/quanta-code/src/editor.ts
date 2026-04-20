@@ -4,9 +4,12 @@ import { EditorState } from "@codemirror/state";
 import { LoroExtensions } from "loro-codemirror";
 import { LoroDoc, EphemeralStore, UndoManager } from "loro-crdt";
 
-export interface UserInfo {
+export interface EditorOptions {
   name: string;
   colorClassName: string;
+  doc?: LoroDoc;
+  ephemeral?: EphemeralStore;
+  undoManager?: UndoManager;
 }
 
 export interface EditorContext {
@@ -18,11 +21,11 @@ export interface EditorContext {
 
 export function createEditor(
   parent: HTMLElement,
-  user: UserInfo
+  opts: EditorOptions
 ): EditorContext {
-  const doc = new LoroDoc();
-  const ephemeral = new EphemeralStore();
-  const undoManager = new UndoManager(doc, {});
+  const doc = opts.doc ?? new LoroDoc();
+  const ephemeral = opts.ephemeral ?? new EphemeralStore();
+  const undoManager = opts.undoManager ?? new UndoManager(doc, {});
 
   const state = EditorState.create({
     extensions: [
@@ -30,7 +33,7 @@ export function createEditor(
       javascript(),
       LoroExtensions(
         doc,
-        { user: { name: user.name, colorClassName: user.colorClassName }, ephemeral },
+        { user: { name: opts.name, colorClassName: opts.colorClassName }, ephemeral },
         undoManager
       ),
       EditorView.theme({
