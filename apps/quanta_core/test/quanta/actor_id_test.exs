@@ -48,8 +48,11 @@ defmodule Quanta.ActorIdTest do
 
     test "rejects spaces and special characters" do
       assert {:error, _} = ActorId.validate(%{@valid | id: "has space"})
-      assert {:error, _} = ActorId.validate(%{@valid | id: "has@char"})
       assert {:error, _} = ActorId.validate(%{@valid | id: "has#char"})
+    end
+
+    test "accepts @ (needed for LoroTree node ids like `0@1234`)" do
+      assert :ok = ActorId.validate(%{@valid | id: "0@13976830796456996016"})
     end
 
     test "rejects namespace longer than 63 chars" do

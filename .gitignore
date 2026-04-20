@@ -59,3 +59,7 @@ CLAUDE.md
 # Planning / research artifacts
 tickets/
 rust/fixtures/counter-actor/src/bindings.rs
+
+# Playwright / E2E artifacts
+.playwright-mcp/
+/e2e-*.png

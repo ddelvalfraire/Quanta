@@ -46,12 +46,21 @@ defmodule Quanta.Web.TestSetup do
         state: %Quanta.Manifest.State{kind: {:crdt, :text}}
       })
 
+    :ok =
+      Quanta.Actor.ManifestRegistry.put(%Quanta.Manifest{
+        version: "1",
+        type: "project",
+        namespace: "test",
+        state: %Quanta.Manifest.State{kind: {:crdt, :tree}}
+      })
+
     prev = Application.get_env(:quanta_distributed, :actor_modules, %{})
 
     Application.put_env(:quanta_distributed, :actor_modules, %{
       {"test", "counter"} => Quanta.Web.Test.Counter,
       {"test", "crdt_doc"} => Quanta.Web.Test.CrdtDoc,
-      {"test", "file"} => Quanta.Web.Actors.FileActor
+      {"test", "file"} => Quanta.Web.Actors.FileActor,
+      {"test", "project"} => Quanta.Web.Actors.ProjectActor
     })
 
     {:ok, prev_modules: prev}

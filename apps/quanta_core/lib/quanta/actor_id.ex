@@ -2,8 +2,8 @@ defmodule Quanta.ActorId do
   @moduledoc """
   Composite actor identifier: `{namespace, type, id}`.
 
-  Each segment must contain only alphanumeric characters, hyphens, and
-  underscores (NATS-safe — no dots or wildcards).
+  Each segment must contain only alphanumeric characters, hyphens,
+  underscores, and `@` (NATS-safe — no dots or wildcards).
   """
 
   @enforce_keys [:namespace, :type, :id]
@@ -15,7 +15,7 @@ defmodule Quanta.ActorId do
           id: String.t()
         }
 
-  @segment_pattern ~r/^[a-zA-Z0-9_-]+$/
+  @segment_pattern ~r/^[a-zA-Z0-9_@-]+$/
 
   @spec validate(t()) :: :ok | {:error, String.t()}
   def validate(%__MODULE__{namespace: ns, type: type, id: id}) do
@@ -50,7 +50,7 @@ defmodule Quanta.ActorId do
         {:error, "#{name} must be at most #{max_len} characters"}
 
       not Regex.match?(@segment_pattern, value) ->
-        {:error, "#{name} contains invalid characters (only a-zA-Z0-9_- allowed)"}
+        {:error, "#{name} contains invalid characters (only a-zA-Z0-9_@- allowed)"}
 
       true ->
         :ok

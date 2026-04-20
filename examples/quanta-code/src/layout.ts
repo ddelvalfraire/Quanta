@@ -1,5 +1,6 @@
 export interface LayoutElements {
   sidebar: HTMLElement;
+  tabBarContainer: HTMLElement;
   editorContainer: HTMLElement;
   outputPanel: HTMLElement;
   statusBar: HTMLElement;
@@ -14,7 +15,8 @@ export function createLayout(root: HTMLElement): LayoutElements {
   header.innerHTML = `<span class="logo">Quanta Code</span><div class="header-right"><span class="user-count"></span><span class="status" id="conn-status">disconnected</span></div>`;
 
   const sidebar = el("aside", "sidebar");
-  sidebar.innerHTML = `<div class="sidebar-heading">Files</div><div class="sidebar-placeholder">Phase 5</div>`;
+
+  const tabBarContainer = el("div", "tab-bar");
 
   const editorContainer = el("div", "editor-container");
 
@@ -38,7 +40,7 @@ export function createLayout(root: HTMLElement): LayoutElements {
   outputPanel.append(panelHeading, outputLog);
 
   const main = el("main", "main-area");
-  main.append(editorContainer, outputPanel);
+  main.append(tabBarContainer, editorContainer, outputPanel);
 
   const workspace = el("div", "workspace");
   workspace.append(sidebar, main);
@@ -47,7 +49,7 @@ export function createLayout(root: HTMLElement): LayoutElements {
   statusBar.textContent = "Ready";
 
   root.append(header, workspace, statusBar);
-  return { sidebar, editorContainer, outputPanel, statusBar, runBtn, clearBtn };
+  return { sidebar, tabBarContainer, editorContainer, outputPanel, statusBar, runBtn, clearBtn };
 }
 
 function el(tag: string, className: string): HTMLElement {

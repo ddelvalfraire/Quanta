@@ -101,17 +101,153 @@ body {
   color: var(--text-secondary);
 }
 
-.sidebar-placeholder {
+/* File tree */
+
+.file-tree {
+  padding: 4px 0;
+}
+
+.file-tree-empty {
   padding: 8px 12px;
   font-size: 12px;
   color: var(--text-secondary);
   font-style: italic;
 }
 
+.file-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-primary);
+  transition: background 150ms;
+}
+
+.file-item:hover {
+  background: var(--bg-tertiary);
+}
+
+.file-item.active {
+  background: oklch(30% 0.06 250);
+  color: var(--accent);
+}
+
+.file-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-item-actions {
+  opacity: 0;
+  transition: opacity 150ms;
+}
+
+.file-item:hover .file-item-actions {
+  opacity: 1;
+}
+
+.file-item-delete {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.file-item-delete:hover {
+  color: var(--status-error);
+}
+
+.btn-new-file {
+  display: block;
+  width: calc(100% - 16px);
+  margin: 8px 8px;
+  padding: 4px 8px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+
+.btn-new-file:hover {
+  background: var(--border);
+  color: var(--text-primary);
+}
+
 .main-area {
   display: grid;
-  grid-template-rows: 1fr var(--output-h);
+  grid-template-rows: auto 1fr var(--output-h);
   overflow: hidden;
+}
+
+/* Tab bar */
+
+.tab-bar {
+  display: flex;
+  align-items: stretch;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-height: 0;
+}
+
+.tab-bar:empty {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: background 150ms, color 150ms;
+}
+
+.tab:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.tab.active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--accent);
+}
+
+.tab-label {
+  white-space: nowrap;
+}
+
+.tab-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  line-height: 1;
+  border-radius: 2px;
+}
+
+.tab-close:hover {
+  background: var(--border);
+  color: var(--text-primary);
 }
 
 .editor-container {
