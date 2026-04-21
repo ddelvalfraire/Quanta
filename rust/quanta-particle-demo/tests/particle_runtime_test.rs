@@ -5,11 +5,9 @@
 //! Phase 4 will replace BotHarness with a real WebTransport client that
 //! speaks the same 25-byte datagram wire format via `encode_client_input`.
 
-use quanta_realtime_server::demo::executor::ParticleExecutor;
-use quanta_realtime_server::demo::input::{encode_datagram, ParticleInputPayload};
-use quanta_realtime_server::demo::schema::{
-    initial_state, particle_field_indices, particle_schema,
-};
+use quanta_particle_demo::executor::ParticleExecutor;
+use quanta_particle_demo::input::{encode_datagram, ParticleInputPayload};
+use quanta_particle_demo::schema::{initial_state, particle_field_indices, particle_schema};
 use quanta_realtime_server::testing::{BotAction, BotBehavior, BotHarness, TestHarnessBuilder};
 use quanta_realtime_server::types::EntitySlot;
 

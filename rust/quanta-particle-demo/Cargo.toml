@@ -1,0 +1,15 @@
+[package]
+name = "quanta-particle-demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+quanta-core-rs = { path = "../quanta-core-rs" }
+quanta-realtime-server = { path = "../quanta-realtime-server" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+quanta-realtime-server = { path = "../quanta-realtime-server", features = ["test-utils"] }
+quanta-core-rs = { path = "../quanta-core-rs", features = ["test-support"] }

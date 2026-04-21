@@ -1,3 +1,10 @@
+//! Particle World server binary.
+//!
+//! Wires Quanta's platform runtime (`quanta-realtime-server`) with this
+//! crate's `ParticleExecutor` via the public `executor_factory` hook.
+//! The platform library knows nothing about particles — all demo-specific
+//! code lives in this crate.
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -5,29 +12,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 use tracing::info;
 
+use quanta_particle_demo::particle_executor_factory;
 use quanta_realtime_server::auth::DevTokenValidator;
 use quanta_realtime_server::config::{EndpointConfig, ServerConfig};
 use quanta_realtime_server::tls::TlsConfig;
 use quanta_realtime_server::{run_server, RunServerArgs};
 
 const DEFAULT_DEV_TOKEN: &str = "qk_rw_dev_devdevdevdevdevdevdevdevdevdevde";
+const DEMO_TICK_RATE_HZ: u8 = 20;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "quanta_realtime_server=info".into()),
+                .unwrap_or_else(|_| "quanta_particle_demo=info,quanta_realtime_server=info".into()),
         )
         .init();
 
     let quic_addr: SocketAddr = std::env::var("QUANTA_QUIC_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:4443".into())
         .parse()?;
-    let ws_addr: Option<SocketAddr> = std::env::var("QUANTA_WS_ADDR")
-        .ok()
-        .map(|s| s.parse())
-        .transpose()?;
 
     let server_config = ServerConfig {
         nats_url: std::env::var("QUANTA_NATS_URL").ok(),
@@ -40,31 +45,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    info!(
-        %server_id,
-        %quic_addr,
-        ?ws_addr,
-        nats = ?server_config.nats_url,
-        "starting quanta-realtime-server"
-    );
+    info!(%server_id, %quic_addr, "starting particle-world server");
 
     let running = run_server(RunServerArgs {
         server_config,
         endpoint_config: EndpointConfig::default(),
         quic_addr,
-        ws_addr,
+        ws_addr: None,
         tls: TlsConfig::SelfSigned,
         validator,
         shutdown_rx,
         server_id,
-        executor_factory: None,
+        executor_factory: Some(particle_executor_factory(DEMO_TICK_RATE_HZ)),
     })
     .await?;
 
     info!(
         quic_addr = %running.quic_addr,
-        ws_addr = ?running.ws_addr,
-        "server running — press Ctrl-C to stop"
+        tick_rate_hz = DEMO_TICK_RATE_HZ,
+        "particle-world server running — press Ctrl-C to stop"
     );
 
     tokio::signal::ctrl_c().await?;
@@ -83,5 +82,5 @@ fn generate_server_id() -> String {
         .unwrap_or_default()
         .as_nanos();
     let pid = std::process::id();
-    format!("srv-{:08x}{:04x}", (nanos / 1_000_000) as u32, pid as u16)
+    format!("particle-{:08x}{:04x}", (nanos / 1_000_000) as u32, pid as u16)
 }

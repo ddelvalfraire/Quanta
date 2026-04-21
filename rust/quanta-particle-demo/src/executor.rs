@@ -1,19 +1,18 @@
 //! [`ParticleExecutor`] — applies 2D input direction to entity velocity,
 //! integrates velocity into position, and clamps to world bounds.
 //!
-//! Drop-in replacement for `NoopWasmExecutor` when `ServerConfig.executor_kind
-//! == ExecutorKind::Particle`. Never returns `WasmTrap` — malformed inputs
-//! and NaN directions leave state unchanged rather than crashing the island
-//! thread.
+//! Plug in via `RunServerArgs.executor_factory = particle_executor_factory(hz)`.
+//! Never returns `WasmTrap` — malformed inputs and NaN directions leave
+//! state unchanged rather than crashing the island thread.
 
-use crate::demo::input::{parse_datagram, ParticleInputPayload};
-use crate::demo::schema::{
+use crate::input::{parse_datagram, ParticleInputPayload};
+use crate::schema::{
     initial_state, particle_field_indices, particle_schema, MAX_VELOCITY, WORLD_BOUND,
 };
-use crate::tick::{HandleResult, TickMessage, WasmExecutor, WasmTrap};
-use crate::types::EntitySlot;
 
 use quanta_core_rs::delta::encoder::{dequantize, quantize_field, read_state, write_state};
+use quanta_realtime_server::tick::{HandleResult, TickMessage, WasmExecutor, WasmTrap};
+use quanta_realtime_server::types::EntitySlot;
 
 /// Acceleration applied when a direction is pressed (units/sec^2).
 const ACCELERATION: f32 = 200.0;
@@ -142,8 +141,8 @@ impl WasmExecutor for ParticleExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::demo::input::{encode_datagram, ParticleInputPayload};
-    use crate::tick::SessionId;
+    use crate::input::{encode_datagram, ParticleInputPayload};
+    use quanta_realtime_server::tick::SessionId;
 
     fn make_input(dir_x: f32, dir_z: f32) -> TickMessage {
         let payload = encode_datagram(&ParticleInputPayload {

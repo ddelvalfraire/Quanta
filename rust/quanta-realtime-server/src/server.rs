@@ -23,8 +23,14 @@ use crate::manager::{manager_channel, IslandManager};
 use crate::reconnect::ConnectedClient;
 use crate::session_store::SessionStore;
 use crate::stubs::StubBridge;
+use crate::tick::{NoopWasmExecutor, WasmExecutor};
 use crate::tls::TlsConfig;
 use crate::ws_listener::WsListener;
+
+/// Factory closure used by `IslandManager::spawn_island` to construct a
+/// fresh executor per island. Demo crates (e.g. `quanta-particle-demo`)
+/// inject their own `WasmExecutor` impls without touching platform code.
+pub type ExecutorFactory = Arc<dyn Fn() -> Box<dyn WasmExecutor> + Send + Sync>;
 
 pub struct RunServerArgs {
     pub server_config: ServerConfig,
@@ -35,6 +41,9 @@ pub struct RunServerArgs {
     pub validator: Arc<dyn AuthValidator>,
     pub shutdown_rx: watch::Receiver<bool>,
     pub server_id: String,
+    /// Factory for the per-island `WasmExecutor`. `None` means every island
+    /// uses `NoopWasmExecutor` (platform default — generic no-op).
+    pub executor_factory: Option<ExecutorFactory>,
 }
 
 pub struct RunningServer {
@@ -58,7 +67,12 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
         validator,
         shutdown_rx,
         server_id,
+        executor_factory,
     } = args;
+
+    let executor_factory: ExecutorFactory = executor_factory.unwrap_or_else(|| {
+        Arc::new(|| -> Box<dyn WasmExecutor> { Box::new(NoopWasmExecutor) })
+    });
 
     let session_store = Arc::new(Mutex::new(SessionStore::new(
         endpoint_config.session_retain_duration,
@@ -110,8 +124,10 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
     let (manager_tx, manager_rx) = manager_channel(256);
     let manager_config = server_config.clone();
     let bridge = Arc::new(StubBridge);
+    let manager_executor = executor_factory.clone();
     let manager_handle = tokio::spawn(async move {
-        let mut manager = IslandManager::new(manager_config, manager_rx, bridge);
+        let mut manager =
+            IslandManager::new(manager_config, manager_rx, bridge, manager_executor);
         manager.run().await;
     });
 

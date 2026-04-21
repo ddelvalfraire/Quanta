@@ -252,44 +252,6 @@ pub fn encode_baseline_ack(baseline_tick: u64) -> Vec<u8> {
     length_prefix(&payload)
 }
 
-/// Must match `quanta_realtime_server::demo::input::INPUT_MSG_TYPE`. Duplicated
-/// intentionally — the wasm-decoder crate does not depend on the server crate,
-/// so the two values are kept in sync by cross-language golden-bytes tests.
-const INPUT_MSG_TYPE: u8 = 0x02;
-
-/// Encode a Particle World client input datagram. Fixed 25-byte layout —
-/// byte-for-byte identical to `quanta_realtime_server::demo::input::encode_datagram`.
-///
-/// Layout (all multi-byte fields big-endian):
-///   [0]       msg_type = 0x02
-///   [1..5]    entity_slot: u32
-///   [5..9]    input_seq: u32
-///   [9..13]   dir_x: f32 (IEEE-754 bit pattern)
-///   [13..17]  dir_z: f32
-///   [17..21]  actions: u32
-///   [21..23]  dt_ms: u16
-///   [23..25]  reserved (zero)
-#[wasm_bindgen]
-pub fn encode_client_input(
-    entity_slot: u32,
-    input_seq: u32,
-    dir_x: f32,
-    dir_z: f32,
-    actions: u32,
-    dt_ms: u16,
-) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(25);
-    buf.push(INPUT_MSG_TYPE);
-    buf.extend_from_slice(&entity_slot.to_be_bytes());
-    buf.extend_from_slice(&input_seq.to_be_bytes());
-    buf.extend_from_slice(&dir_x.to_be_bytes());
-    buf.extend_from_slice(&dir_z.to_be_bytes());
-    buf.extend_from_slice(&actions.to_be_bytes());
-    buf.extend_from_slice(&dt_ms.to_be_bytes());
-    buf.extend_from_slice(&[0u8; 2]);
-    buf
-}
-
 fn length_prefix(payload: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(4 + payload.len());
     buf.extend_from_slice(&(payload.len() as u32).to_be_bytes());
@@ -440,22 +402,4 @@ mod tests {
         assert_eq!(decoded.baseline_tick, 42000);
     }
 
-    #[test]
-    fn client_input_cross_language_golden_bytes() {
-        // MUST match `demo::input::tests::golden_bytes` in the server crate
-        // byte-for-byte. If either side changes the layout, both tests fail.
-        let bytes = encode_client_input(1, 2, 1.0, 0.0, 0, 50);
-        let expected: [u8; 25] = [
-            0x02,
-            0, 0, 0, 1,             // entity_slot = 1
-            0, 0, 0, 2,             // input_seq = 2
-            0x3F, 0x80, 0x00, 0x00, // dir_x = 1.0
-            0x00, 0x00, 0x00, 0x00, // dir_z = 0.0
-            0, 0, 0, 0,             // actions = 0
-            0x00, 0x32,             // dt_ms = 50
-            0x00, 0x00,             // reserved
-        ];
-        assert_eq!(bytes, expected);
-        assert_eq!(bytes.len(), 25);
-    }
 }

@@ -5,13 +5,13 @@ use crate::command::{
 use crate::effect_io;
 use crate::reconnect::ConnectedClient;
 use crate::zone_transfer::{ZoneTransferManager, ZoneTransferToken};
-use crate::config::{ExecutorKind, ServerConfig};
-use crate::demo::executor::ParticleExecutor;
+use crate::config::ServerConfig;
 use crate::island::handle::{IslandHandle, ThreadModel};
 use crate::island::registry::IslandRegistry;
 use crate::island::state_machine::IslandState;
-use crate::tick::types::{BridgeEffect, BridgeMessage, ClientInput, NoopWasmExecutor, TickEngineConfig};
-use crate::tick::{TickEngine, WasmExecutor};
+use crate::server::ExecutorFactory;
+use crate::tick::types::{BridgeEffect, BridgeMessage, ClientInput, TickEngineConfig};
+use crate::tick::TickEngine;
 use crate::traits::Bridge;
 use crate::types::{IslandId, IslandManifest, IslandSnapshot};
 use rustc_hash::FxHashMap;
@@ -33,6 +33,8 @@ pub struct IslandManager {
     /// Phase 3 replaces with per-island HashMap<SessionId, Arc<dyn Session>>.
     connected_clients: Vec<ConnectedClient>,
     max_clients: usize,
+    /// Constructs a fresh `WasmExecutor` for each island this manager spawns.
+    executor_factory: ExecutorFactory,
 }
 
 struct PassivatedIsland {
@@ -45,6 +47,7 @@ impl IslandManager {
         config: ServerConfig,
         cmd_rx: mpsc::Receiver<ManagerCommand>,
         bridge: Arc<dyn Bridge>,
+        executor_factory: ExecutorFactory,
     ) -> Self {
         let zone_transfer = config
             .zone_transfer
@@ -60,6 +63,7 @@ impl IslandManager {
             zone_transfer,
             connected_clients: Vec::new(),
             max_clients: 4096,
+            executor_factory,
         }
     }
 
@@ -229,13 +233,10 @@ impl IslandManager {
         let engine_island_id = island_id.clone();
         let panicked = Arc::new(AtomicBool::new(false));
         let engine_panicked = panicked.clone();
-        let executor_kind = self.config.executor_kind;
+        let factory = self.executor_factory.clone();
         let join_handle = std::thread::spawn(move || {
             let config = TickEngineConfig::default();
-            let wasm: Box<dyn WasmExecutor> = match executor_kind {
-                ExecutorKind::Noop => Box::new(NoopWasmExecutor),
-                ExecutorKind::Particle => Box::new(ParticleExecutor::new(config.tick_rate_hz)),
-            };
+            let wasm = factory();
             let mut engine = TickEngine::new(
                 engine_island_id,
                 config,
