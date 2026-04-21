@@ -73,6 +73,14 @@ pub struct InterestConfig {
     pub unsubscribe_radius: f32,
     pub batch_enter_threshold: usize,
     pub leave_repeat_count: u8,
+    /// When true, all visible entities get `LodTier::Full` regardless of
+    /// distance — every visible entity's state is sent every tick. Off by
+    /// default (distance-based throttling saves bandwidth in production),
+    /// on for visual demos where smooth interpolation matters more than
+    /// bytes. Client-side interpolation expects at most ~2 ticks between
+    /// snapshots; the default Low tier ships every 8 ticks, which reads
+    /// as visible stutter no matter what interp delay the client picks.
+    pub force_full_lod: bool,
 }
 
 impl Default for InterestConfig {
@@ -82,6 +90,7 @@ impl Default for InterestConfig {
             unsubscribe_radius: 150.0,
             batch_enter_threshold: 5,
             leave_repeat_count: 3,
+            force_full_lod: false,
         }
     }
 }
@@ -169,6 +178,7 @@ impl InterestManager {
                 cz,
                 vis.visible(),
                 positions,
+                self.config.force_full_lod,
             );
 
             let sends = self.priority.sorted_by_priority(client, &entity_lods, tick);
@@ -201,6 +211,7 @@ fn accumulate_visible(
     cz: f32,
     visible: &FxHashSet<EntitySlot>,
     positions: &PositionTable,
+    force_full_lod: bool,
 ) -> Vec<(EntitySlot, LodTier)> {
     let mut entity_lods = Vec::with_capacity(visible.len());
     for &entity in visible {
@@ -214,7 +225,72 @@ fn accumulate_visible(
 
         priority.accumulate(client, entity, distance, velocity, interacted);
 
-        entity_lods.push((entity, LodTier::from_distance(distance)));
+        let tier = if force_full_lod {
+            LodTier::Full
+        } else {
+            LodTier::from_distance(distance)
+        };
+        entity_lods.push((entity, tier));
     }
     entity_lods
+}
+
+#[cfg(test)]
+mod mod_tests {
+    use super::*;
+
+    fn fixture(force_full_lod: bool, positions: &[(EntitySlot, f32, f32)]) -> Vec<(EntitySlot, LodTier)> {
+        let mut pri = PriorityAccumulator::new(4, 16);
+        let interactions = FxHashSet::default();
+        let mut pos = PositionTable::new();
+        let mut visible = FxHashSet::default();
+        for &(slot, x, z) in positions {
+            pos.ensure_capacity(slot);
+            pos.set_position(slot, x, 0.0, z);
+            visible.insert(slot);
+        }
+        // Client sits at origin.
+        accumulate_visible(
+            &mut pri,
+            &interactions,
+            ClientIndex(0),
+            0.0,
+            0.0,
+            &visible,
+            &pos,
+            force_full_lod,
+        )
+    }
+
+    #[test]
+    fn default_lod_throttles_distant_entities() {
+        let close = EntitySlot(0);
+        let medium = EntitySlot(1);
+        let far = EntitySlot(2);
+        let lods = fixture(
+            false,
+            &[(close, 10.0, 0.0), (medium, 80.0, 0.0), (far, 500.0, 0.0)],
+        );
+        let get = |s: EntitySlot| lods.iter().find(|(e, _)| *e == s).unwrap().1;
+        assert_eq!(get(close), LodTier::Full);
+        assert_eq!(get(medium), LodTier::Medium);
+        assert_eq!(get(far), LodTier::Low);
+    }
+
+    #[test]
+    fn force_full_lod_overrides_distance_throttle() {
+        // Same setup, but with force_full_lod=true every entity must be
+        // Full tier — this is what the particle-world demo relies on for
+        // smooth client-side snapshot interpolation.
+        let close = EntitySlot(0);
+        let medium = EntitySlot(1);
+        let far = EntitySlot(2);
+        let lods = fixture(
+            true,
+            &[(close, 10.0, 0.0), (medium, 80.0, 0.0), (far, 500.0, 0.0)],
+        );
+        for (_slot, tier) in &lods {
+            assert_eq!(*tier, LodTier::Full, "every entity must be Full tier");
+        }
+    }
 }

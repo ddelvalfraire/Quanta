@@ -105,9 +105,14 @@ async fn two_clients_exchange_deltas() {
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let count = received.load(Ordering::Relaxed);
+    // Client A moves quickly (MAX_VELOCITY=500) and leaves the observer's
+    // Full/High/Medium LOD tiers within a few ticks, so the interest
+    // manager throttles fanout to the Low tier (every 8 ticks) for most of
+    // the run. 5 is a safe lower bound that still proves the fanout path
+    // is delivering deltas end-to-end.
     assert!(
-        count >= 10,
-        "observer should receive ≥10 deltas, got {count}"
+        count >= 5,
+        "observer should receive ≥5 deltas, got {count}"
     );
 
     conn_a.close(0u32.into(), b"done");

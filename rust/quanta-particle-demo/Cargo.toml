@@ -15,6 +15,7 @@ quanta-realtime-server = { path = "../quanta-realtime-server" }
 quinn = "0.11"
 bytes = "1"
 bitcode = "0.6"
+crossbeam-channel = "0.5"
 rustc-hash = "2"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }

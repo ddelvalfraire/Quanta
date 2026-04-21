@@ -2,9 +2,11 @@
 // then drive the read/input/render loops.
 
 import init from "../wasm-decoder/quanta_wasm_decoder";
+import { startHud } from "./hud";
 import { startInputLoop } from "./input";
+import { SelfPredictor } from "./predictor";
 import { startRenderLoop } from "./render";
-import { WorldState } from "./state";
+import { FLAG_WELCOME, WorldState } from "./state";
 import { authenticate, connect, hexToBytes, loadServerInfo } from "./transport";
 
 // Static dev fixture — matches `DEFAULT_DEV_TOKEN` in particle-server.rs.
@@ -35,6 +37,7 @@ async function main(): Promise<void> {
   }
 
   let selfSlot: number | null = null;
+  const predictor = new SelfPredictor();
   const refreshStatus = () => {
     setStatus(
       `connected · session ${auth.sessionId} · entities ${world.size()}`,
@@ -42,9 +45,11 @@ async function main(): Promise<void> {
   };
   refreshStatus();
 
-  // Datagram reader. Treat the first entity we observe as "self" — an
-  // approximation that works because the server's first fanout send for a
-  // new client is its own entity (FULL_STATE).
+  // Datagram reader. The server sends a FLAG_WELCOME datagram right after
+  // RegisterClient, telling us which slot is ours — that's the only
+  // reliable signal, because the fanout's priority accumulator routinely
+  // sends fast-moving NPCs ahead of the idle self entity. Every later
+  // snapshot for the self slot is fed to the predictor for reconciliation.
   const reader = wt.datagrams.readable.getReader();
   (async () => {
     while (true) {
@@ -52,15 +57,37 @@ async function main(): Promise<void> {
       if (done) break;
       if (!value) continue;
       const res = world.ingestDatagram(value);
-      if (res && selfSlot === null) selfSlot = res.slot;
+      if (!res) continue;
+      if ((res.flags & FLAG_WELCOME) !== 0) {
+        selfSlot = res.slot;
+      } else if (selfSlot !== null && res.slot === selfSlot) {
+        const snap = world.latestSnapshot(selfSlot);
+        if (snap) {
+          predictor.reconcile(
+            snap.posX,
+            snap.posZ,
+            snap.velX,
+            snap.velZ,
+            snap.lastInputSeq,
+          );
+        }
+      }
       refreshStatus();
     }
   })().catch((e) => {
     setStatus(`disconnected: ${e?.message ?? e}`);
   });
 
-  startInputLoop(wt);
-  startRenderLoop(canvas, world, () => selfSlot);
+  // Debug handle for in-browser smoothness measurement.
+  (window as unknown as { __quanta?: unknown }).__quanta = {
+    world,
+    predictor,
+    getSelfSlot: () => selfSlot,
+  };
+
+  startInputLoop(wt, predictor);
+  startHud(world, predictor, () => selfSlot);
+  await startRenderLoop(canvas, world, predictor, () => selfSlot);
 }
 
 main().catch((e) => {

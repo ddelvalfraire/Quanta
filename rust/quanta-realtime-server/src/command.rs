@@ -83,6 +83,32 @@ pub enum ManagerCommand {
         island_id: IslandId,
         session_id: u64,
     },
+    /// Allocate a bare entity slot with no client session and no fanout
+    /// registration — the entity ticks as part of the island's simulation
+    /// and appears in `TickSnapshot` for all watching clients, but never
+    /// receives datagrams itself. The returned input channel lets the
+    /// caller drive the NPC via `ClientInput`s (same codepath as real
+    /// clients).
+    AllocateEntitySlot {
+        island_id: IslandId,
+        reply: oneshot::Sender<
+            Result<
+                (EntitySlot, crossbeam_channel::Sender<crate::tick::ClientInput>),
+                RegisterClientError,
+            >,
+        >,
+    },
+    /// Attach an additional subscriber to an island's per-tick snapshot
+    /// stream. Reply carries the receive-half of a fresh bounded channel.
+    SubscribeSnapshots {
+        island_id: IslandId,
+        reply: oneshot::Sender<
+            Result<
+                crossbeam_channel::Receiver<crate::tick::types::TickSnapshot>,
+                LifecycleError,
+            >,
+        >,
+    },
 }
 
 pub enum IslandCommand {
@@ -103,6 +129,12 @@ pub enum IslandCommand {
     RemoveEntity {
         slot: crate::types::EntitySlot,
     },
+    /// Attach an additional consumer to the engine's per-tick snapshot
+    /// stream. Used by demos that need to observe authoritative entity
+    /// positions (e.g. swarm AI) without stealing from the fanout.
+    AddSnapshotSubscriber {
+        tx: crossbeam_channel::Sender<crate::tick::types::TickSnapshot>,
+    },
 }
 
 impl std::fmt::Debug for IslandCommand {
@@ -113,6 +145,7 @@ impl std::fmt::Debug for IslandCommand {
             Self::Passivate { .. } => write!(f, "Passivate"),
             Self::AddEntity { slot, .. } => write!(f, "AddEntity({slot:?})"),
             Self::RemoveEntity { slot } => write!(f, "RemoveEntity({slot:?})"),
+            Self::AddSnapshotSubscriber { .. } => write!(f, "AddSnapshotSubscriber"),
         }
     }
 }

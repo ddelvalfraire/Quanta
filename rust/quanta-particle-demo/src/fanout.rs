@@ -9,7 +9,9 @@ use bytes::Bytes;
 use rustc_hash::FxHashMap;
 
 use quanta_core_rs::delta::encoder::compute_delta;
-use quanta_realtime_server::delta_envelope::{encode_delta_datagram, FLAG_FULL_STATE};
+use quanta_realtime_server::delta_envelope::{
+    encode_delta_datagram, encode_delta_datagram_with_seq_ack, FLAG_FULL_STATE,
+};
 use quanta_realtime_server::fanout::IslandFanout;
 use quanta_realtime_server::interest::{InterestConfig, InterestManager};
 use quanta_realtime_server::pacing::{DatagramBatch, PacingConfig, PacingHandle};
@@ -22,6 +24,19 @@ use crate::schema::particle_schema;
 
 const MAX_CLIENTS: usize = 4096;
 const MAX_ENTITIES: usize = 4096;
+
+/// Result of computing a per-entity delta against the last sent state.
+/// Separating this from the final `(flags, bytes)` tuple lets us treat
+/// the "no change" branch specially for the client's own entity (it still
+/// needs a seq-ack heartbeat each tick for server reconciliation).
+enum DeltaOutcome {
+    /// No prior baseline sent — ship the full state as FULL_STATE.
+    Full(Vec<u8>),
+    /// State changed — ship the delta payload.
+    Delta(Vec<u8>),
+    /// State byte-identical to the last sent state (idle or sub-quant).
+    Unchanged,
+}
 
 struct ClientState {
     pacer: PacingHandle,
@@ -37,8 +52,21 @@ pub struct ParticleFanout {
 
 impl ParticleFanout {
     pub fn new() -> Self {
+        // Demo scope: subscribe every client to every entity AND force
+        // every subscribed entity to Full LOD (sent every tick).
+        // Distance-based LOD throttling is correct for production (it
+        // saves bandwidth for distant/unimportant entities) but at 8-tick
+        // granularity for the Low tier it produces visible stutter that
+        // no client-side interpolation delay can smooth over. Demo values
+        // motion smoothness over bandwidth.
+        let cfg = InterestConfig {
+            subscribe_radius: 20_000.0,
+            unsubscribe_radius: 21_000.0,
+            force_full_lod: true,
+            ..InterestConfig::default()
+        };
         Self {
-            interest: InterestManager::new(InterestConfig::default(), MAX_CLIENTS, MAX_ENTITIES),
+            interest: InterestManager::new(cfg, MAX_CLIENTS, MAX_ENTITIES),
             position_table: PositionTable::new(),
             clients: FxHashMap::default(),
         }
@@ -120,19 +148,56 @@ impl IslandFanout for ParticleFanout {
                 if entity.state.is_empty() {
                     continue;
                 }
+                let is_self = pe.entity == state.entity_slot;
                 let last = state.last_sent.get(&pe.entity);
-                let (flags, delta_bytes) = match last {
-                    None => (FLAG_FULL_STATE, entity.state.clone()),
+                let delta_outcome = match last {
+                    None => DeltaOutcome::Full(entity.state.clone()),
                     Some(prev) => match compute_delta(schema, prev, &entity.state, None) {
-                        Ok(d) if d.is_empty() => continue,
-                        Ok(d) => (0u8, d),
+                        Ok(d) if d.is_empty() => DeltaOutcome::Unchanged,
+                        Ok(d) => DeltaOutcome::Delta(d),
                         Err(_) => {
                             // Baseline-length drift (e.g. schema grew): resync via FULL_STATE.
-                            (FLAG_FULL_STATE, entity.state.clone())
+                            DeltaOutcome::Full(entity.state.clone())
                         }
                     },
                 };
-                let bytes = encode_delta_datagram(flags, pe.entity.0, snapshot.tick, &delta_bytes);
+
+                let (flags, delta_bytes) = match delta_outcome {
+                    DeltaOutcome::Full(b) => (FLAG_FULL_STATE, b),
+                    DeltaOutcome::Delta(b) => (0u8, b),
+                    DeltaOutcome::Unchanged => {
+                        // For the client's OWN entity, ALWAYS ship a
+                        // seq-ack heartbeat even when state is unchanged.
+                        // Without this, an idle or sub-quantization motion
+                        // entity sends no datagrams → the client's
+                        // predictor never hears the ack → `pending` and
+                        // `seq lag` grow unbounded. Empty delta bytes are
+                        // fine: the header carries the `last_input_seq`
+                        // and the receiver leaves state unmodified.
+                        if is_self {
+                            (0u8, Vec::new())
+                        } else {
+                            continue;
+                        }
+                    }
+                };
+
+                // If we're shipping this client their OWN entity, attach
+                // the seq-ack prefix so the browser predictor can replay
+                // its unack'd input buffer on reconcile. NPCs and other
+                // players' entities get the plain envelope — no seq-ack
+                // overhead.
+                let bytes = if is_self {
+                    encode_delta_datagram_with_seq_ack(
+                        flags,
+                        pe.entity.0,
+                        snapshot.tick,
+                        entity.last_input_seq,
+                        &delta_bytes,
+                    )
+                } else {
+                    encode_delta_datagram(flags, pe.entity.0, snapshot.tick, &delta_bytes)
+                };
                 batch.datagrams.push(Bytes::from(bytes));
                 state.last_sent.insert(pe.entity, entity.state.clone());
             }
@@ -160,6 +225,7 @@ mod tests {
                 pos_z: 0.0,
                 vel_x: 0.0,
                 vel_z: 0.0,
+                last_input_seq: 0,
             }],
         };
         f.on_tick(&snap);

@@ -25,13 +25,13 @@ record particle-state {
     pos-z: f32,
 
     /// @quanta:quantize(0.1)
-    /// @quanta:clamp(-100, 100)
+    /// @quanta:clamp(-250, 250)
     /// @quanta:field_group(spatial)
     /// @quanta:priority(critical)
     vel-x: f32,
 
     /// @quanta:quantize(0.1)
-    /// @quanta:clamp(-100, 100)
+    /// @quanta:clamp(-250, 250)
     /// @quanta:field_group(spatial)
     /// @quanta:priority(critical)
     vel-z: f32,
@@ -43,9 +43,13 @@ static PARTICLE_SCHEMA: OnceLock<CompiledSchema> = OnceLock::new();
 /// Absolute bound of the 2D world on each axis; matches `@quanta:clamp(-5000, 5000)`.
 pub const WORLD_BOUND: f32 = 5000.0;
 
-/// Maximum entity velocity magnitude in units/sec; matches `@quanta:clamp(-100, 100)`
-/// per-axis (so the magnitude bound is conservative — actual max is 100 * sqrt(2)).
-pub const MAX_VELOCITY: f32 = 100.0;
+/// Maximum entity velocity magnitude in units/sec; matches `@quanta:clamp(-250, 250)`
+/// per-axis (so the magnitude bound is conservative — actual max is 250 * sqrt(2)).
+/// Tuned for smooth motion at 30 Hz: at 250 u/s an entity advances ~8 units
+/// per tick, small enough that interpolation between ticks reads as fluid
+/// movement rather than discrete steps. Player still feels snappy because
+/// client-side prediction runs at 60 fps.
+pub const MAX_VELOCITY: f32 = 250.0;
 
 /// Cached indices into `CompiledSchema.fields` for the particle fields.
 #[derive(Debug, Clone, Copy)]
