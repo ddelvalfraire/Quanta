@@ -36,6 +36,7 @@ async fn two_clients_exchange_deltas() {
         executor_factory: Some(particle_executor_factory(20)),
         fanout_factory: Some(particle_fanout_factory()),
         default_island_id: Some(IslandId::from("particle-world")),
+        metrics_addr: None,
     })
     .await
     .expect("run_server");

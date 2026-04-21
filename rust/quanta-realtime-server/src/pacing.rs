@@ -146,7 +146,12 @@ async fn pacing_loop(session: Arc<dyn Session>, rx: Receiver<DatagramBatch>, con
 
         for datagram in batch.datagrams.iter().take(send_count) {
             send_timer.tick().await;
-            let _ = session.send_unreliable(datagram);
+            if session.send_unreliable(datagram).is_ok() {
+                crate::metrics::METRICS.datagrams_sent.inc();
+                crate::metrics::METRICS
+                    .bytes_sent
+                    .inc_by(datagram.len() as u64);
+            }
         }
     }
 }
