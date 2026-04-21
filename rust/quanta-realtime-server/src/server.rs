@@ -17,6 +17,7 @@ use crate::auth::AuthValidator;
 use crate::capacity::run_capacity_publisher;
 use crate::command::ManagerCommand;
 use crate::config::{EndpointConfig, ServerConfig};
+use crate::delta_envelope::{encode_delta_datagram, FLAG_WELCOME};
 use crate::endpoint::QuicEndpoint;
 use crate::error::EndpointError;
 use crate::fanout::FanoutFactory;
@@ -108,6 +109,15 @@ async fn register_and_spawn_reader(
             return;
         }
     };
+
+    // Identity handshake: tell the client which entity slot is theirs.
+    // Without this, the browser has to guess from the fanout stream — and
+    // a fast-moving NPC routinely outranks an idle self in the interest
+    // priority accumulator, so the guess is almost always wrong.
+    let welcome = encode_delta_datagram(FLAG_WELCOME, entity_slot.0 as u32, 0, &[]);
+    if let Err(e) = session_arc.send_unreliable(&welcome) {
+        warn!(session_id, error = %e, "failed to send welcome datagram");
+    }
 
     let reader_session = session_arc;
     tokio::spawn(async move {

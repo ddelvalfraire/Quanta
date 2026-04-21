@@ -234,7 +234,34 @@ impl IslandManager {
                 let result = self.handle_allocate_entity_slot(&island_id);
                 let _ = reply.send(result);
             }
+            ManagerCommand::SubscribeSnapshots { island_id, reply } => {
+                let result = self.handle_subscribe_snapshots(&island_id);
+                let _ = reply.send(result);
+            }
         }
+    }
+
+    fn handle_subscribe_snapshots(
+        &mut self,
+        island_id: &IslandId,
+    ) -> Result<crossbeam_channel::Receiver<TickSnapshot>, LifecycleError> {
+        let handle = self
+            .registry
+            .get(island_id)
+            .ok_or_else(|| LifecycleError::NotFound(island_id.clone()))?;
+        if handle.state != IslandState::Running {
+            return Err(LifecycleError::InvalidTransition(format!(
+                "island {} not running",
+                island_id
+            )));
+        }
+        // Bounded to tolerate a slow subscriber without pinning memory
+        // unboundedly. The swarm mind reads every tick so 4 is plenty.
+        let (tx, rx) = crossbeam_channel::bounded::<TickSnapshot>(4);
+        let _ = handle
+            .command_tx
+            .send(IslandCommand::AddSnapshotSubscriber { tx });
+        Ok(rx)
     }
 
     fn handle_allocate_entity_slot(
@@ -407,8 +434,16 @@ impl IslandManager {
         };
 
         let (cmd_tx, cmd_rx) = crossbeam_channel::bounded::<IslandCommand>(32);
-        let (input_tx, input_rx) = crossbeam_channel::bounded::<ClientInput>(256);
-        let (bridge_tx, bridge_rx) = crossbeam_channel::bounded::<BridgeMessage>(256);
+        // Sized to hold ~4 ticks of input bursts at the current particle-
+        // world demo scale (300 swarm NPCs + N players, 30 Hz tick). The
+        // old 256-slot budget overflows once NPC count exceeds ~250 and
+        // the swarm task fires twice between engine drains — dropped
+        // inputs manifest as "clusters freeze" (NPCs missing a tick-step)
+        // AND "player rubber-bands on move" (your WASD input gets evicted
+        // too, server never acks, `pending` balloons, drift spikes on the
+        // next successful burst).
+        let (input_tx, input_rx) = crossbeam_channel::bounded::<ClientInput>(4096);
+        let (bridge_tx, bridge_rx) = crossbeam_channel::bounded::<BridgeMessage>(4096);
         let island_id = manifest.island_id.clone();
         let passivate_when_empty = manifest.passivate_when_empty;
         let shutdown = self.shutdown.clone();
@@ -423,8 +458,12 @@ impl IslandManager {
         let engine_panicked = panicked.clone();
         let factory = self.executor_factory.clone();
         let engine_snap_tx = snap_tx;
+        let engine_tick_rate_hz = self.config.tick_rate_hz;
         let join_handle = std::thread::spawn(move || {
-            let config = TickEngineConfig::default();
+            let config = TickEngineConfig {
+                tick_rate_hz: engine_tick_rate_hz,
+                ..TickEngineConfig::default()
+            };
             let wasm = factory();
             let mut engine = TickEngine::new(
                 engine_island_id,

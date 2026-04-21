@@ -14,8 +14,11 @@ use quanta_core_rs::delta::encoder::{dequantize, quantize_field, read_state, wri
 use quanta_realtime_server::tick::{HandleResult, TickMessage, WasmExecutor, WasmTrap};
 use quanta_realtime_server::types::EntitySlot;
 
-/// Acceleration applied when a direction is pressed (units/sec^2).
-const ACCELERATION: f32 = 200.0;
+/// Acceleration applied when a direction is pressed (units/sec^2). Tuned
+/// so the player reaches `MAX_VELOCITY` (250 u/s) in ~250 ms — snappy, not
+/// drifty. Higher values make input feel instant; too high and damping
+/// struggles to brake before the next input.
+const ACCELERATION: f32 = 1000.0;
 
 /// Target damping per second when no input is held. Per-tick damping is
 /// derived from this so the effective drag is tick-rate-independent:
@@ -137,6 +140,10 @@ impl WasmExecutor for ParticleExecutor {
         })
     }
 
+    fn extract_client_input_seq(&self, payload: &[u8]) -> Option<u32> {
+        parse_datagram(payload).ok().map(|p| p.input_seq)
+    }
+
     fn extract_position(&self, state: &[u8]) -> (f32, f32, f32) {
         if state.is_empty() {
             return (0.0, 0.0, 0.0);
@@ -230,7 +237,12 @@ mod tests {
         let values = read_state(schema, &state).unwrap();
         let q = schema.fields[ix.vel_x].quantization.as_ref().unwrap();
         let vx = dequantize(values[ix.vel_x], q) as f32;
-        assert!(vx.abs() < 1.0, "velocity should damp toward zero, got {vx}");
+        // Scale threshold with MAX_VELOCITY — 100 idle ticks decay ~500 u/s
+        // down to ~3, a 99.4% reduction, which is "toward zero" at this scale.
+        assert!(
+            vx.abs() < MAX_VELOCITY * 0.01,
+            "velocity should damp toward zero, got {vx}"
+        );
     }
 
     #[test]

@@ -82,6 +82,12 @@ pub struct TickEngine {
     cmd_rx: crossbeam_channel::Receiver<IslandCommand>,
     effects_out: Vec<BridgeEffect>,
     last_input_seq: HashMap<SessionId, u32>,
+    /// Per-entity last CLIENT-supplied input sequence number the executor
+    /// successfully processed. Extracted from the `TickMessage::Input`
+    /// payload via `WasmExecutor::extract_client_input_seq`. Written to
+    /// `EntitySnapshot::last_input_seq` each tick so the fanout can ship
+    /// it to the owning client for canonical server reconciliation.
+    last_client_input_seq: BTreeMap<EntitySlot, u32>,
     shutdown: Arc<AtomicBool>,
     // Checkpoint state
     checkpoint_handle: Option<CheckpointHandle>,
@@ -94,6 +100,7 @@ pub struct TickEngine {
     // can drive `InterestManager` without re-decoding entity state.
     position_table: crate::spatial::PositionTable,
     snapshot_tx: Option<crossbeam_channel::Sender<TickSnapshot>>,
+    snapshot_subscribers: Vec<crossbeam_channel::Sender<TickSnapshot>>,
 }
 
 impl TickEngine {
@@ -122,6 +129,7 @@ impl TickEngine {
             cmd_rx,
             effects_out: Vec::new(),
             last_input_seq: HashMap::new(),
+            last_client_input_seq: BTreeMap::new(),
             shutdown,
             checkpoint_handle: None,
             checkpoint_interval_ticks: 0,
@@ -131,6 +139,7 @@ impl TickEngine {
             effect_tx: None,
             position_table: crate::spatial::PositionTable::new(),
             snapshot_tx: None,
+            snapshot_subscribers: Vec::new(),
         }
     }
 
@@ -192,10 +201,17 @@ impl TickEngine {
         self.snapshot_tx = Some(tx);
     }
 
+    /// Attach an additional per-tick snapshot consumer. Used by the demo's
+    /// swarm-mind task so NPC AI can read authoritative positions without
+    /// stealing them from the fanout's primary channel.
+    pub fn add_snapshot_subscriber(&mut self, tx: crossbeam_channel::Sender<TickSnapshot>) {
+        self.snapshot_subscribers.push(tx);
+    }
+
     fn emit_snapshot(&mut self) {
-        let Some(tx) = self.snapshot_tx.as_ref() else {
+        if self.snapshot_tx.is_none() && self.snapshot_subscribers.is_empty() {
             return;
-        };
+        }
         let mut entities = Vec::with_capacity(self.entities.len());
         for (slot, e) in self.entities.iter() {
             let (x, _y, z) = self.wasm.extract_position(&e.state);
@@ -208,11 +224,26 @@ impl TickEngine {
                 pos_z: z,
                 vel_x: 0.0,
                 vel_z: 0.0,
+                last_input_seq: self
+                    .last_client_input_seq
+                    .get(slot)
+                    .copied()
+                    .unwrap_or(0),
             });
         }
-        let _ = tx.try_send(TickSnapshot {
+        let snapshot = TickSnapshot {
             tick: self.tick,
             entities,
+        };
+        if let Some(tx) = self.snapshot_tx.as_ref() {
+            let _ = tx.try_send(snapshot.clone());
+        }
+        // Drop subscribers whose receivers have gone away; tolerate
+        // transient "full" by keeping them alive for the next tick.
+        self.snapshot_subscribers.retain(|tx| match tx.try_send(snapshot.clone()) {
+            Ok(()) => true,
+            Err(crossbeam_channel::TrySendError::Full(_)) => true,
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
         });
     }
 
@@ -233,11 +264,18 @@ impl TickEngine {
                 checkpoint_state: None,
             },
         );
+        // Fresh entity → clear any stale per-entity state from a prior
+        // occupant of this slot. The seq tracker must reset, otherwise
+        // a previous client's high seq (e.g. 6200) will shadow every
+        // input the new client sends (starting at 1) and the server's
+        // ack will never advance. That breaks client-side reconciliation.
+        self.last_client_input_seq.remove(&slot);
     }
 
     pub fn remove_entity(&mut self, slot: &EntitySlot) {
         self.entities.remove(slot);
         self.timers.clear_entity(slot);
+        self.last_client_input_seq.remove(slot);
     }
 
     pub fn current_tick(&self) -> u64 {
@@ -494,6 +532,10 @@ impl TickEngine {
                     self.position_table.clear(slot);
                     // continue draining
                 }
+                Ok(IslandCommand::AddSnapshotSubscriber { tx }) => {
+                    self.add_snapshot_subscriber(tx);
+                    // continue draining
+                }
                 Err(crossbeam_channel::TryRecvError::Empty) => return false,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return true,
             }
@@ -662,7 +704,14 @@ impl TickEngine {
             queues.entry(msg.target_entity).or_default().push(tick_msg);
         }
 
-        // Priority 3: Client inputs
+        // Priority 3: Client inputs — preserved platform contract: every
+        // non-stale input is delivered to the executor individually. That
+        // lets game-specific executors (fighting-game combo frames,
+        // RTS command queues) see the full input stream. Rate-sensitive
+        // executors like the particle demo's physics should rely on
+        // their upstream driver's cadence (see `tokio::time::interval`
+        // in the swarm-mind) rather than engine-level dedupe — otherwise
+        // this trait becomes lossy for everyone.
         for input in inputs {
             queues
                 .entry(input.entity_slot)
@@ -699,6 +748,7 @@ impl TickEngine {
         let wasm = &mut self.wasm;
         let fault_tracker = &mut self.fault_tracker;
         let effects_out = &mut self.effects_out;
+        let last_client_input_seq = &mut self.last_client_input_seq;
         let tick = self.tick;
 
         for (entity_slot, messages) in actor_queues {
@@ -720,6 +770,23 @@ impl TickEngine {
                 let current_state = entities[entity_slot].state.clone();
                 match wasm.call_handle_message(*entity_slot, &current_state, msg) {
                     Ok(mut result) => {
+                        // Track the client-supplied input seq BEFORE we
+                        // record success — the client needs to see acks
+                        // even for ticks where the payload is invalid at
+                        // the physics layer (the executor tolerates those
+                        // and leaves state unchanged). Record anything the
+                        // executor can parse; the state itself is the
+                        // source of truth for correctness.
+                        if let TickMessage::Input { payload, .. } = msg {
+                            if let Some(seq) = wasm.extract_client_input_seq(payload) {
+                                let entry = last_client_input_seq
+                                    .entry(*entity_slot)
+                                    .or_insert(0);
+                                if seq > *entry {
+                                    *entry = seq;
+                                }
+                            }
+                        }
                         if let Some(e) = entities.get_mut(entity_slot) {
                             e.dirty = e.state != result.state || e.dirty;
                             e.state = result.state;

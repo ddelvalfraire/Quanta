@@ -78,6 +78,18 @@ pub struct ServerConfig {
     /// Zone transfer configuration. `None` disables zone transfers.
     #[serde(skip)]
     pub zone_transfer: Option<ZoneTransferConfig>,
+    /// Tick-engine wall-clock rate in Hz. Determines how often the island
+    /// drains inputs, calls the executor, and emits snapshots. MUST match
+    /// the `tick_rate_hz` passed to the executor factory — otherwise the
+    /// executor's `tick_dt_secs` won't match the engine's cadence and
+    /// physics will advance faster or slower than wall-clock, diverging
+    /// from any client-side predictor.
+    #[serde(default = "default_tick_rate_hz")]
+    pub tick_rate_hz: u8,
+}
+
+fn default_tick_rate_hz() -> u8 {
+    20
 }
 
 impl Default for ServerConfig {
@@ -91,6 +103,7 @@ impl Default for ServerConfig {
             idle_timeout_secs: 30,
             grace_period_secs: 10,
             zone_transfer: None,
+            tick_rate_hz: default_tick_rate_hz(),
         }
     }
 }

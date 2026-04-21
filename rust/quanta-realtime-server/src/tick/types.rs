@@ -186,6 +186,17 @@ pub trait WasmExecutor: Send {
     fn extract_position(&self, _state: &[u8]) -> (f32, f32, f32) {
         (0.0, 0.0, 0.0)
     }
+
+    /// Extract the client-chosen input sequence number from an
+    /// `TickMessage::Input.payload`. The tick engine calls this for every
+    /// input processed for an entity, and records the last successful
+    /// value in `EntitySnapshot::last_input_seq` — enabling canonical
+    /// client-side server reconciliation (Gambetta, Fast-Paced Multiplayer
+    /// Part II). Default returns `None` for executors whose payloads
+    /// don't carry a sequence number.
+    fn extract_client_input_seq(&self, _payload: &[u8]) -> Option<u32> {
+        None
+    }
 }
 
 /// No-op executor that returns state unchanged with no effects.
@@ -257,6 +268,11 @@ pub struct EntitySnapshot {
     pub pos_z: f32,
     pub vel_x: f32,
     pub vel_z: f32,
+    /// Last client input sequence number the executor has processed for
+    /// this entity (0 = none processed / executor doesn't track seqs).
+    /// Written to the fanout datagram's seq-ack prefix so the client can
+    /// replay its unack'd input buffer during reconciliation.
+    pub last_input_seq: u32,
 }
 
 /// End-of-tick snapshot shipped to the per-island fanout task.

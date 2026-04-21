@@ -1,15 +1,18 @@
-// PixiJS renderer: WebGL-batched sprites so the canvas holds thousands
-// of entities at 60 fps, with client-side velocity extrapolation between
-// 20 Hz authoritative snapshots so motion looks continuous.
+// PixiJS renderer: WebGL-batched sprites at 60 fps with client-side
+// velocity extrapolation between 20 Hz authoritative ticks. Camera
+// follows the self sprite; self is rendered with a pulsing halo so
+// you can never lose yourself in the swarm.
 
 import { Application, Container, Graphics, Sprite } from "pixi.js";
 
+import { SelfPredictor } from "./predictor";
 import { WorldState } from "./state";
 
-const WORLD_SIZE = 10_000; // clamp [-5000, 5000] per axis
+/** World units visible across the smaller viewport dimension. Lower
+ *  numbers zoom in, making motion more obviously fast. */
+const VIEWPORT_SPAN = 3000;
 
 function hueFromSlot(slot: number): number {
-  // Golden-angle hash → spread distinct hues across the swarm.
   const h = (slot * 137.508) % 360;
   return hslToRgb(h / 360, 0.65, 0.6);
 }
@@ -27,6 +30,7 @@ function hslToRgb(h: number, s: number, l: number): number {
 export async function startRenderLoop(
   canvas: HTMLCanvasElement,
   world: WorldState,
+  predictor: SelfPredictor,
   selfSlot: () => number | null,
 ): Promise<() => void> {
   const app = new Application();
@@ -39,47 +43,41 @@ export async function startRenderLoop(
     resolution: window.devicePixelRatio || 1,
   });
 
-  // Static backdrop: faint radial vignette + grid so the black-on-black
-  // demo doesn't look like a loading screen.
+  // Faint radial grid centered on the world origin, drawn in world-space
+  // via a camera container so it scrolls with the player.
+  const worldCamera = new Container();
+  app.stage.addChild(worldCamera);
+
   const grid = new Graphics();
-  app.stage.addChild(grid);
+  worldCamera.addChild(grid);
   const drawGrid = () => {
-    const w = app.screen.width;
-    const h = app.screen.height;
     grid.clear();
-    // Vignette
-    grid.rect(0, 0, w, h).fill({ color: 0x111827, alpha: 0.0 });
-    // Axis cross at world origin
-    const cx = w / 2;
-    const cy = h / 2;
-    grid
-      .moveTo(0, cy)
-      .lineTo(w, cy)
-      .stroke({ width: 1, color: 0x1f2a3a, alpha: 0.6 });
-    grid
-      .moveTo(cx, 0)
-      .lineTo(cx, h)
-      .stroke({ width: 1, color: 0x1f2a3a, alpha: 0.6 });
-    // Concentric rings every 1000 world units
-    const scale = Math.min(w, h) / WORLD_SIZE;
-    for (let r = 1000; r <= 5000; r += 1000) {
+    // Rings every 1000 world units from origin.
+    for (let r = 500; r <= 5000; r += 500) {
       grid
-        .circle(cx, cy, r * scale)
-        .stroke({ width: 1, color: 0x1f2a3a, alpha: 0.35 });
+        .circle(0, 0, r)
+        .stroke({
+          width: r % 1000 === 0 ? 2 : 1,
+          color: 0x1f2a3a,
+          alpha: r % 1000 === 0 ? 0.45 : 0.22,
+        });
     }
+    // Origin crosshair
+    grid
+      .moveTo(-5000, 0)
+      .lineTo(5000, 0)
+      .stroke({ width: 1, color: 0x1f2a3a, alpha: 0.3 });
+    grid
+      .moveTo(0, -5000)
+      .lineTo(0, 5000)
+      .stroke({ width: 1, color: 0x1f2a3a, alpha: 0.3 });
   };
   drawGrid();
-  window.addEventListener("resize", drawGrid);
 
-  // One glowing-disc texture, reused across every sprite for cheap
-  // WebGL batching.
+  // Glowing disc texture reused by every entity sprite.
   const disc = new Graphics();
-  disc
-    .circle(16, 16, 6)
-    .fill({ color: 0xffffff, alpha: 1.0 });
-  disc
-    .circle(16, 16, 12)
-    .fill({ color: 0xffffff, alpha: 0.18 });
+  disc.circle(16, 16, 5).fill({ color: 0xffffff, alpha: 1.0 });
+  disc.circle(16, 16, 12).fill({ color: 0xffffff, alpha: 0.18 });
   const texture = app.renderer.generateTexture({
     target: disc,
     resolution: 2,
@@ -87,10 +85,16 @@ export async function startRenderLoop(
 
   const swarm = new Container();
   swarm.blendMode = "add";
-  app.stage.addChild(swarm);
+  worldCamera.addChild(swarm);
 
   const selfLayer = new Container();
-  app.stage.addChild(selfLayer);
+  worldCamera.addChild(selfLayer);
+
+  // Self halo — two concentric rings that pulse. In world-space so zoom
+  // stays consistent.
+  const halo = new Graphics();
+  halo.visible = false;
+  selfLayer.addChild(halo);
 
   const sprites = new Map<number, Sprite>();
 
@@ -109,35 +113,66 @@ export async function startRenderLoop(
   }
 
   let stopped = false;
-  app.ticker.add(() => {
+  let t = 0;
+  // Smoothed camera position — chases the predicted self with an
+  // exponential lerp so direction flips don't snap the world.
+  let camX = 0;
+  let camZ = 0;
+  let camInitialized = false;
+  app.ticker.add((ticker) => {
     if (stopped) return;
+    t += ticker.deltaMS;
     const w = app.screen.width;
     const h = app.screen.height;
-    const scale = Math.min(w, h) / WORLD_SIZE;
+    const pxPerWorld = Math.min(w, h) / VIEWPORT_SPAN;
     const me = selfSlot();
     const now = performance.now();
 
-    const entities = world.interpolate(now);
+    // Self: drive from client-side predictor so input feels instant.
+    predictor.advance(now);
+    const self = predictor.current();
+
+    // Remote entities: render INTERP_DELAY_TICKS behind the latest
+    // observed snapshot (tick-time based, not arrival-time based) so
+    // network jitter doesn't feed into the lerp fraction. See
+    // `state.ts` for the virtual-clock anchor algorithm.
+    const remotes = world.interpolate(now, me);
+
+    // Chase-cam: lerp toward self at a rate that feels locked-on but not
+    // rubber-banded. Factor chosen so 99% of the delta closes in ~200 ms.
+    const camLerp = 1 - Math.pow(0.01, ticker.deltaMS / 200);
+    if (!camInitialized) {
+      camX = self.posX;
+      camZ = self.posZ;
+      camInitialized = true;
+    } else {
+      camX += (self.posX - camX) * camLerp;
+      camZ += (self.posZ - camZ) * camLerp;
+    }
+    worldCamera.x = w / 2 - camX * pxPerWorld;
+    worldCamera.y = h / 2 - camZ * pxPerWorld;
+    worldCamera.scale.set(pxPerWorld);
 
     const alive = new Set<number>();
-    for (const e of entities) {
+    for (const e of remotes) {
       alive.add(e.slot);
       const s = spriteFor(e.slot);
-      s.x = w / 2 + e.x * scale;
-      s.y = h / 2 + e.z * scale;
-      if (e.slot === me) {
-        // Pull the self sprite into the foreground and make it
-        // obviously different.
-        s.tint = 0x66ccff;
-        s.scale.set(1.3);
-        s.alpha = 1.0;
-        if (s.parent !== selfLayer) selfLayer.addChild(s);
-      } else {
-        const speed = Math.hypot(e.velX, e.velZ);
-        // Slight wobble in scale with speed makes motion legible.
-        s.scale.set(0.5 + Math.min(speed / 120, 0.4));
-        if (s.parent !== swarm) swarm.addChild(s);
-      }
+      s.x = e.x;
+      s.y = e.z;
+      const speed = Math.hypot(e.velX, e.velZ);
+      s.scale.set((0.55 + Math.min(speed / 500, 0.45)) / pxPerWorld);
+      if (s.parent !== swarm) swarm.addChild(s);
+    }
+    // Self sprite: drawn from predicted state, always on top.
+    if (me !== null) {
+      alive.add(me);
+      const s = spriteFor(me);
+      s.x = self.posX;
+      s.y = self.posZ;
+      s.tint = 0xeeffff;
+      s.scale.set(1.8 / pxPerWorld);
+      s.alpha = 1.0;
+      if (s.parent !== selfLayer) selfLayer.addChild(s);
     }
     for (const [slot, s] of sprites) {
       if (!alive.has(slot)) {
@@ -145,11 +180,28 @@ export async function startRenderLoop(
         sprites.delete(slot);
       }
     }
+
+    // Pulsing halo around self. Two rings beating out of phase.
+    if (me !== null) {
+      halo.visible = true;
+      halo.clear();
+      const pulse1 = 70 + 30 * Math.sin(t * 0.004);
+      const pulse2 = 110 + 40 * Math.sin(t * 0.004 + Math.PI);
+      halo.x = self.posX;
+      halo.y = self.posZ;
+      halo
+        .circle(0, 0, pulse1)
+        .stroke({ width: 3 / pxPerWorld, color: 0x66ccff, alpha: 0.9 });
+      halo
+        .circle(0, 0, pulse2)
+        .stroke({ width: 2 / pxPerWorld, color: 0x66ccff, alpha: 0.45 });
+    } else {
+      halo.visible = false;
+    }
   });
 
   return () => {
     stopped = true;
-    window.removeEventListener("resize", drawGrid);
     app.destroy(false, { children: true, texture: true });
   };
 }

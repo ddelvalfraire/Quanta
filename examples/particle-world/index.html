@@ -8,11 +8,25 @@
       body { margin: 0; font-family: system-ui, sans-serif; background: #111; color: #ddd; }
       #status { padding: 8px 12px; font: 13px/1.4 ui-monospace, monospace; border-bottom: 1px solid #222; }
       #canvas { display: block; width: 100vw; height: calc(100vh - 40px); background: #000; }
+      #hud {
+        position: fixed; top: 44px; right: 12px; z-index: 10;
+        padding: 10px 12px; border-radius: 6px;
+        background: rgba(10, 14, 22, 0.82);
+        border: 1px solid #1f2a3a;
+        font: 11.5px/1.55 ui-monospace, SF Mono, Menlo, monospace;
+        color: #aab;
+        pointer-events: none;
+        min-width: 210px;
+      }
+      #hud .k { color: #5b7; display: inline-block; width: 98px; }
+      #hud .v { color: #def; }
+      #hud .warn { color: #f96; }
     </style>
   </head>
   <body>
     <div id="status">connecting…</div>
     <canvas id="canvas"></canvas>
+    <pre id="hud">hud: connecting…</pre>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
