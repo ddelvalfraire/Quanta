@@ -54,6 +54,49 @@ impl AuthValidator for AcceptAllValidator {
     }
 }
 
+/// Production-path validator that accepts requests whose `token` exactly
+/// matches the configured dev token. Used for local demo scenarios — NOT
+/// suitable for production deployments.
+pub struct DevTokenValidator {
+    expected_token: String,
+    counter: std::sync::atomic::AtomicU64,
+}
+
+impl DevTokenValidator {
+    pub fn new(expected_token: impl Into<String>) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            expected_token: expected_token.into(),
+            counter: std::sync::atomic::AtomicU64::new(1),
+        })
+    }
+}
+
+impl AuthValidator for DevTokenValidator {
+    fn validate(&self, req: &AuthRequest) -> Result<AuthResponse, EndpointError> {
+        // Constant-time compare to avoid timing oracles even in dev.
+        let a = req.token.as_bytes();
+        let b = self.expected_token.as_bytes();
+        let matches = a.len() == b.len()
+            && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0;
+
+        if !matches {
+            return Ok(AuthResponse {
+                session_id: 0,
+                accepted: false,
+                reason: "invalid token".into(),
+            });
+        }
+        let session_id = self
+            .counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(AuthResponse {
+            session_id,
+            accepted: true,
+            reason: String::new(),
+        })
+    }
+}
+
 /// Run the auth handshake: read an `AuthRequest`, validate it, send the
 /// `AuthResponse`. Returns the response and the client's `session_token`
 /// (if any) for reconnection verification.
@@ -166,5 +209,45 @@ mod tests {
         let r1 = validator.validate(&req).unwrap();
         let r2 = validator.validate(&req).unwrap();
         assert_eq!(r2.session_id, r1.session_id + 1);
+    }
+
+    fn dev_req(token: &str) -> AuthRequest {
+        AuthRequest {
+            token: token.into(),
+            client_version: "0.1.0".into(),
+            session_token: None,
+            transfer_token: None,
+        }
+    }
+
+    #[test]
+    fn dev_token_validator_accepts_matching_token() {
+        let v = DevTokenValidator::new("qk_rw_dev_xxx");
+        let r = v.validate(&dev_req("qk_rw_dev_xxx")).unwrap();
+        assert!(r.accepted);
+        assert!(r.session_id > 0);
+    }
+
+    #[test]
+    fn dev_token_validator_rejects_wrong_token() {
+        let v = DevTokenValidator::new("qk_rw_dev_xxx");
+        let r = v.validate(&dev_req("bad")).unwrap();
+        assert!(!r.accepted);
+        assert_eq!(r.reason, "invalid token");
+    }
+
+    #[test]
+    fn dev_token_validator_rejects_empty_token() {
+        let v = DevTokenValidator::new("qk_rw_dev_xxx");
+        let r = v.validate(&dev_req("")).unwrap();
+        assert!(!r.accepted);
+    }
+
+    #[test]
+    fn dev_token_validator_rejects_length_mismatch() {
+        let v = DevTokenValidator::new("qk_rw_dev_xxx");
+        // one char short
+        let r = v.validate(&dev_req("qk_rw_dev_xx")).unwrap();
+        assert!(!r.accepted);
     }
 }

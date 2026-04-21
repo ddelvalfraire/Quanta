@@ -1,8 +1,16 @@
-use quanta_realtime_server::capacity::run_capacity_publisher;
-use quanta_realtime_server::config::ServerConfig;
-use quanta_realtime_server::manager::{manager_channel, IslandManager};
-use std::time::Duration;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use tokio::sync::watch;
 use tracing::info;
+
+use quanta_realtime_server::auth::DevTokenValidator;
+use quanta_realtime_server::config::{EndpointConfig, ServerConfig};
+use quanta_realtime_server::tls::TlsConfig;
+use quanta_realtime_server::{run_server, RunServerArgs};
+
+const DEFAULT_DEV_TOKEN: &str = "qk_rw_dev_devdevdevdevdevdevdevdevdevdevde";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,43 +21,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    let config = ServerConfig::default();
+    let quic_addr: SocketAddr = std::env::var("QUANTA_QUIC_ADDR")
+        .unwrap_or_else(|_| "0.0.0.0:4443".into())
+        .parse()?;
+    let ws_addr: Option<SocketAddr> = std::env::var("QUANTA_WS_ADDR")
+        .ok()
+        .map(|s| s.parse())
+        .transpose()?;
+
+    let server_config = ServerConfig {
+        nats_url: std::env::var("QUANTA_NATS_URL").ok(),
+        ..ServerConfig::default()
+    };
+
     let server_id = generate_server_id();
+    let dev_token = std::env::var("QUANTA_DEV_TOKEN").unwrap_or_else(|_| DEFAULT_DEV_TOKEN.into());
+    let validator = DevTokenValidator::new(dev_token) as Arc<_>;
 
-    info!(%server_id, nats_url = %config.nats_url, "starting quanta-realtime-server");
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
-    let nats_client = async_nats::connect(&config.nats_url).await?;
-    info!("connected to NATS");
+    info!(
+        %server_id,
+        %quic_addr,
+        ?ws_addr,
+        nats = ?server_config.nats_url,
+        "starting quanta-realtime-server"
+    );
 
-    let (cmd_tx, cmd_rx) = manager_channel(256);
+    let running = run_server(RunServerArgs {
+        server_config,
+        endpoint_config: EndpointConfig::default(),
+        quic_addr,
+        ws_addr,
+        tls: TlsConfig::SelfSigned,
+        validator,
+        shutdown_rx,
+        server_id,
+    })
+    .await?;
 
-    let capacity_subject = format!("{}.{}", config.capacity_subject, server_id);
-    let capacity_interval = Duration::from_secs(config.capacity_interval_secs);
-    let max_islands = config.max_islands;
-    let server_id_clone = server_id.clone();
-    let capacity_tx = cmd_tx.clone();
+    info!(
+        quic_addr = %running.quic_addr,
+        ws_addr = ?running.ws_addr,
+        "server running — press Ctrl-C to stop"
+    );
 
-    tokio::spawn(async move {
-        run_capacity_publisher(
-            capacity_tx,
-            nats_client,
-            capacity_subject,
-            server_id_clone,
-            max_islands,
-            capacity_interval,
-        )
-        .await;
-    });
+    tokio::signal::ctrl_c().await?;
+    info!("shutdown signal received");
+    let _ = shutdown_tx.send(true);
 
-    let bridge = std::sync::Arc::new(quanta_realtime_server::stubs::StubBridge);
-    let mut manager = IslandManager::new(config, cmd_rx, bridge);
-    manager.run().await;
-
+    for task in running.tasks {
+        let _ = task.await;
+    }
     Ok(())
 }
 
 fn generate_server_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

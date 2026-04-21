@@ -1,3 +1,4 @@
+use crate::reconnect::ConnectedClient;
 use crate::types::IslandId;
 use crate::types::IslandManifest;
 use crate::zone_transfer::{BuffState, TransferError, TransferredPlayer};
@@ -54,6 +55,18 @@ pub enum ManagerCommand {
         token_bytes: Vec<u8>,
         target_island: IslandId,
         reply: oneshot::Sender<Result<TransferredPlayer, ZoneTransferError>>,
+    },
+    /// Route an authenticated client to the manager. Phase 1 stores it in
+    /// a flat vec as a placeholder; Phase 3 binds per-island.
+    ClientConnected {
+        client: ConnectedClient,
+        reply: oneshot::Sender<Result<u64, ClientConnectedError>>,
+    },
+    /// Notify the manager that a previously-connected client's underlying
+    /// transport has closed. Phase 1 removes the entry from the placeholder
+    /// vec; Phase 3 will evict from the per-island registry.
+    ClientDisconnected {
+        session_id: u64,
     },
 }
 
@@ -146,4 +159,21 @@ pub struct ManagerMetrics {
     pub active_islands: u32,
     pub total_islands: u32,
     pub total_entities: u64,
+    #[serde(default)]
+    pub connected_clients: usize,
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ClientConnectedError {
+    AtCapacity { max: usize },
+}
+
+impl fmt::Display for ClientConnectedError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AtCapacity { max } => write!(f, "server at client capacity ({max})"),
+        }
+    }
+}
+
+impl std::error::Error for ClientConnectedError {}
