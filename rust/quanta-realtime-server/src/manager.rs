@@ -1,8 +1,9 @@
 use crate::command::{
-    ActivationError, IslandCommand, LifecycleError, ManagerCommand, ManagerMetrics,
-    ZoneTransferError,
+    ActivationError, ClientConnectedError, IslandCommand, LifecycleError, ManagerCommand,
+    ManagerMetrics, ZoneTransferError,
 };
 use crate::effect_io;
+use crate::reconnect::ConnectedClient;
 use crate::zone_transfer::{ZoneTransferManager, ZoneTransferToken};
 use crate::config::ServerConfig;
 use crate::island::handle::{IslandHandle, ThreadModel};
@@ -27,6 +28,10 @@ pub struct IslandManager {
     bridge: Arc<dyn Bridge>,
     passivated: FxHashMap<String, PassivatedIsland>,
     zone_transfer: Option<ZoneTransferManager>,
+    /// Phase 1 placeholder — flat list of authenticated clients.
+    /// Phase 3 replaces with per-island HashMap<SessionId, Arc<dyn Session>>.
+    connected_clients: Vec<ConnectedClient>,
+    max_clients: usize,
 }
 
 struct PassivatedIsland {
@@ -52,6 +57,8 @@ impl IslandManager {
             bridge,
             passivated: FxHashMap::default(),
             zone_transfer,
+            connected_clients: Vec::new(),
+            max_clients: 4096,
         }
     }
 
@@ -143,6 +150,45 @@ impl IslandManager {
                 let result = self.handle_accept_zone_transfer(&token_bytes, &target_island);
                 let _ = reply.send(result);
             }
+            ManagerCommand::ClientConnected { client, reply } => {
+                let result = self.handle_client_connected(client);
+                let _ = reply.send(result);
+            }
+            ManagerCommand::ClientDisconnected { session_id } => {
+                self.handle_client_disconnected(session_id);
+            }
+        }
+    }
+
+    fn handle_client_connected(
+        &mut self,
+        client: ConnectedClient,
+    ) -> Result<u64, ClientConnectedError> {
+        if self.connected_clients.len() >= self.max_clients {
+            return Err(ClientConnectedError::AtCapacity {
+                max: self.max_clients,
+            });
+        }
+        let session_id = client.session_id;
+        info!(
+            session_id,
+            total_connected = self.connected_clients.len() + 1,
+            "client connected"
+        );
+        self.connected_clients.push(client);
+        Ok(session_id)
+    }
+
+    fn handle_client_disconnected(&mut self, session_id: u64) {
+        let before = self.connected_clients.len();
+        self.connected_clients
+            .retain(|c| c.session_id != session_id);
+        if self.connected_clients.len() < before {
+            info!(
+                session_id,
+                total_connected = self.connected_clients.len(),
+                "client disconnected"
+            );
         }
     }
 
@@ -539,6 +585,7 @@ impl IslandManager {
             active_islands: self.registry.active_count(),
             total_islands: self.registry.len(),
             total_entities: self.registry.total_entities(),
+            connected_clients: self.connected_clients.len(),
         }
     }
 }

@@ -91,6 +91,7 @@ mod tests {
             active_islands: 5,
             total_islands: 7,
             total_entities: 1000,
+            connected_clients: 0,
         };
         let signal = CapacitySignal::from_metrics("srv-1", 200, &metrics);
         let json = serde_json::to_string(&signal).unwrap();
@@ -107,6 +108,7 @@ mod tests {
             active_islands: 3,
             total_islands: 5,
             total_entities: 500,
+            connected_clients: 0,
         };
         let signal = CapacitySignal::from_metrics("srv-test", 200, &metrics);
         let json = serde_json::to_string(&signal).unwrap();

@@ -14,7 +14,7 @@ test-utils = []
 quinn = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util", "signal"] }
 bytes = "1"
 bitcode = "0.6"
 governor = "0.8"
@@ -33,6 +33,11 @@ quanta-core-rs = { path = "../quanta-core-rs" }
 web-transport-quinn = { version = "0.11", default-features = false, features = ["ring"] }
 tokio-tungstenite = "0.29"
 futures-util = "0.3"
+
+[[example]]
+name = "protocol_probe"
+path = "examples/protocol_probe.rs"
+required-features = ["test-utils"]
 
 [dev-dependencies]
 quanta-realtime-server = { path = ".", features = ["test-utils"] }
