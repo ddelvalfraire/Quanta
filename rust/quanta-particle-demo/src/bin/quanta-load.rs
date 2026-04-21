@@ -64,6 +64,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ok = s.connects_succeeded.max(1) as f64;
 
     println!("summary:");
+    println!("  attempted:   {}", s.connects_attempted);
+    println!(
+        "  transport:   {} QUIC connected ({} transport failures)",
+        s.transport_ok,
+        s.connects_attempted.saturating_sub(s.transport_ok)
+    );
+    println!(
+        "  auth:        {} accepted ({} auth failures)",
+        s.connects_succeeded,
+        s.transport_ok.saturating_sub(s.connects_succeeded)
+    );
     println!(
         "  connects:    {} / {} ({:.1}%)",
         s.connects_succeeded,

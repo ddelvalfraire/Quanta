@@ -43,6 +43,11 @@ pub struct LoadConfig {
 #[derive(Debug, Default, Clone)]
 pub struct Summary {
     pub connects_attempted: u64,
+    /// QUIC connection handshake completed. Delta from `connects_attempted`
+    /// attributes to transport-layer failures.
+    pub transport_ok: u64,
+    /// Auth handshake accepted. Delta from `transport_ok` attributes to
+    /// auth-layer failures (e.g. server-side auth_timeout).
     pub connects_succeeded: u64,
     pub disconnects_midrun: u64,
     pub datagrams_received: u64,
@@ -56,6 +61,7 @@ pub async fn run_load(cfg: LoadConfig) -> Summary {
     let (stop_tx, stop_rx) = watch::channel(false);
 
     let ca = Arc::new(AtomicU64::new(0));
+    let to = Arc::new(AtomicU64::new(0));
     let cs = Arc::new(AtomicU64::new(0));
     let dc = Arc::new(AtomicU64::new(0));
     let dr = Arc::new(AtomicU64::new(0));
@@ -81,6 +87,7 @@ pub async fn run_load(cfg: LoadConfig) -> Summary {
         let stop = stop_rx.clone();
         let token = cfg.token.clone();
         let ca = ca.clone();
+        let to = to.clone();
         let cs = cs.clone();
         let dc = dc.clone();
         let dr = dr.clone();
@@ -104,6 +111,7 @@ pub async fn run_load(cfg: LoadConfig) -> Summary {
                     return;
                 }
             };
+            to.fetch_add(1, Ordering::Relaxed);
             match authenticate(&conn, &token).await {
                 Ok(resp) if resp.accepted => {}
                 Ok(resp) => {
@@ -126,8 +134,11 @@ pub async fn run_load(cfg: LoadConfig) -> Summary {
         let _ = tokio::time::timeout(Duration::from_secs(5), h).await;
     }
 
+    // `JoinHandle::await` above is the sequencing point that makes the
+    // `Relaxed` loads below consistent with the final writes in each task.
     Summary {
         connects_attempted: ca.load(Ordering::Relaxed),
+        transport_ok: to.load(Ordering::Relaxed),
         connects_succeeded: cs.load(Ordering::Relaxed),
         disconnects_midrun: dc.load(Ordering::Relaxed),
         datagrams_received: dr.load(Ordering::Relaxed),
@@ -151,6 +162,10 @@ async fn authenticate(
     let body = bitcode::encode(&req);
     send.write_all(&(body.len() as u32).to_be_bytes()).await?;
     send.write_all(&body).await?;
+    // Signal end-of-write cleanly; dropping the stream without `finish`
+    // sends RESET_STREAM, which races with the server's pending response
+    // write under load.
+    send.finish()?;
 
     let mut len_buf = [0u8; 4];
     recv.read_exact(&mut len_buf).await?;

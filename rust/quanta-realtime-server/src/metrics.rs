@@ -7,6 +7,8 @@
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 
 use http_body_util::Full;
 use hyper::body::Bytes;
@@ -31,7 +33,10 @@ pub struct ServerMetrics {
 }
 
 impl ServerMetrics {
-    fn new() -> Self {
+    /// Construct a fresh, independent metrics set. Intended for tests
+    /// that must not race with the global [`METRICS`] singleton. Production
+    /// code should always use `METRICS.*`.
+    pub fn new() -> Self {
         let registry = Registry::new();
 
         // Buckets tuned for a 20 Hz (50 ms) tick loop — need resolution
@@ -94,6 +99,10 @@ impl ServerMetrics {
     }
 }
 
+/// Max concurrent /metrics HTTP connections. Prevents a misbehaving
+/// scraper from spawning unbounded connection tasks.
+const MAX_METRICS_CONNECTIONS: usize = 8;
+
 /// Bind the `/metrics` HTTP endpoint on `addr` and serve until
 /// `shutdown_rx` fires. Bind failure warns and returns — the rest of the
 /// server keeps running.
@@ -107,21 +116,31 @@ pub async fn metrics_serve(addr: SocketAddr, mut shutdown_rx: watch::Receiver<bo
     };
     info!(%addr, "metrics endpoint bound");
 
+    let active = Arc::new(AtomicUsize::new(0));
+
     loop {
         tokio::select! {
             accepted = listener.accept() => {
-                let (stream, _) = match accepted {
+                let (stream, peer) = match accepted {
                     Ok(p) => p,
                     Err(e) => {
                         warn!(error = %e, "metrics accept failed");
                         continue;
                     }
                 };
+                if active.load(Ordering::Relaxed) >= MAX_METRICS_CONNECTIONS {
+                    warn!(%peer, "metrics at connection cap; rejecting");
+                    drop(stream); // RST to peer
+                    continue;
+                }
+                let active_task = active.clone();
+                active_task.fetch_add(1, Ordering::Relaxed);
                 tokio::spawn(async move {
                     let io = TokioIo::new(stream);
                     let _ = http1::Builder::new()
                         .serve_connection(io, service_fn(handle))
                         .await;
+                    active_task.fetch_sub(1, Ordering::Relaxed);
                 });
             }
             _ = shutdown_rx.changed() => {
@@ -152,11 +171,14 @@ async fn handle(req: Request<hyper::body::Incoming>) -> Result<Response<Full<Byt
 mod tests {
     use super::*;
 
+    // Tests operate on a fresh `ServerMetrics` instance so parallel
+    // cargo-test runners don't race on the global `METRICS` singleton.
     #[test]
     fn encode_contains_tick_duration_buckets() {
-        METRICS.tick_duration.observe(0.0002);
-        METRICS.tick_duration.observe(0.003);
-        let body = String::from_utf8(METRICS.encode()).expect("utf8 metrics");
+        let m = ServerMetrics::new();
+        m.tick_duration.observe(0.0002);
+        m.tick_duration.observe(0.003);
+        let body = String::from_utf8(m.encode()).expect("utf8 metrics");
         assert!(body.contains("tick_duration_seconds_bucket"));
         assert!(body.contains("clients_connected"));
         assert!(body.contains("datagrams_sent_total"));
@@ -165,12 +187,10 @@ mod tests {
 
     #[test]
     fn client_gauge_inc_dec() {
-        let before = METRICS.clients_connected.get();
-        METRICS.clients_connected.inc();
-        METRICS.clients_connected.inc();
-        METRICS.clients_connected.dec();
-        let after = METRICS.clients_connected.get();
-        assert_eq!(after - before, 1);
-        METRICS.clients_connected.dec(); // restore global state
+        let m = ServerMetrics::new();
+        m.clients_connected.inc();
+        m.clients_connected.inc();
+        m.clients_connected.dec();
+        assert_eq!(m.clients_connected.get(), 1);
     }
 }
