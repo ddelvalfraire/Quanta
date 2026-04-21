@@ -7,6 +7,7 @@ pub mod command;
 pub mod config;
 pub mod connection;
 pub mod degraded;
+pub mod demo;
 pub mod effect_io;
 pub mod endpoint;
 pub mod error;

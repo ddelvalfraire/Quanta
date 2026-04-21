@@ -62,6 +62,17 @@ impl EndpointConfig {
     }
 }
 
+/// Selects the `WasmExecutor` implementation used by every island this
+/// server spawns. `Noop` is the generic default; `Particle` activates the
+/// built-in Particle World movement executor (see [`crate::demo`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutorKind {
+    #[default]
+    Noop,
+    Particle,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// NATS broker URL. `None` disables capacity publishing and any future
@@ -78,6 +89,9 @@ pub struct ServerConfig {
     /// Zone transfer configuration. `None` disables zone transfers.
     #[serde(skip)]
     pub zone_transfer: Option<ZoneTransferConfig>,
+    /// Which `WasmExecutor` islands use. Default `Noop` preserves historical behavior.
+    #[serde(default)]
+    pub executor_kind: ExecutorKind,
 }
 
 impl Default for ServerConfig {
@@ -91,6 +105,7 @@ impl Default for ServerConfig {
             idle_timeout_secs: 30,
             grace_period_secs: 10,
             zone_transfer: None,
+            executor_kind: ExecutorKind::Noop,
         }
     }
 }

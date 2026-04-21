@@ -5,12 +5,13 @@ use crate::command::{
 use crate::effect_io;
 use crate::reconnect::ConnectedClient;
 use crate::zone_transfer::{ZoneTransferManager, ZoneTransferToken};
-use crate::config::ServerConfig;
+use crate::config::{ExecutorKind, ServerConfig};
+use crate::demo::executor::ParticleExecutor;
 use crate::island::handle::{IslandHandle, ThreadModel};
 use crate::island::registry::IslandRegistry;
 use crate::island::state_machine::IslandState;
 use crate::tick::types::{BridgeEffect, BridgeMessage, ClientInput, NoopWasmExecutor, TickEngineConfig};
-use crate::tick::TickEngine;
+use crate::tick::{TickEngine, WasmExecutor};
 use crate::traits::Bridge;
 use crate::types::{IslandId, IslandManifest, IslandSnapshot};
 use rustc_hash::FxHashMap;
@@ -228,9 +229,13 @@ impl IslandManager {
         let engine_island_id = island_id.clone();
         let panicked = Arc::new(AtomicBool::new(false));
         let engine_panicked = panicked.clone();
+        let executor_kind = self.config.executor_kind;
         let join_handle = std::thread::spawn(move || {
             let config = TickEngineConfig::default();
-            let wasm = Box::new(NoopWasmExecutor);
+            let wasm: Box<dyn WasmExecutor> = match executor_kind {
+                ExecutorKind::Noop => Box::new(NoopWasmExecutor),
+                ExecutorKind::Particle => Box::new(ParticleExecutor::new(config.tick_rate_hz)),
+            };
             let mut engine = TickEngine::new(
                 engine_island_id,
                 config,
