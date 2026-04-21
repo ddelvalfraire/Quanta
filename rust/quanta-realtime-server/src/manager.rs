@@ -316,6 +316,7 @@ impl IslandManager {
 
         self.client_registry
             .insert(session_id, (island_id.clone(), slot, client_index));
+        crate::metrics::METRICS.clients_connected.inc();
 
         info!(%island_id, session_id, slot = slot.0, "client registered with island");
         Ok((slot, client_index, input_tx))
@@ -343,6 +344,7 @@ impl IslandManager {
         if let Some(allocator) = self.slot_allocators.get_mut(&island_id.0) {
             allocator.release(slot.0);
         }
+        crate::metrics::METRICS.clients_connected.dec();
         info!(%island_id, session_id, slot = slot.0, "client deregistered from island");
     }
 

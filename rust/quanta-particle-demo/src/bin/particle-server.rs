@@ -39,6 +39,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|_| "0.0.0.0:4443".into())
         .parse()?;
 
+    // Prometheus /metrics endpoint. Unset → default 127.0.0.1:9090; set
+    // to empty string to disable; otherwise the parsed address.
+    let metrics_addr: Option<SocketAddr> = match std::env::var("QUANTA_METRICS_ADDR") {
+        Ok(s) if s.is_empty() => None,
+        Ok(s) => Some(s.parse()?),
+        Err(_) => Some("127.0.0.1:9090".parse().unwrap()),
+    };
+
     let server_config = ServerConfig {
         nats_url: std::env::var("QUANTA_NATS_URL").ok(),
         ..ServerConfig::default()
@@ -64,6 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         executor_factory: Some(particle_executor_factory(DEMO_TICK_RATE_HZ)),
         fanout_factory: Some(particle_fanout_factory()),
         default_island_id: Some(IslandId::from("particle-world")),
+        metrics_addr,
     })
     .await?;
 

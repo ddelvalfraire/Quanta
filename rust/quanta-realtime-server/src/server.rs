@@ -53,6 +53,9 @@ pub struct RunServerArgs {
     /// idle until an app-layer routing scheme is added). Phase 3 demos set
     /// this to their single demo island.
     pub default_island_id: Option<crate::types::IslandId>,
+    /// Bind address for the Prometheus `/metrics` endpoint. `None` disables
+    /// the HTTP server entirely.
+    pub metrics_addr: Option<SocketAddr>,
 }
 
 pub struct RunningServer {
@@ -164,6 +167,7 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
         executor_factory,
         fanout_factory,
         default_island_id,
+        metrics_addr,
     } = args;
 
     let executor_factory: ExecutorFactory = executor_factory
@@ -383,6 +387,10 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
     }
     if let Some(h) = capacity_handle {
         tasks.push(h);
+    }
+    if let Some(addr) = metrics_addr {
+        let shutdown = shutdown_rx.clone();
+        tasks.push(tokio::spawn(crate::metrics::metrics_serve(addr, shutdown)));
     }
 
     Ok(RunningServer {

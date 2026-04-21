@@ -407,9 +407,15 @@ impl TickEngine {
             }
 
             while accumulator >= tick_period {
+                let tick_start = Instant::now();
                 let tick_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     self.execute_tick();
                 }));
+                // Record duration even on panic — the sample count doubles
+                // as a simple panic detector for operators.
+                crate::metrics::METRICS
+                    .tick_duration
+                    .observe(tick_start.elapsed().as_secs_f64());
 
                 match tick_result {
                     Ok(()) => {

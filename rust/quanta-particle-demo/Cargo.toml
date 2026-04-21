@@ -3,10 +3,18 @@ name = "quanta-particle-demo"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Enables the `load` module + `quanta-load` binary. Turned on by
+# dev-dependencies so tests always get it, and by the binary's own
+# `required-features`.
+load = ["quanta-realtime-server/test-utils"]
+
 [dependencies]
 quanta-core-rs = { path = "../quanta-core-rs" }
 quanta-realtime-server = { path = "../quanta-realtime-server" }
+quinn = "0.11"
 bytes = "1"
+bitcode = "0.6"
 rustc-hash = "2"
 hex = "0.4"
 serde = { version = "1", features = ["derive"] }
@@ -18,3 +26,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 quanta-realtime-server = { path = "../quanta-realtime-server", features = ["test-utils"] }
 quanta-core-rs = { path = "../quanta-core-rs", features = ["test-support"] }
+quanta-particle-demo = { path = ".", features = ["load"] }
+
+[[bin]]
+name = "quanta-load"
+path = "src/bin/quanta-load.rs"
+required-features = ["load"]
+
+[[test]]
+name = "load_smoke_test"
+path = "tests/load_smoke_test.rs"
+required-features = ["load"]

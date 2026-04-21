@@ -7,6 +7,8 @@
 pub mod executor;
 pub mod fanout;
 pub mod input;
+#[cfg(feature = "load")]
+pub mod load;
 pub mod schema;
 pub mod server_info;
 

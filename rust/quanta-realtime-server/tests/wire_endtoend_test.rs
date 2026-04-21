@@ -58,6 +58,7 @@ async fn server_accepts_quic_and_routes_to_manager() {
         executor_factory: None,
         fanout_factory: None,
         default_island_id: None,
+        metrics_addr: None,
     })
     .await
     .expect("run_server");
@@ -111,6 +112,7 @@ async fn client_disconnect_shrinks_manager_vec() {
         executor_factory: None,
         fanout_factory: None,
         default_island_id: None,
+        metrics_addr: None,
     })
     .await
     .expect("run_server");
@@ -164,6 +166,7 @@ async fn server_runs_without_nats() {
         executor_factory: None,
         fanout_factory: None,
         default_island_id: None,
+        metrics_addr: None,
     })
     .await
     .expect("run_server with no NATS");

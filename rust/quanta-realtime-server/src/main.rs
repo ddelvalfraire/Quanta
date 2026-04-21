@@ -60,6 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         executor_factory: None,
         fanout_factory: None,
         default_island_id: None,
+        metrics_addr: None,
     })
     .await?;
 

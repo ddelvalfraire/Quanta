@@ -152,5 +152,4 @@ mod tests {
         let h = compute_cert_sha256(&certs);
         assert_eq!(h.len(), 32);
     }
-
 }
