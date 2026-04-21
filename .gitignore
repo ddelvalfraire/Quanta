@@ -63,3 +63,12 @@ rust/fixtures/counter-actor/src/bindings.rs
 # Playwright / E2E artifacts
 .playwright-mcp/
 /e2e-*.png
+
+# Particle World browser demo — generated per-dev-run artifacts
+examples/particle-world/node_modules/
+examples/particle-world/dist/
+examples/particle-world/public/server-info.json
+examples/particle-world/wasm-decoder/
+
+# wasm-pack build output
+rust/quanta-wasm-decoder/pkg/

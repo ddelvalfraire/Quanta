@@ -49,5 +49,5 @@ pub use reconnect::ConnectedClient;
 pub use server::{run_server, ExecutorFactory, RunServerArgs, RunningServer};
 pub use session::{QuicSession, Session, TransportStats, TransportType};
 pub use tick::types::{EntitySnapshot, TickSnapshot};
-pub use tls::TlsConfig;
+pub use tls::{compute_cert_sha256, TlsConfig};
 pub use ws_listener::WsListener;

@@ -18,6 +18,7 @@ pub struct QuicEndpoint {
     endpoint: quinn::Endpoint,
     config: EndpointConfig,
     rate_limiter: governor::DefaultDirectRateLimiter,
+    cert_sha256: [u8; 32],
 }
 
 impl QuicEndpoint {
@@ -27,7 +28,7 @@ impl QuicEndpoint {
         tls: &TlsConfig,
     ) -> Result<Self, EndpointError> {
         let transport = config.build_transport_config();
-        let server_config = build_server_config(tls, transport)?;
+        let (server_config, cert_sha256) = build_server_config(tls, transport)?;
         let endpoint = quinn::Endpoint::server(server_config, addr).map_err(EndpointError::Bind)?;
 
         let quota = Quota::per_second(
@@ -44,11 +45,18 @@ impl QuicEndpoint {
             endpoint,
             config,
             rate_limiter,
+            cert_sha256,
         })
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, EndpointError> {
         self.endpoint.local_addr().map_err(EndpointError::Bind)
+    }
+
+    /// SHA-256 digest of the leaf certificate's DER encoding, suitable
+    /// for the browser's `WebTransport.serverCertificateHashes` option.
+    pub fn cert_sha256(&self) -> [u8; 32] {
+        self.cert_sha256
     }
 
     pub async fn run(
