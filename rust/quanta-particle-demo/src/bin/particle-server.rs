@@ -6,10 +6,12 @@
 //! code lives in this crate.
 
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 
+use quanta_particle_demo::server_info;
 use tokio::sync::watch;
-use tracing::info;
+use tracing::{info, warn};
 
 use quanta_particle_demo::{particle_executor_factory, particle_fanout_factory};
 use quanta_realtime_server::auth::DevTokenValidator;
@@ -84,6 +86,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
     rx.await??;
     info!(island_id = "particle-world", "default island activated");
+
+    // Publish connection info for the browser demo. Relative default path
+    // assumes the server runs from the `rust/` directory.
+    let info_path = std::env::var("QUANTA_SERVER_INFO_FILE")
+        .unwrap_or_else(|_| "../examples/particle-world/public/server-info.json".into());
+    if let Err(e) = server_info::write_server_info(
+        Path::new(&info_path),
+        running.quic_addr,
+        running.cert_sha256,
+    ) {
+        warn!(error = %e, path = %info_path, "failed to write server-info.json");
+    }
 
     info!(
         quic_addr = %running.quic_addr,

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use quinn::crypto::rustls::QuicServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use sha2::{Digest, Sha256};
 use tracing::warn;
 
 use crate::error::EndpointError;
@@ -12,10 +13,25 @@ pub enum TlsConfig {
     File { cert_path: String, key_path: String },
     SelfSigned,
 }
+
+/// SHA-256 digest of the first (leaf) certificate's DER encoding.
+///
+/// Browsers pass this value to `WebTransport` via `serverCertificateHashes`
+/// to accept a self-signed cert without a CA chain. Intermediates are
+/// ignored — the spec hashes only the end-entity certificate.
+pub fn compute_cert_sha256(certs: &[CertificateDer<'_>]) -> [u8; 32] {
+    let first = certs
+        .first()
+        .expect("server config always has at least one cert");
+    let mut hasher = Sha256::new();
+    hasher.update(first.as_ref());
+    hasher.finalize().into()
+}
+
 pub fn build_server_config(
     tls: &TlsConfig,
     transport: quinn::TransportConfig,
-) -> Result<quinn::ServerConfig, EndpointError> {
+) -> Result<(quinn::ServerConfig, [u8; 32]), EndpointError> {
     let (certs, key) = match tls {
         TlsConfig::File {
             cert_path,
@@ -26,6 +42,8 @@ pub fn build_server_config(
             generate_self_signed()?
         }
     };
+
+    let cert_sha256 = compute_cert_sha256(&certs);
 
     let mut rustls_config = rustls::ServerConfig::builder()
         .with_no_client_auth()
@@ -40,7 +58,7 @@ pub fn build_server_config(
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_config));
     server_config.transport_config(Arc::new(transport));
 
-    Ok(server_config)
+    Ok((server_config, cert_sha256))
 }
 
 fn load_pem_files(
@@ -65,9 +83,26 @@ fn load_pem_files(
 
 pub(crate) fn generate_self_signed(
 ) -> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), EndpointError> {
-    let rcgen::CertifiedKey { cert, key_pair } =
-        rcgen::generate_simple_self_signed(vec!["localhost".into()])
-            .map_err(|e| EndpointError::Tls(format!("rcgen: {e}")))?;
+    use rcgen::{CertificateParams, DnType, KeyPair, PKCS_ECDSA_P256_SHA256};
+    use time::{Duration, OffsetDateTime};
+
+    let mut params = CertificateParams::new(vec!["localhost".into()])
+        .map_err(|e| EndpointError::Tls(format!("rcgen params: {e}")))?;
+    params
+        .distinguished_name
+        .push(DnType::CommonName, "quanta-particle-server");
+    // WebTransport `serverCertificateHashes` requires validity ≤ 14 days.
+    // Start a minute in the past so freshly-generated certs aren't rejected
+    // by client clocks with slight skew.
+    let now = OffsetDateTime::now_utc();
+    params.not_before = now - Duration::minutes(1);
+    params.not_after = now + Duration::days(13);
+
+    let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+        .map_err(|e| EndpointError::Tls(format!("rcgen keypair: {e}")))?;
+    let cert = params
+        .self_signed(&key_pair)
+        .map_err(|e| EndpointError::Tls(format!("rcgen sign: {e}")))?;
 
     let cert_der = CertificateDer::from(cert);
     let key_der = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(key_pair.serialize_der()));
@@ -83,8 +118,11 @@ mod tests {
     #[test]
     fn self_signed_cert_produces_valid_server_config() {
         let transport = EndpointConfig::default().build_transport_config();
-        let server_config = build_server_config(&TlsConfig::SelfSigned, transport);
-        assert!(server_config.is_ok());
+        let result = build_server_config(&TlsConfig::SelfSigned, transport);
+        assert!(result.is_ok());
+        let (_, hash) = result.unwrap();
+        // Hash is deterministic length, must be 32 bytes.
+        assert_eq!(hash.len(), 32);
     }
 
     #[test]
@@ -107,4 +145,12 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("read cert"));
     }
+
+    #[test]
+    fn cert_sha256_is_32_bytes() {
+        let (certs, _) = generate_self_signed().expect("cert");
+        let h = compute_cert_sha256(&certs);
+        assert_eq!(h.len(), 32);
+    }
+
 }

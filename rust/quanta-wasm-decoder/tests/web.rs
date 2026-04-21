@@ -6,7 +6,11 @@ use quanta_core_rs::delta::encoder::{compute_delta, quantize, write_state};
 use quanta_core_rs::schema::export::export_schema;
 use quanta_core_rs::schema::types::test_fixtures::*;
 
-use quanta_wasm_decoder::{create_schema, decode_state, encode_state, apply_delta};
+use quanta_wasm_decoder::{
+    apply_delta, create_schema, decode_delta_datagram, decode_initial_state, decode_state,
+    encode_client_input, encode_state,
+};
+use wasm_bindgen::{JsCast, JsValue};
 
 fn schema_bytes_two_field() -> Vec<u8> {
     export_schema(&two_field_schema())
@@ -147,4 +151,111 @@ fn encode_decode_quantized_roundtrip() {
         .as_f64()
         .unwrap();
     assert!((x1 - x2).abs() < params.precision);
+}
+
+// ---------------------------------------------------------------------------
+// Cross-language wire-format parity — verifies the JS side of the decoder
+// returns exactly what the Rust encoder produced.
+// ---------------------------------------------------------------------------
+
+fn read_u32_field(obj: &JsValue, key: &str) -> u32 {
+    js_sys::Reflect::get(obj, &key.into())
+        .unwrap()
+        .as_f64()
+        .unwrap() as u32
+}
+
+fn read_u64_field(obj: &JsValue, key: &str) -> u64 {
+    let v = js_sys::Reflect::get(obj, &key.into()).unwrap();
+    if let Some(bi) = v.dyn_ref::<js_sys::BigInt>() {
+        u64::try_from(bi.clone()).unwrap_or(0)
+    } else {
+        v.as_f64().unwrap() as u64
+    }
+}
+
+#[wasm_bindgen_test]
+fn client_input_round_trip_matches_expected_bytes() {
+    let bytes = encode_client_input(1, 2, 1.0, 0.0, 0, 50);
+    let expected: [u8; 25] = [
+        0x02, 0, 0, 0, 1, 0, 0, 0, 2, 0x3F, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0,
+        0x00, 0x32, 0x00, 0x00,
+    ];
+    assert_eq!(bytes.as_slice(), expected);
+}
+
+#[wasm_bindgen_test]
+fn decode_delta_datagram_roundtrip_golden_bytes() {
+    // Matches `quanta-realtime-server/src/delta_envelope.rs::tests::golden_bytes`.
+    let bytes: [u8; 15] = [
+        0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, 0xDE, 0xAD,
+    ];
+    let obj = decode_delta_datagram(&bytes).unwrap();
+    assert_eq!(read_u32_field(&obj, "flags"), 1);
+    assert_eq!(read_u32_field(&obj, "entitySlot"), 1);
+    assert_eq!(read_u64_field(&obj, "tick"), 42);
+    let payload = js_sys::Reflect::get(&obj, &"payload".into())
+        .unwrap()
+        .dyn_into::<js_sys::Uint8Array>()
+        .unwrap();
+    let mut copy = vec![0u8; payload.length() as usize];
+    payload.copy_to(&mut copy);
+    assert_eq!(copy, vec![0xDE, 0xAD]);
+}
+
+#[wasm_bindgen_test]
+fn decode_delta_datagram_rejects_truncated() {
+    let bytes = [0u8; 12];
+    assert!(decode_delta_datagram(&bytes).is_err());
+}
+
+#[wasm_bindgen_test]
+fn decode_initial_state_minimal_one_entity() {
+    // [baseline_tick=42 u64 BE][flags=0][schema_version=1][entity_count=1]
+    // [entity_slot=7 u32 BE][state_len=3 u32 BE][state=0xDE,0xAD,0xBE]
+    let bytes: Vec<u8> = vec![
+        0, 0, 0, 0, 0, 0, 0, 0x2A, // baseline_tick
+        0x00, // flags
+        0x01, // schema_version
+        0, 0, 0, 1, // entity_count
+        0, 0, 0, 7, // entity_slot
+        0, 0, 0, 3, // state_len
+        0xDE, 0xAD, 0xBE, // state
+    ];
+    let obj = decode_initial_state(&bytes).unwrap();
+    assert_eq!(read_u64_field(&obj, "baselineTick"), 42);
+    assert_eq!(read_u32_field(&obj, "schemaVersion"), 1);
+    let entities = js_sys::Reflect::get(&obj, &"entities".into())
+        .unwrap()
+        .dyn_into::<js_sys::Array>()
+        .unwrap();
+    assert_eq!(entities.length(), 1);
+    let first = entities.get(0);
+    assert_eq!(read_u32_field(&first, "entitySlot"), 7);
+}
+
+#[wasm_bindgen_test]
+fn decode_initial_state_with_schema_flag() {
+    // flags=0x01 (FLAG_INCLUDES_SCHEMA), schema bytes "SCH" then 0 entities.
+    let bytes: Vec<u8> = vec![
+        0, 0, 0, 0, 0, 0, 0, 0,    // baseline_tick=0
+        0x01, // flags=includes_schema
+        0x02, // schema_version=2
+        0, 0, 0, 3, // schema_len=3
+        b'S', b'C', b'H', // schema bytes
+        0, 0, 0, 0, // entity_count=0
+    ];
+    let obj = decode_initial_state(&bytes).unwrap();
+    let schema = js_sys::Reflect::get(&obj, &"compiledSchema".into())
+        .unwrap()
+        .dyn_into::<js_sys::Uint8Array>()
+        .unwrap();
+    let mut copy = vec![0u8; schema.length() as usize];
+    schema.copy_to(&mut copy);
+    assert_eq!(copy, b"SCH");
+}
+
+#[wasm_bindgen_test]
+fn decode_initial_state_rejects_truncated() {
+    assert!(decode_initial_state(&[0u8; 5]).is_err());
 }

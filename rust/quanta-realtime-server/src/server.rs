@@ -60,6 +60,9 @@ pub struct RunningServer {
     pub ws_addr: Option<SocketAddr>,
     pub manager_tx: mpsc::Sender<ManagerCommand>,
     pub tasks: Vec<JoinHandle<()>>,
+    /// SHA-256 of the leaf TLS certificate's DER bytes. Published so a
+    /// browser demo can set `WebTransport.serverCertificateHashes`.
+    pub cert_sha256: [u8; 32],
 }
 
 /// Register an authenticated client with the given island and spawn a reader
@@ -174,6 +177,7 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
     // 1. Bind QUIC synchronously so bind failures surface as Err.
     let quic_endpoint = QuicEndpoint::bind(quic_addr, endpoint_config.clone(), &tls)?;
     let bound_quic = quic_endpoint.local_addr()?;
+    let cert_sha256 = quic_endpoint.cert_sha256();
     info!(addr = %bound_quic, "QUIC endpoint bound");
 
     // 2. Optionally bind WS.
@@ -386,5 +390,6 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
         ws_addr: bound_ws,
         manager_tx,
         tasks,
+        cert_sha256,
     })
 }

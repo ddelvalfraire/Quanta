@@ -39,11 +39,7 @@ pub fn create_schema(bytes: &[u8]) -> Result<SchemaHandle, JsError> {
 
 /// Apply a binary delta to the current state, returning the new state bytes.
 #[wasm_bindgen]
-pub fn apply_delta(
-    handle: &SchemaHandle,
-    state: &[u8],
-    delta: &[u8],
-) -> Result<Vec<u8>, JsError> {
+pub fn apply_delta(handle: &SchemaHandle, state: &[u8], delta: &[u8]) -> Result<Vec<u8>, JsError> {
     core_encoder::apply_delta(&handle.schema, state, delta)
         .map_err(|e| JsError::new(&e.to_string()))
 }
@@ -150,9 +146,9 @@ fn encode_value(field: &FieldMeta, js_val: &JsValue) -> Result<u64, JsError> {
 
     match field.field_type {
         FieldType::Bool => {
-            let b = js_val
-                .as_bool()
-                .ok_or_else(|| JsError::new(&format!("expected boolean for field '{}'", field.name)))?;
+            let b = js_val.as_bool().ok_or_else(|| {
+                JsError::new(&format!("expected boolean for field '{}'", field.name))
+            })?;
             Ok(b as u64)
         }
         FieldType::F32 => {
@@ -219,8 +215,8 @@ pub fn encode_auth_request(
 #[wasm_bindgen]
 pub fn decode_auth_response(bytes: &[u8]) -> Result<JsValue, JsError> {
     let payload = strip_length_prefix(bytes)?;
-    let resp: AuthResponse = bitcode::decode(payload)
-        .map_err(|e| JsError::new(&format!("decode AuthResponse: {e}")))?;
+    let resp: AuthResponse =
+        bitcode::decode(payload).map_err(|e| JsError::new(&format!("decode AuthResponse: {e}")))?;
 
     let obj = js_sys::Object::new();
     js_sys::Reflect::set(&obj, &"sessionId".into(), &JsValue::from(resp.session_id))
@@ -250,6 +246,171 @@ pub fn encode_baseline_ack(baseline_tick: u64) -> Vec<u8> {
     let ack = BaselineAck { baseline_tick };
     let payload = bitcode::encode(&ack);
     length_prefix(&payload)
+}
+
+// ---------------------------------------------------------------------------
+// Particle input datagram (msg_type = 0x02) — 25-byte wire format.
+// MUST stay byte-for-byte identical with
+// `quanta-particle-demo/src/input.rs`; see `client_input_cross_language_golden_bytes`.
+// ---------------------------------------------------------------------------
+
+const INPUT_MSG_TYPE: u8 = 0x02;
+const INPUT_DATAGRAM_LEN: usize = 25;
+
+#[wasm_bindgen]
+pub fn encode_client_input(
+    entity_slot: u32,
+    input_seq: u32,
+    dir_x: f32,
+    dir_z: f32,
+    actions: u32,
+    dt_ms: u16,
+) -> Vec<u8> {
+    let mut buf = vec![0u8; INPUT_DATAGRAM_LEN];
+    buf[0] = INPUT_MSG_TYPE;
+    buf[1..5].copy_from_slice(&entity_slot.to_be_bytes());
+    buf[5..9].copy_from_slice(&input_seq.to_be_bytes());
+    buf[9..13].copy_from_slice(&dir_x.to_be_bytes());
+    buf[13..17].copy_from_slice(&dir_z.to_be_bytes());
+    buf[17..21].copy_from_slice(&actions.to_be_bytes());
+    buf[21..23].copy_from_slice(&dt_ms.to_be_bytes());
+    // buf[23..25] reserved, already zero.
+    buf
+}
+
+// ---------------------------------------------------------------------------
+// Delta datagram envelope — 13-byte header.
+// MUST stay in sync with `quanta-realtime-server/src/delta_envelope.rs`.
+// ---------------------------------------------------------------------------
+
+const DELTA_HEADER_LEN: usize = 13;
+
+#[wasm_bindgen]
+pub fn decode_delta_datagram(bytes: &[u8]) -> Result<JsValue, JsError> {
+    if bytes.len() < DELTA_HEADER_LEN {
+        return Err(JsError::new(&format!(
+            "delta datagram too short: need {DELTA_HEADER_LEN}, got {}",
+            bytes.len()
+        )));
+    }
+    // Length check above guarantees the slice indexes below are in-bounds.
+    let flags = bytes[0];
+    let entity_slot = u32::from_be_bytes(bytes[1..5].try_into().unwrap());
+    let tick = u64::from_be_bytes(bytes[5..13].try_into().unwrap());
+    let payload = &bytes[DELTA_HEADER_LEN..];
+
+    let obj = js_sys::Object::new();
+    js_sys::Reflect::set(&obj, &"flags".into(), &JsValue::from(flags))
+        .map_err(|_| JsError::new("set flags"))?;
+    js_sys::Reflect::set(&obj, &"entitySlot".into(), &JsValue::from(entity_slot))
+        .map_err(|_| JsError::new("set entitySlot"))?;
+    js_sys::Reflect::set(&obj, &"tick".into(), &JsValue::from(tick))
+        .map_err(|_| JsError::new("set tick"))?;
+    js_sys::Reflect::set(
+        &obj,
+        &"payload".into(),
+        &js_sys::Uint8Array::from(payload).into(),
+    )
+    .map_err(|_| JsError::new("set payload"))?;
+    Ok(obj.into())
+}
+
+// ---------------------------------------------------------------------------
+// InitialStateMessage — see `quanta-realtime-server/src/sync.rs` for the
+// authoritative wire format. Duplicated here (rather than importing the
+// server crate) so wasm-decoder can compile to `wasm32-unknown-unknown`
+// without pulling quinn/tokio.
+// ---------------------------------------------------------------------------
+
+const INITIAL_STATE_HEADER: usize = 8 + 1 + 1 + 4;
+const FLAG_INCLUDES_SCHEMA: u8 = 0x01;
+
+#[wasm_bindgen]
+pub fn decode_initial_state(bytes: &[u8]) -> Result<JsValue, JsError> {
+    if bytes.len() < INITIAL_STATE_HEADER {
+        return Err(JsError::new(&format!(
+            "initial state truncated: need {INITIAL_STATE_HEADER}, got {}",
+            bytes.len()
+        )));
+    }
+    let mut pos = 0;
+    let baseline_tick = u64::from_be_bytes(bytes[pos..pos + 8].try_into().unwrap());
+    pos += 8;
+    let flags = bytes[pos];
+    pos += 1;
+    let schema_version = bytes[pos];
+    pos += 1;
+
+    let compiled_schema = if flags & FLAG_INCLUDES_SCHEMA != 0 {
+        if pos + 4 > bytes.len() {
+            return Err(JsError::new("truncated schema header"));
+        }
+        let schema_len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
+        pos += 4;
+        if pos + schema_len > bytes.len() {
+            return Err(JsError::new("truncated schema bytes"));
+        }
+        let s = bytes[pos..pos + schema_len].to_vec();
+        pos += schema_len;
+        Some(s)
+    } else {
+        None
+    };
+
+    if pos + 4 > bytes.len() {
+        return Err(JsError::new("truncated entity count"));
+    }
+    let entity_count = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap());
+    pos += 4;
+
+    let entities = js_sys::Array::new();
+    for _ in 0..entity_count {
+        if pos + 8 > bytes.len() {
+            return Err(JsError::new("truncated entity header"));
+        }
+        let slot = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap());
+        pos += 4;
+        let state_len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
+        pos += 4;
+        if pos + state_len > bytes.len() {
+            return Err(JsError::new("truncated entity state"));
+        }
+        let state = &bytes[pos..pos + state_len];
+        pos += state_len;
+        let entry = js_sys::Object::new();
+        js_sys::Reflect::set(&entry, &"entitySlot".into(), &JsValue::from(slot))
+            .map_err(|_| JsError::new("set entitySlot"))?;
+        js_sys::Reflect::set(
+            &entry,
+            &"state".into(),
+            &js_sys::Uint8Array::from(state).into(),
+        )
+        .map_err(|_| JsError::new("set state"))?;
+        entities.push(&entry);
+    }
+
+    let out = js_sys::Object::new();
+    js_sys::Reflect::set(&out, &"baselineTick".into(), &JsValue::from(baseline_tick))
+        .map_err(|_| JsError::new("set baselineTick"))?;
+    js_sys::Reflect::set(&out, &"flags".into(), &JsValue::from(flags))
+        .map_err(|_| JsError::new("set flags"))?;
+    js_sys::Reflect::set(
+        &out,
+        &"schemaVersion".into(),
+        &JsValue::from(schema_version),
+    )
+    .map_err(|_| JsError::new("set schemaVersion"))?;
+    if let Some(s) = compiled_schema {
+        js_sys::Reflect::set(
+            &out,
+            &"compiledSchema".into(),
+            &js_sys::Uint8Array::from(s.as_slice()).into(),
+        )
+        .map_err(|_| JsError::new("set compiledSchema"))?;
+    }
+    js_sys::Reflect::set(&out, &"entities".into(), &entities)
+        .map_err(|_| JsError::new("set entities"))?;
+    Ok(out.into())
 }
 
 fn length_prefix(payload: &[u8]) -> Vec<u8> {
@@ -392,6 +553,23 @@ mod tests {
         let decoded: AuthResponse = bitcode::decode(&bytes[4..4 + len]).unwrap();
         assert!(!decoded.accepted);
         assert_eq!(decoded.reason, "invalid_token");
+    }
+
+    // -----------------------------------------------------------------------
+    // Cross-language wire-format parity — these byte sequences MUST match
+    // the golden-bytes tests in the server / demo crates. If either side
+    // changes, both tests must be updated together.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn client_input_cross_language_golden_bytes() {
+        // Matches `quanta-particle-demo/src/input.rs::tests::golden_bytes`.
+        let bytes = encode_client_input(1, 2, 1.0, 0.0, 0, 50);
+        let expected: [u8; INPUT_DATAGRAM_LEN] = [
+            0x02, 0, 0, 0, 1, 0, 0, 0, 2, 0x3F, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0, 0, 0,
+            0, 0x00, 0x32, 0x00, 0x00,
+        ];
+        assert_eq!(bytes.as_slice(), expected);
     }
 
     #[test]
