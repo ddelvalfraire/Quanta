@@ -36,10 +36,7 @@ pub struct WsSession {
 }
 
 impl WsSession {
-    pub fn new(
-        outbound_tx: mpsc::Sender<Vec<u8>>,
-        datagram_rx: mpsc::Receiver<Vec<u8>>,
-    ) -> Self {
+    pub fn new(outbound_tx: mpsc::Sender<Vec<u8>>, datagram_rx: mpsc::Receiver<Vec<u8>>) -> Self {
         Self {
             outbound_tx,
             datagram_rx: Mutex::new(datagram_rx),

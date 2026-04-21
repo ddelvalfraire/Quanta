@@ -1,25 +1,29 @@
 use crate::command::{
     ActivationError, ClientConnectedError, IslandCommand, LifecycleError, ManagerCommand,
-    ManagerMetrics, ZoneTransferError,
+    ManagerMetrics, RegisterClientError, RegisterClientResult, ZoneTransferError,
 };
-use crate::effect_io;
-use crate::reconnect::ConnectedClient;
-use crate::zone_transfer::{ZoneTransferManager, ZoneTransferToken};
 use crate::config::ServerConfig;
+use crate::effect_io;
+use crate::fanout::{fanout_loop, FanoutCommand, FanoutFactory};
 use crate::island::handle::{IslandHandle, ThreadModel};
 use crate::island::registry::IslandRegistry;
 use crate::island::state_machine::IslandState;
+use crate::reconnect::ConnectedClient;
 use crate::server::ExecutorFactory;
-use crate::tick::types::{BridgeEffect, BridgeMessage, ClientInput, TickEngineConfig};
+use crate::session::Session;
+use crate::tick::types::{
+    BridgeEffect, BridgeMessage, ClientInput, TickEngineConfig, TickSnapshot,
+};
 use crate::tick::TickEngine;
 use crate::traits::Bridge;
-use crate::types::{IslandId, IslandManifest, IslandSnapshot};
+use crate::types::{ClientIndex, EntitySlot, IslandId, IslandManifest, IslandSnapshot};
+use crate::zone_transfer::{ZoneTransferManager, ZoneTransferToken};
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
-use tracing::{error, info};
+use tokio::sync::{mpsc, watch};
+use tracing::{error, info, warn};
 
 pub struct IslandManager {
     config: ServerConfig,
@@ -35,11 +39,53 @@ pub struct IslandManager {
     max_clients: usize,
     /// Constructs a fresh `WasmExecutor` for each island this manager spawns.
     executor_factory: ExecutorFactory,
+    /// Phase 3: optional fanout factory. If `None`, no fanout task is spawned
+    /// per island (engine still emits snapshots, they're dropped).
+    fanout_factory: Option<FanoutFactory>,
+    /// Phase 3: entity-slot allocator per island id.
+    /// `next` grows monotonically; `free` holds reclaimed slot ids from
+    /// departed clients so steady-state churn never exhausts the u16 range.
+    slot_allocators: FxHashMap<String, SlotAllocator>,
+    /// Phase 3: per-island fanout command channel, keyed by island id string.
+    fanout_tx: FxHashMap<String, mpsc::Sender<FanoutCommand>>,
+    /// Phase 3: `session_id -> (island_id, slot, client_index)` for deregister lookup.
+    client_registry: FxHashMap<u64, (IslandId, EntitySlot, ClientIndex)>,
+    /// Propagated to fanout tasks so they exit on shutdown.
+    shutdown_watch: watch::Receiver<bool>,
 }
 
 struct PassivatedIsland {
     snapshot: IslandSnapshot,
     manifest: IslandManifest,
+}
+
+/// Per-island entity-slot allocator. Hands out slot ids from the free list
+/// first (LIFO reuse) then from the monotonic counter.
+#[derive(Default)]
+struct SlotAllocator {
+    next: u32,
+    free: Vec<u32>,
+}
+
+impl SlotAllocator {
+    /// Returns the next slot id, or `None` if it would exceed `u16::MAX`.
+    /// `ClientIndex` narrows `u32` → `u16`; rejecting above the cap prevents
+    /// silent collision with an earlier client still registered in fanout.
+    fn allocate(&mut self) -> Option<u32> {
+        if let Some(s) = self.free.pop() {
+            return Some(s);
+        }
+        if self.next > u16::MAX as u32 {
+            return None;
+        }
+        let slot = self.next;
+        self.next += 1;
+        Some(slot)
+    }
+
+    fn release(&mut self, slot: u32) {
+        self.free.push(slot);
+    }
 }
 
 impl IslandManager {
@@ -48,6 +94,8 @@ impl IslandManager {
         cmd_rx: mpsc::Receiver<ManagerCommand>,
         bridge: Arc<dyn Bridge>,
         executor_factory: ExecutorFactory,
+        fanout_factory: Option<FanoutFactory>,
+        shutdown_watch: watch::Receiver<bool>,
     ) -> Self {
         let zone_transfer = config
             .zone_transfer
@@ -64,6 +112,11 @@ impl IslandManager {
             connected_clients: Vec::new(),
             max_clients: 4096,
             executor_factory,
+            fanout_factory,
+            slot_allocators: FxHashMap::default(),
+            fanout_tx: FxHashMap::default(),
+            client_registry: FxHashMap::default(),
+            shutdown_watch,
         }
     }
 
@@ -162,6 +215,21 @@ impl IslandManager {
             ManagerCommand::ClientDisconnected { session_id } => {
                 self.handle_client_disconnected(session_id);
             }
+            ManagerCommand::RegisterClient {
+                island_id,
+                session_id,
+                session,
+                reply,
+            } => {
+                let result = self.handle_register_client(&island_id, session_id, session);
+                let _ = reply.send(result);
+            }
+            ManagerCommand::DeregisterClient {
+                island_id,
+                session_id,
+            } => {
+                self.handle_deregister_client(&island_id, session_id);
+            }
         }
     }
 
@@ -197,6 +265,87 @@ impl IslandManager {
         }
     }
 
+    fn handle_register_client(
+        &mut self,
+        island_id: &IslandId,
+        session_id: u64,
+        session: Arc<dyn Session>,
+    ) -> RegisterClientResult {
+        let handle = self
+            .registry
+            .get(island_id)
+            .ok_or_else(|| RegisterClientError::IslandNotFound(island_id.clone()))?;
+        if handle.state != IslandState::Running {
+            return Err(RegisterClientError::IslandNotRunning(island_id.clone()));
+        }
+
+        let allocator = self.slot_allocators.entry(island_id.0.clone()).or_default();
+        let slot_id = allocator
+            .allocate()
+            .ok_or(RegisterClientError::AtSlotCapacity)?;
+        let slot = EntitySlot(slot_id);
+        // `slot_id <= u16::MAX` is guaranteed by `SlotAllocator::allocate`.
+        let client_index = ClientIndex(slot_id as u16);
+
+        let _ = handle.command_tx.send(IslandCommand::AddEntity {
+            slot,
+            initial_state: Vec::new(),
+            owner: Some(crate::tick::SessionId::from(
+                session_id.to_string().as_str(),
+            )),
+        });
+        let input_tx = handle.input_tx.clone();
+
+        if let Some(fan) = self.fanout_tx.get(&island_id.0) {
+            if fan
+                .try_send(FanoutCommand::ClientJoined {
+                    client_index,
+                    entity_slot: slot,
+                    session,
+                })
+                .is_err()
+            {
+                error!(
+                    %island_id,
+                    session_id,
+                    slot = slot.0,
+                    "fanout ClientJoined dropped — client will tick without receiving datagrams"
+                );
+            }
+        }
+
+        self.client_registry
+            .insert(session_id, (island_id.clone(), slot, client_index));
+
+        info!(%island_id, session_id, slot = slot.0, "client registered with island");
+        Ok((slot, client_index, input_tx))
+    }
+
+    fn handle_deregister_client(&mut self, island_id: &IslandId, session_id: u64) {
+        let Some((_, slot, client_index)) = self.client_registry.remove(&session_id) else {
+            return;
+        };
+        if let Some(handle) = self.registry.get(island_id) {
+            let _ = handle.command_tx.send(IslandCommand::RemoveEntity { slot });
+        }
+        if let Some(fan) = self.fanout_tx.get(&island_id.0) {
+            if fan
+                .try_send(FanoutCommand::ClientLeft { client_index })
+                .is_err()
+            {
+                warn!(
+                    %island_id,
+                    session_id,
+                    "fanout ClientLeft dropped — fanout will retain stale pacer until island stops"
+                );
+            }
+        }
+        if let Some(allocator) = self.slot_allocators.get_mut(&island_id.0) {
+            allocator.release(slot.0);
+        }
+        info!(%island_id, session_id, slot = slot.0, "client deregistered from island");
+    }
+
     fn handle_activate(&mut self, manifest: IslandManifest) -> Result<(), ActivationError> {
         if self.registry.contains(&manifest.island_id) {
             return Err(ActivationError::DuplicateIsland(manifest.island_id.clone()));
@@ -227,6 +376,7 @@ impl IslandManager {
         let shutdown = self.shutdown.clone();
 
         let (effect_tx, effect_rx) = effect_io::effect_channel();
+        let (snap_tx, snap_rx) = crossbeam_channel::bounded::<TickSnapshot>(4);
 
         let heartbeat = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let engine_heartbeat = heartbeat.clone();
@@ -234,6 +384,7 @@ impl IslandManager {
         let panicked = Arc::new(AtomicBool::new(false));
         let engine_panicked = panicked.clone();
         let factory = self.executor_factory.clone();
+        let engine_snap_tx = snap_tx;
         let join_handle = std::thread::spawn(move || {
             let config = TickEngineConfig::default();
             let wasm = factory();
@@ -248,6 +399,7 @@ impl IslandManager {
                 engine_heartbeat,
             );
             engine.set_effect_sender(effect_tx);
+            engine.set_snapshot_sender(engine_snap_tx);
 
             if let Some(snap) = snapshot {
                 engine.restore_from_snapshot(&snap);
@@ -258,6 +410,23 @@ impl IslandManager {
                 engine_panicked.store(true, Ordering::Relaxed);
             }
         });
+
+        // Spawn per-island fanout task, if a factory is configured.
+        if let Some(factory) = self.fanout_factory.clone() {
+            let fanout = factory();
+            // Sized to absorb burst reconnects without dropping ClientJoined.
+            // A single fanout tick polls all pending commands, so the 5ms
+            // poll interval drains this quickly in steady state.
+            let (fan_cmd_tx, fan_cmd_rx) = mpsc::channel::<FanoutCommand>(1024);
+            let shutdown_rx = self.shutdown_watch.clone();
+            tokio::spawn(fanout_loop(fanout, snap_rx, fan_cmd_rx, shutdown_rx));
+            self.fanout_tx.insert(island_id.0.clone(), fan_cmd_tx);
+        } else {
+            // Drop receiver — engine's snapshot try_send becomes Err(Disconnected)
+            // and is ignored. Keeps the engine code path uniform whether or
+            // not a fanout is configured.
+            drop(snap_rx);
+        }
 
         // Spawn effect consumer task — routes effects to their handlers.
         // Exits when the island thread drops the EffectSender.
@@ -302,10 +471,7 @@ impl IslandManager {
         info!(%island_id, ?thread_model, "island activated");
     }
 
-    fn handle_drain(
-        &mut self,
-        island_id: &IslandId,
-    ) -> Result<(), LifecycleError> {
+    fn handle_drain(&mut self, island_id: &IslandId) -> Result<(), LifecycleError> {
         let handle = self
             .registry
             .get_mut(island_id)
@@ -323,10 +489,7 @@ impl IslandManager {
         Ok(())
     }
 
-    fn handle_stop(
-        &mut self,
-        island_id: &IslandId,
-    ) -> Result<(), LifecycleError> {
+    fn handle_stop(&mut self, island_id: &IslandId) -> Result<(), LifecycleError> {
         let handle = self
             .registry
             .get_mut(island_id)
@@ -476,8 +639,8 @@ impl IslandManager {
             return Err(ZoneTransferError::TargetNotRunning(target_island.clone()));
         }
 
-        let token = ZoneTransferToken::from_bytes(token_bytes)
-            .map_err(ZoneTransferError::Transfer)?;
+        let token =
+            ZoneTransferToken::from_bytes(token_bytes).map_err(ZoneTransferError::Transfer)?;
         let zt = self.zone_transfer.as_mut().unwrap();
         let transferred = zt.accept_transfer(&token, target_island)?;
 
@@ -537,7 +700,9 @@ impl IslandManager {
         }
 
         let (snapshot_tx, snapshot_rx) = crossbeam_channel::bounded(1);
-        let _ = handle.command_tx.send(IslandCommand::Passivate { snapshot_tx });
+        let _ = handle
+            .command_tx
+            .send(IslandCommand::Passivate { snapshot_tx });
         let manifest = handle.manifest.clone();
         let jh = handle.join_handle.take();
 
@@ -559,10 +724,8 @@ impl IslandManager {
                 info!(%island_id, checkpoint_tick = snapshot.tick, "island passivated");
                 self.bridge
                     .report_island_passivated(island_id, snapshot.tick);
-                self.passivated.insert(
-                    island_id.0.clone(),
-                    PassivatedIsland { snapshot, manifest },
-                );
+                self.passivated
+                    .insert(island_id.0.clone(), PassivatedIsland { snapshot, manifest });
             }
             Err(_) => {
                 error!(%island_id, "failed to receive passivation snapshot");
@@ -598,10 +761,7 @@ impl IslandManager {
 
 pub fn manager_channel(
     buffer: usize,
-) -> (
-    mpsc::Sender<ManagerCommand>,
-    mpsc::Receiver<ManagerCommand>,
-) {
+) -> (mpsc::Sender<ManagerCommand>, mpsc::Receiver<ManagerCommand>) {
     mpsc::channel(buffer)
 }
 

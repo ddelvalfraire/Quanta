@@ -11,11 +11,13 @@ use std::sync::Arc;
 use tokio::sync::watch;
 use tracing::info;
 
-use quanta_particle_demo::particle_executor_factory;
+use quanta_particle_demo::{particle_executor_factory, particle_fanout_factory};
 use quanta_realtime_server::auth::DevTokenValidator;
+use quanta_realtime_server::command::ManagerCommand;
 use quanta_realtime_server::config::{EndpointConfig, ServerConfig};
 use quanta_realtime_server::ids::generate_server_id;
 use quanta_realtime_server::tls::TlsConfig;
+use quanta_realtime_server::types::{IslandId, IslandManifest};
 use quanta_realtime_server::{run_server, RunServerArgs};
 
 const DEFAULT_DEV_TOKEN: &str = "qk_rw_dev_devdevdevdevdevdevdevdevdevdevde";
@@ -25,8 +27,9 @@ const DEMO_TICK_RATE_HZ: u8 = 20;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "quanta_particle_demo=info,quanta_realtime_server=info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "particle_server=info,quanta_particle_demo=info,quanta_realtime_server=info".into()
+            }),
         )
         .init();
 
@@ -57,8 +60,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shutdown_rx,
         server_id,
         executor_factory: Some(particle_executor_factory(DEMO_TICK_RATE_HZ)),
+        fanout_factory: Some(particle_fanout_factory()),
+        default_island_id: Some(IslandId::from("particle-world")),
     })
     .await?;
+
+    // Activate the default "particle-world" island so incoming clients have
+    // somewhere to land. `passivate_when_empty: false` keeps the island up
+    // before the first client joins.
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    running
+        .manager_tx
+        .send(ManagerCommand::Activate {
+            manifest: IslandManifest {
+                island_id: IslandId::from("particle-world"),
+                entity_count: 0,
+                wasm_module: "particle".into(),
+                initial_state: Vec::new(),
+                passivate_when_empty: false,
+            },
+            reply: tx,
+        })
+        .await?;
+    rx.await??;
+    info!(island_id = "particle-world", "default island activated");
 
     info!(
         quic_addr = %running.quic_addr,

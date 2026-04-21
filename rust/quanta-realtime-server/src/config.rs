@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::zone_transfer::ZoneTransferConfig;
 use quinn::congestion::BbrConfig;
 use quinn::{IdleTimeout, TransportConfig, VarInt};
-use crate::zone_transfer::ZoneTransferConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]

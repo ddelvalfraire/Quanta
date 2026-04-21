@@ -22,10 +22,7 @@ async fn quic_handshake_with_quanta_v1_alpn() {
 
     let hd = connection
         .handshake_data()
-        .and_then(|hd| {
-            hd.downcast::<quinn::crypto::rustls::HandshakeData>()
-                .ok()
-        })
+        .and_then(|hd| hd.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
         .and_then(|hd| hd.protocol);
 
     assert_eq!(hd.as_deref(), Some(b"quanta-v1".as_slice()));
@@ -205,7 +202,10 @@ async fn rate_limiting_excess_refused() {
     }
 
     assert!(successes > 0, "at least one connection should succeed");
-    assert!(failures > 0, "at least one connection should be rate-limited");
+    assert!(
+        failures > 0,
+        "at least one connection should be rate-limited"
+    );
 
     let _ = shutdown_tx.send(true);
     let _ = handle.await;

@@ -39,10 +39,7 @@ impl IslandRuntime for StubIslandRuntime {
         })
     }
 
-    fn restore(
-        &mut self,
-        snapshot: &IslandSnapshot,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn restore(&mut self, snapshot: &IslandSnapshot) -> Result<(), Box<dyn std::error::Error>> {
         self.tick_count = snapshot.tick;
         Ok(())
     }

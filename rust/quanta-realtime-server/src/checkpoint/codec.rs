@@ -96,9 +96,7 @@ pub fn encode_checkpoint(tick: u64, payload: &CheckpointPayload) -> Vec<u8> {
 }
 
 /// Decode a full checkpoint, returning `(tick, payload)`.
-pub fn decode_checkpoint(
-    bytes: &[u8],
-) -> Result<(u64, CheckpointPayload), CheckpointCodecError> {
+pub fn decode_checkpoint(bytes: &[u8]) -> Result<(u64, CheckpointPayload), CheckpointCodecError> {
     let (_js_seq, state_ver, _nonce, tick, data_bytes) = decode_checkpoint_header(bytes)?;
     if state_ver != CHECKPOINT_STATE_VERSION {
         return Err(CheckpointCodecError::UnsupportedVersion {

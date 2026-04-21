@@ -11,8 +11,7 @@ pub trait IslandRuntime: Send + 'static {
     fn init(&mut self, manifest: &IslandManifest) -> Result<(), Box<dyn std::error::Error>>;
     fn tick(&mut self, inputs: &[PlayerInput]) -> Result<TickResult, Box<dyn std::error::Error>>;
     fn snapshot(&self) -> Result<IslandSnapshot, Box<dyn std::error::Error>>;
-    fn restore(&mut self, snapshot: &IslandSnapshot)
-        -> Result<(), Box<dyn std::error::Error>>;
+    fn restore(&mut self, snapshot: &IslandSnapshot) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 pub trait Session: Send + Sync + 'static {

@@ -77,7 +77,10 @@ impl AuthValidator for DevTokenValidator {
         let a = req.token.as_bytes();
         let b = self.expected_token.as_bytes();
         let matches = a.len() == b.len()
-            && a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0;
+            && a.iter()
+                .zip(b.iter())
+                .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+                == 0;
 
         if !matches {
             return Ok(AuthResponse {

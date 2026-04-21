@@ -247,7 +247,9 @@ pub async fn send_initial_state_stream(
 
         // Read length-prefixed BaselineAck from client.
         let mut ack_len_buf = [0u8; 4];
-        recv.read_exact(&mut ack_len_buf).await.map_err(stream_err)?;
+        recv.read_exact(&mut ack_len_buf)
+            .await
+            .map_err(stream_err)?;
         let ack_len = u32::from_be_bytes(ack_len_buf) as usize;
         if ack_len > MAX_ACK_BYTES {
             return Err(SyncError::InvalidPayload(format!(

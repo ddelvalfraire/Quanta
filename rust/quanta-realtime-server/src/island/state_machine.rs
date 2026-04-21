@@ -64,13 +64,25 @@ mod tests {
     fn all_invalid_transitions_rejected() {
         use IslandState::*;
         let invalid = [
-            (Initializing, Initializing), (Initializing, Draining), (Initializing, Stopped),
-            (Running, Initializing), (Running, Running), (Running, Stopped),
-            (Draining, Initializing), (Draining, Running), (Draining, Draining),
-            (Stopped, Initializing), (Stopped, Running), (Stopped, Draining), (Stopped, Stopped),
+            (Initializing, Initializing),
+            (Initializing, Draining),
+            (Initializing, Stopped),
+            (Running, Initializing),
+            (Running, Running),
+            (Running, Stopped),
+            (Draining, Initializing),
+            (Draining, Running),
+            (Draining, Draining),
+            (Stopped, Initializing),
+            (Stopped, Running),
+            (Stopped, Draining),
+            (Stopped, Stopped),
         ];
         for (from, to) in invalid {
-            assert!(from.transition(to).is_err(), "{from} -> {to} should be invalid");
+            assert!(
+                from.transition(to).is_err(),
+                "{from} -> {to} should be invalid"
+            );
         }
     }
 
@@ -80,6 +92,9 @@ mod tests {
             from: IslandState::Running,
             to: IslandState::Initializing,
         };
-        assert_eq!(err.to_string(), "invalid transition: Running -> Initializing");
+        assert_eq!(
+            err.to_string(),
+            "invalid transition: Running -> Initializing"
+        );
     }
 }

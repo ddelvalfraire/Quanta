@@ -106,7 +106,6 @@ impl Session for QuicSession {
     }
 
     fn close(&self, reason: &str) {
-        self.connection
-            .close(0u32.into(), reason.as_bytes());
+        self.connection.close(0u32.into(), reason.as_bytes());
     }
 }

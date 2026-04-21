@@ -91,7 +91,11 @@ fn periodic_checkpoint_triggered_at_interval() {
     });
 
     let writes = writes.lock().unwrap();
-    assert!(writes.len() >= 2, "expected at least 2 periodic checkpoints, got {}", writes.len());
+    assert!(
+        writes.len() >= 2,
+        "expected at least 2 periodic checkpoints, got {}",
+        writes.len()
+    );
 
     // Verify the writes are decodable
     for (key, data) in writes.iter() {
@@ -141,7 +145,9 @@ fn event_triggered_checkpoint_on_persist() {
     engine.tick();
 
     drop(engine);
-    rt.block_on(async { let _ = writer_task.await; });
+    rt.block_on(async {
+        let _ = writer_task.await;
+    });
 
     let writes = writes.lock().unwrap();
     assert_eq!(writes.len(), 1, "expected 1 event-triggered checkpoint");
@@ -149,10 +155,7 @@ fn event_triggered_checkpoint_on_persist() {
     let (_tick, payload) = decode_checkpoint(&writes[0].1).unwrap();
     assert_eq!(payload.entities[0].slot, 1);
     assert_eq!(payload.entities[0].state, vec![42]);
-    assert_eq!(
-        payload.entities[0].owner_session.as_deref(),
-        Some("p1")
-    );
+    assert_eq!(payload.entities[0].owner_session.as_deref(), Some("p1"));
 }
 
 // ── 3. Checkpoint roundtrip: write -> read -> decode -> state matches
@@ -273,7 +276,9 @@ fn concurrent_arcswap_read_does_not_block_tick() {
     assert_eq!(reader_count.load(Ordering::Relaxed), 1000);
 
     drop(engine);
-    rt.block_on(async { let _ = writer_task.await; });
+    rt.block_on(async {
+        let _ = writer_task.await;
+    });
 }
 
 // ── 6. Writer coalescing: 5 rapid checkpoints -> processes latest ──
@@ -344,7 +349,11 @@ fn copy_on_update_only_clones_dirty_entities() {
 
     // Second checkpoint
     let snap2 = engine.build_snapshot();
-    assert_eq!(snap2.entities.len(), 200, "all 200 entities should be in snapshot");
+    assert_eq!(
+        snap2.entities.len(),
+        200,
+        "all 200 entities should be in snapshot"
+    );
 
     // Verify the 10 mutated entities have new state
     for entity in &snap2.entities {

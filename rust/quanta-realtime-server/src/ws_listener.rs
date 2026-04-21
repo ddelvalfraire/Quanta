@@ -23,13 +23,10 @@ pub struct WsListener {
 
 impl WsListener {
     pub async fn bind(addr: SocketAddr, config: EndpointConfig) -> Result<Self, EndpointError> {
-        let listener = TcpListener::bind(addr)
-            .await
-            .map_err(EndpointError::Bind)?;
+        let listener = TcpListener::bind(addr).await.map_err(EndpointError::Bind)?;
 
         let quota = Quota::per_second(
-            NonZeroU32::new(config.rate_limit_per_sec)
-                .expect("rate_limit_per_sec must be > 0"),
+            NonZeroU32::new(config.rate_limit_per_sec).expect("rate_limit_per_sec must be > 0"),
         );
         let rate_limiter = RateLimiter::direct(quota);
 
@@ -95,13 +92,11 @@ async fn handle_ws_connection(
     validator: &dyn AuthValidator,
     config: &EndpointConfig,
 ) -> Result<ConnectedClient, EndpointError> {
-    let ws_stream = tokio::time::timeout(
-        config.auth_timeout,
-        tokio_tungstenite::accept_async(stream),
-    )
-    .await
-    .map_err(|_| EndpointError::Auth("ws handshake timeout".into()))?
-    .map_err(|e| EndpointError::WebSocket(e.to_string()))?;
+    let ws_stream =
+        tokio::time::timeout(config.auth_timeout, tokio_tungstenite::accept_async(stream))
+            .await
+            .map_err(|_| EndpointError::Auth("ws handshake timeout".into()))?
+            .map_err(|e| EndpointError::WebSocket(e.to_string()))?;
 
     let (mut sink, mut stream) = ws_stream.split();
 
@@ -190,7 +185,7 @@ async fn handle_ws_connection(
     });
 
     Ok(ConnectedClient {
-        session: Box::new(WsSession::new(outbound_tx, inbound_rx)),
+        session: Arc::new(WsSession::new(outbound_tx, inbound_rx)),
         session_id: response.session_id,
         quic_connection: None,
         reconnect_tier: ReconnectTier::Cold,

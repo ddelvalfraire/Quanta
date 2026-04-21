@@ -71,7 +71,10 @@ pub fn particle_schema() -> &'static CompiledSchema {
                 .find(|f| f.name == name)
                 .unwrap_or_else(|| panic!("particle schema missing field `{name}`"))
         };
-        let pos_q = find("pos-x").quantization.as_ref().expect("pos-x quantized");
+        let pos_q = find("pos-x")
+            .quantization
+            .as_ref()
+            .expect("pos-x quantized");
         assert!(
             (pos_q.max as f32 - WORLD_BOUND).abs() < f32::EPSILON
                 && (pos_q.min as f32 + WORLD_BOUND).abs() < f32::EPSILON,
@@ -80,7 +83,10 @@ pub fn particle_schema() -> &'static CompiledSchema {
             pos_q.min,
             pos_q.max
         );
-        let vel_q = find("vel-x").quantization.as_ref().expect("vel-x quantized");
+        let vel_q = find("vel-x")
+            .quantization
+            .as_ref()
+            .expect("vel-x quantized");
         assert!(
             (vel_q.max as f32 - MAX_VELOCITY).abs() < f32::EPSILON
                 && (vel_q.min as f32 + MAX_VELOCITY).abs() < f32::EPSILON,
@@ -120,8 +126,8 @@ pub fn initial_state() -> Vec<u8> {
             .quantization
             .as_ref()
             .expect("all particle fields quantized");
-        values[idx] = quantize_field(0.0, params, &schema.fields[idx].name)
-            .expect("0 is within clamp range");
+        values[idx] =
+            quantize_field(0.0, params, &schema.fields[idx].name).expect("0 is within clamp range");
     }
     write_state(schema, &values)
 }

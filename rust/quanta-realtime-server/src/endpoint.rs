@@ -28,12 +28,10 @@ impl QuicEndpoint {
     ) -> Result<Self, EndpointError> {
         let transport = config.build_transport_config();
         let server_config = build_server_config(tls, transport)?;
-        let endpoint = quinn::Endpoint::server(server_config, addr)
-            .map_err(EndpointError::Bind)?;
+        let endpoint = quinn::Endpoint::server(server_config, addr).map_err(EndpointError::Bind)?;
 
         let quota = Quota::per_second(
-            NonZeroU32::new(config.rate_limit_per_sec)
-                .expect("rate_limit_per_sec must be > 0"),
+            NonZeroU32::new(config.rate_limit_per_sec).expect("rate_limit_per_sec must be > 0"),
         );
         let rate_limiter = RateLimiter::direct(quota);
 
@@ -50,9 +48,7 @@ impl QuicEndpoint {
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr, EndpointError> {
-        self.endpoint
-            .local_addr()
-            .map_err(EndpointError::Bind)
+        self.endpoint.local_addr().map_err(EndpointError::Bind)
     }
 
     pub async fn run(

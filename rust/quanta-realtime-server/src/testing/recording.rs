@@ -26,13 +26,32 @@ impl From<&RecordedInput> for ClientInput {
 
 #[derive(bitcode::Encode, bitcode::Decode, Debug, Clone)]
 pub enum RecordedEffect {
-    SendRemote { target: String, payload: Vec<u8> },
-    Persist { entity_count: u32 },
-    EmitTelemetry { event: String },
-    RequestRemote { source_entity: u32, target: String, payload: Vec<u8> },
-    FireAndForget { target: String, payload: Vec<u8> },
-    BridgeReply { correlation_id: [u8; 16], payload: Vec<u8> },
-    EntityEvicted { entity: u32 },
+    SendRemote {
+        target: String,
+        payload: Vec<u8>,
+    },
+    Persist {
+        entity_count: u32,
+    },
+    EmitTelemetry {
+        event: String,
+    },
+    RequestRemote {
+        source_entity: u32,
+        target: String,
+        payload: Vec<u8>,
+    },
+    FireAndForget {
+        target: String,
+        payload: Vec<u8>,
+    },
+    BridgeReply {
+        correlation_id: [u8; 16],
+        payload: Vec<u8>,
+    },
+    EntityEvicted {
+        entity: u32,
+    },
     ZoneTransferRequest {
         player_id: String,
         source_entity: u32,
@@ -53,26 +72,29 @@ impl From<&BridgeEffect> for RecordedEffect {
             BridgeEffect::EmitTelemetry { event } => RecordedEffect::EmitTelemetry {
                 event: event.clone(),
             },
-            BridgeEffect::RequestRemote { source_entity, target, payload } => {
-                RecordedEffect::RequestRemote {
-                    source_entity: source_entity.0,
-                    target: target.clone(),
-                    payload: payload.clone(),
-                }
-            }
+            BridgeEffect::RequestRemote {
+                source_entity,
+                target,
+                payload,
+            } => RecordedEffect::RequestRemote {
+                source_entity: source_entity.0,
+                target: target.clone(),
+                payload: payload.clone(),
+            },
             BridgeEffect::FireAndForget { target, payload } => RecordedEffect::FireAndForget {
                 target: target.clone(),
                 payload: payload.clone(),
             },
-            BridgeEffect::BridgeReply { correlation_id, payload } => {
-                RecordedEffect::BridgeReply {
-                    correlation_id: *correlation_id,
-                    payload: payload.clone(),
-                }
-            }
-            BridgeEffect::EntityEvicted { entity } => RecordedEffect::EntityEvicted {
-                entity: entity.0,
+            BridgeEffect::BridgeReply {
+                correlation_id,
+                payload,
+            } => RecordedEffect::BridgeReply {
+                correlation_id: *correlation_id,
+                payload: payload.clone(),
             },
+            BridgeEffect::EntityEvicted { entity } => {
+                RecordedEffect::EntityEvicted { entity: entity.0 }
+            }
             BridgeEffect::ZoneTransferRequest {
                 player_id,
                 source_entity,
@@ -111,9 +133,8 @@ impl IslandRecording {
 
     pub fn load(path: &Path) -> std::io::Result<Self> {
         let bytes = std::fs::read(path)?;
-        let recording: Self = bitcode::decode(&bytes).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-        })?;
+        let recording: Self = bitcode::decode(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
         if recording.format_version != RECORDING_FORMAT_VERSION {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -181,9 +202,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::TestHarnessBuilder;
     use super::super::test_executors::IncrementWasm;
+    use super::super::TestHarnessBuilder;
+    use super::*;
 
     fn xxh3(data: &[u8]) -> u64 {
         xxhash_rust::xxh3::xxh3_64(data)
@@ -323,7 +344,9 @@ mod tests {
 
         recording.save(&path).unwrap();
         let err = IslandRecording::load(&path).unwrap_err();
-        assert!(err.to_string().contains("unsupported recording format version"));
+        assert!(err
+            .to_string()
+            .contains("unsupported recording format version"));
 
         std::fs::remove_file(&path).ok();
     }

@@ -124,12 +124,7 @@ impl SpatialGrid {
     }
 
     /// Compute the cell range for a query, clamped to prevent runaway iteration.
-    fn clamped_cell_range(
-        &self,
-        cx: f32,
-        cz: f32,
-        radius: f32,
-    ) -> ((i32, i32), (i32, i32)) {
+    fn clamped_cell_range(&self, cx: f32, cz: f32, radius: f32) -> ((i32, i32), (i32, i32)) {
         let min_cell = self.cell_of(cx - radius, cz - radius);
         let max_cell = self.cell_of(cx + radius, cz + radius);
 

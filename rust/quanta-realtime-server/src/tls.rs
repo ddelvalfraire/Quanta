@@ -9,10 +9,7 @@ use crate::error::EndpointError;
 pub const ALPN_PROTOCOLS: &[&[u8]] = &[b"h3", b"quanta-v1"];
 
 pub enum TlsConfig {
-    File {
-        cert_path: String,
-        key_path: String,
-    },
+    File { cert_path: String, key_path: String },
     SelfSigned,
 }
 pub fn build_server_config(
@@ -37,8 +34,8 @@ pub fn build_server_config(
 
     rustls_config.alpn_protocols = ALPN_PROTOCOLS.iter().map(|&p| p.to_vec()).collect();
 
-    let quic_config = QuicServerConfig::try_from(rustls_config)
-        .map_err(|e| EndpointError::Tls(e.to_string()))?;
+    let quic_config =
+        QuicServerConfig::try_from(rustls_config).map_err(|e| EndpointError::Tls(e.to_string()))?;
 
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_config));
     server_config.transport_config(Arc::new(transport));

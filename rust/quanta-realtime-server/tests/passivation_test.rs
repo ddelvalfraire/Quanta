@@ -40,10 +40,15 @@ async fn passivation_writes_checkpoint() {
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 0);
 
-    bridge_message(&tx, "ckpt-1", EntitySlot(0), vec![1, 2, 3]).await.unwrap();
+    bridge_message(&tx, "ckpt-1", EntitySlot(0), vec![1, 2, 3])
+        .await
+        .unwrap();
 
     let m = get_metrics(&tx).await;
-    assert_eq!(m.active_islands, 1, "island should be reactivated from checkpoint");
+    assert_eq!(
+        m.active_islands, 1,
+        "island should be reactivated from checkpoint"
+    );
 
     stop(&tx, "ckpt-1").await.unwrap();
 }
@@ -59,7 +64,9 @@ async fn reactivation_loads_correct_state_from_checkpoint() {
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 0, "island should have been passivated");
 
-    bridge_message(&tx, "react-1", EntitySlot(0), vec![42]).await.unwrap();
+    bridge_message(&tx, "react-1", EntitySlot(0), vec![42])
+        .await
+        .unwrap();
 
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 1, "island should be reactivated");
@@ -89,7 +96,10 @@ async fn grace_period_cancelled_by_player_join() {
     tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
 
     let m = get_metrics(&tx).await;
-    assert_eq!(m.active_islands, 1, "passivation should have been cancelled by player join");
+    assert_eq!(
+        m.active_islands, 1,
+        "passivation should have been cancelled by player join"
+    );
 
     stop(&tx, "grace-1").await.unwrap();
 }
@@ -153,7 +163,9 @@ async fn reactivated_island_resumes_from_correct_tick() {
     };
     let tx = spawn_manager(config);
 
-    activate(&tx, test_manifest("tick-resume", 5)).await.unwrap();
+    activate(&tx, test_manifest("tick-resume", 5))
+        .await
+        .unwrap();
 
     // At 20Hz, ~40 ticks in 2s
     tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
@@ -161,7 +173,9 @@ async fn reactivated_island_resumes_from_correct_tick() {
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 0, "island should be passivated");
 
-    bridge_message(&tx, "tick-resume", EntitySlot(0), vec![1]).await.unwrap();
+    bridge_message(&tx, "tick-resume", EntitySlot(0), vec![1])
+        .await
+        .unwrap();
 
     let m = get_metrics(&tx).await;
     assert_eq!(m.active_islands, 1, "island should be reactivated");

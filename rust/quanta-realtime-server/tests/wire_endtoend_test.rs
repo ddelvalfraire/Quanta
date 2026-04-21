@@ -18,9 +18,7 @@ use quanta_realtime_server::testing::endpoint_helpers::{build_test_client, clien
 use quanta_realtime_server::tls::TlsConfig;
 use quanta_realtime_server::{run_server, RunServerArgs};
 
-async fn get_connected_clients(
-    tx: &tokio::sync::mpsc::Sender<ManagerCommand>,
-) -> usize {
+async fn get_connected_clients(tx: &tokio::sync::mpsc::Sender<ManagerCommand>) -> usize {
     let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
     tx.send(ManagerCommand::GetMetrics { reply: reply_tx })
         .await
@@ -58,6 +56,8 @@ async fn server_accepts_quic_and_routes_to_manager() {
         shutdown_rx,
         server_id: "srv-test".into(),
         executor_factory: None,
+        fanout_factory: None,
+        default_island_id: None,
     })
     .await
     .expect("run_server");
@@ -109,6 +109,8 @@ async fn client_disconnect_shrinks_manager_vec() {
         shutdown_rx,
         server_id: "srv-test".into(),
         executor_factory: None,
+        fanout_factory: None,
+        default_island_id: None,
     })
     .await
     .expect("run_server");
@@ -160,6 +162,8 @@ async fn server_runs_without_nats() {
         shutdown_rx,
         server_id: "srv-test".into(),
         executor_factory: None,
+        fanout_factory: None,
+        default_island_id: None,
     })
     .await
     .expect("run_server with no NATS");

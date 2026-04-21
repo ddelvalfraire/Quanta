@@ -60,9 +60,7 @@ impl IslandRegistry {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&crate::types::IslandId, &IslandHandle)> {
-        self.islands
-            .values()
-            .map(|h| (&h.island_id, h))
+        self.islands.values().map(|h| (&h.island_id, h))
     }
 }
 
@@ -74,10 +72,8 @@ mod tests {
 
     fn make_handle(id: &str, entity_count: u32, state: IslandState) -> IslandHandle {
         let (tx, _rx) = crossbeam_channel::unbounded::<IslandCommand>();
-        let (input_tx, _input_rx) =
-            crossbeam_channel::unbounded::<crate::tick::ClientInput>();
-        let (bridge_tx, _bridge_rx) =
-            crossbeam_channel::unbounded::<crate::tick::BridgeMessage>();
+        let (input_tx, _input_rx) = crossbeam_channel::unbounded::<crate::tick::ClientInput>();
+        let (bridge_tx, _bridge_rx) = crossbeam_channel::unbounded::<crate::tick::BridgeMessage>();
         IslandHandle {
             island_id: IslandId::from(id),
             state,

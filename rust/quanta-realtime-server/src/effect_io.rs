@@ -127,16 +127,10 @@ mod tests {
     #[test]
     fn full_channel_drops_effect() {
         let (tx, rx) = effect_channel_with_capacity(2);
-        tx.send(BridgeEffect::EmitTelemetry {
-            event: "1".into(),
-        });
-        tx.send(BridgeEffect::EmitTelemetry {
-            event: "2".into(),
-        });
+        tx.send(BridgeEffect::EmitTelemetry { event: "1".into() });
+        tx.send(BridgeEffect::EmitTelemetry { event: "2".into() });
         // Channel full — this should be dropped (not panic)
-        tx.send(BridgeEffect::EmitTelemetry {
-            event: "3".into(),
-        });
+        tx.send(BridgeEffect::EmitTelemetry { event: "3".into() });
 
         let effects = rx.drain();
         assert_eq!(effects.len(), 2);
@@ -182,13 +176,9 @@ mod tests {
     fn buffer_ratio() {
         let (tx, _rx) = effect_channel_with_capacity(4);
         assert_eq!(tx.buffer_ratio(), 0.0);
-        tx.send(BridgeEffect::EmitTelemetry {
-            event: "1".into(),
-        });
+        tx.send(BridgeEffect::EmitTelemetry { event: "1".into() });
         assert_eq!(tx.buffer_ratio(), 0.25);
-        tx.send(BridgeEffect::EmitTelemetry {
-            event: "2".into(),
-        });
+        tx.send(BridgeEffect::EmitTelemetry { event: "2".into() });
         assert_eq!(tx.buffer_ratio(), 0.5);
     }
 

@@ -47,8 +47,15 @@ fn deterministic_entity_processing_order() {
         runs.push(order.lock().unwrap().clone());
     }
 
-    assert_eq!(runs[0], vec![1, 3, 5], "entities processed in BTreeMap order");
-    assert_eq!(runs[0], runs[1], "two runs produce identical processing order");
+    assert_eq!(
+        runs[0],
+        vec![1, 3, 5],
+        "entities processed in BTreeMap order"
+    );
+    assert_eq!(
+        runs[0], runs[1],
+        "two runs produce identical processing order"
+    );
 }
 
 // ── Timer accuracy ─────────────────────────────────────────────────
@@ -593,10 +600,13 @@ fn wasm_trap_tier1_skip_processes_next_tick() {
         })
         .unwrap();
     engine.tick();
-    assert_eq!(engine.fault_state(&slot(1)), ActorHealthState::Quarantined {
-        consecutive_faults: 1,
-        resume_at_tick: 1,
-    });
+    assert_eq!(
+        engine.fault_state(&slot(1)),
+        ActorHealthState::Quarantined {
+            consecutive_faults: 1,
+            resume_at_tick: 1,
+        }
+    );
     // Entity state unchanged (trap occurred before mutation)
     assert_eq!(engine.get_entity_state(&slot(1)), Some(&[42u8][..]));
 
@@ -610,7 +620,11 @@ fn wasm_trap_tier1_skip_processes_next_tick() {
         })
         .unwrap();
     engine.tick();
-    assert_eq!(*fault_count.lock().unwrap(), 2, "entity should have been called again");
+    assert_eq!(
+        *fault_count.lock().unwrap(),
+        2,
+        "entity should have been called again"
+    );
 }
 
 // ── WASM trap tier 2 (reset): 3 consecutive traps reset to checkpoint ──
@@ -632,31 +646,37 @@ fn wasm_trap_tier2_reset_to_checkpoint() {
     // The init_state is [10], so after 3 traps it should reset to init_state
 
     // Fault 1 (tick 0): Skip
-    input_tx.send(ClientInput {
-        session_id: SessionId::from("p1"),
-        entity_slot: slot(1),
-        input_seq: 1,
-        payload: vec![],
-    }).unwrap();
+    input_tx
+        .send(ClientInput {
+            session_id: SessionId::from("p1"),
+            entity_slot: slot(1),
+            input_seq: 1,
+            payload: vec![],
+        })
+        .unwrap();
     engine.tick();
 
     // Fault 2 (tick 1): quarantine expires at tick 1, so entity can tick
-    input_tx.send(ClientInput {
-        session_id: SessionId::from("p1"),
-        entity_slot: slot(1),
-        input_seq: 2,
-        payload: vec![],
-    }).unwrap();
+    input_tx
+        .send(ClientInput {
+            session_id: SessionId::from("p1"),
+            entity_slot: slot(1),
+            input_seq: 2,
+            payload: vec![],
+        })
+        .unwrap();
     engine.tick();
 
     // Tick 2: quarantine doesn't expire until tick 3
     // Tick 3: quarantine expires (resume_at_tick = 1 + 2 = 3)
-    input_tx.send(ClientInput {
-        session_id: SessionId::from("p1"),
-        entity_slot: slot(1),
-        input_seq: 3,
-        payload: vec![],
-    }).unwrap();
+    input_tx
+        .send(ClientInput {
+            session_id: SessionId::from("p1"),
+            entity_slot: slot(1),
+            input_seq: 3,
+            payload: vec![],
+        })
+        .unwrap();
     engine.tick(); // tick 2: should_tick(2) >= 3 → false, skipped
     engine.tick(); // tick 3: should_tick(3) >= 3 → true, Fault 3 → Reset
 
@@ -668,9 +688,7 @@ fn wasm_trap_tier2_reset_to_checkpoint() {
 
 #[test]
 fn wasm_trap_tier3_recreate_after_5_traps() {
-    let wasm = MockWasm::new(|_entity, _state, _msg| {
-        Err(WasmTrap::EpochDeadline)
-    });
+    let wasm = MockWasm::new(|_entity, _state, _msg| Err(WasmTrap::EpochDeadline));
 
     let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![99], None); // init state = [99]
@@ -690,20 +708,29 @@ fn wasm_trap_tier3_recreate_after_5_traps() {
             engine.tick();
             current_tick += 1;
         }
-        input_tx.send(ClientInput {
-            session_id: SessionId::from("p1"),
-            entity_slot: slot(1),
-            input_seq: seq,
-            payload: vec![],
-        }).unwrap();
+        input_tx
+            .send(ClientInput {
+                session_id: SessionId::from("p1"),
+                entity_slot: slot(1),
+                input_seq: seq,
+                payload: vec![],
+            })
+            .unwrap();
         seq += 1;
         engine.tick();
         current_tick += 1;
     }
 
     // After 5th fault (Recreate), entity should still exist with init state
-    assert!(engine.get_entity_state(&slot(1)).is_some(), "recreated entity should still exist");
-    assert_eq!(engine.get_entity_state(&slot(1)), Some(&[99u8][..]), "should be reset to init state");
+    assert!(
+        engine.get_entity_state(&slot(1)).is_some(),
+        "recreated entity should still exist"
+    );
+    assert_eq!(
+        engine.get_entity_state(&slot(1)),
+        Some(&[99u8][..]),
+        "should be reset to init state"
+    );
     assert_eq!(
         engine.fault_state(&slot(1)),
         ActorHealthState::Quarantined {
@@ -717,9 +744,7 @@ fn wasm_trap_tier3_recreate_after_5_traps() {
 
 #[test]
 fn entity_evicted_after_6_consecutive_traps() {
-    let wasm = MockWasm::new(|_entity, _state, _msg| {
-        Err(WasmTrap::EpochDeadline)
-    });
+    let wasm = MockWasm::new(|_entity, _state, _msg| Err(WasmTrap::EpochDeadline));
 
     let (mut engine, input_tx, _cmd_tx, _bridge_tx) = test_engine(Box::new(wasm));
     engine.add_entity(slot(1), vec![0], None);
@@ -740,24 +765,31 @@ fn entity_evicted_after_6_consecutive_traps() {
             engine.tick();
             current_tick += 1;
         }
-        input_tx.send(ClientInput {
-            session_id: SessionId::from("p1"),
-            entity_slot: slot(1),
-            input_seq: seq,
-            payload: vec![],
-        }).unwrap();
+        input_tx
+            .send(ClientInput {
+                session_id: SessionId::from("p1"),
+                entity_slot: slot(1),
+                input_seq: seq,
+                payload: vec![],
+            })
+            .unwrap();
         seq += 1;
         engine.tick();
         current_tick += 1;
     }
 
     assert_eq!(engine.fault_state(&slot(1)), ActorHealthState::Evicted);
-    assert!(engine.get_entity_state(&slot(1)).is_none(), "evicted entity should be removed");
+    assert!(
+        engine.get_entity_state(&slot(1)).is_none(),
+        "evicted entity should be removed"
+    );
     assert_eq!(engine.entity_count(), 1, "only entity 2 should remain");
 
     let effects = engine.take_effects();
     assert!(
-        effects.iter().any(|e| matches!(e, BridgeEffect::EntityEvicted { entity } if *entity == slot(1))),
+        effects
+            .iter()
+            .any(|e| matches!(e, BridgeEffect::EntityEvicted { entity } if *entity == slot(1))),
         "bridge should be notified of eviction"
     );
 }
@@ -786,33 +818,39 @@ fn poison_actor_resets_after_100_clean_ticks() {
     engine.add_entity(slot(1), vec![0], None);
 
     // Fault 1 (tick 0)
-    input_tx.send(ClientInput {
-        session_id: SessionId::from("p1"),
-        entity_slot: slot(1),
-        input_seq: 1,
-        payload: vec![],
-    }).unwrap();
+    input_tx
+        .send(ClientInput {
+            session_id: SessionId::from("p1"),
+            entity_slot: slot(1),
+            input_seq: 1,
+            payload: vec![],
+        })
+        .unwrap();
     engine.tick();
 
     // Fault 2 (tick 1)
-    input_tx.send(ClientInput {
-        session_id: SessionId::from("p1"),
-        entity_slot: slot(1),
-        input_seq: 2,
-        payload: vec![],
-    }).unwrap();
+    input_tx
+        .send(ClientInput {
+            session_id: SessionId::from("p1"),
+            entity_slot: slot(1),
+            input_seq: 2,
+            payload: vec![],
+        })
+        .unwrap();
     engine.tick();
 
     // Now faults stop. Need 100 clean ticks to reset.
     // Quarantine from 2nd fault: resume at tick 1 + 2 = 3
     // Send inputs for 100+ ticks starting from tick 3
     for i in 0..103 {
-        input_tx.send(ClientInput {
-            session_id: SessionId::from("p1"),
-            entity_slot: slot(1),
-            input_seq: 3 + i,
-            payload: vec![],
-        }).unwrap();
+        input_tx
+            .send(ClientInput {
+                session_id: SessionId::from("p1"),
+                entity_slot: slot(1),
+                input_seq: 3 + i,
+                payload: vec![],
+            })
+            .unwrap();
         engine.tick();
     }
 
