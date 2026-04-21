@@ -65,6 +65,12 @@ fn particle_executor_moves_entity_monotonically() {
         schema.fields[ix.pos_z].quantization.as_ref().unwrap(),
     ) as f32;
 
-    assert!(pos_x > 1.0, "pos-x should advance after 10 ticks, got {pos_x}");
-    assert!(pos_z.abs() < 0.5, "pos-z should stay near zero, got {pos_z}");
+    assert!(
+        pos_x > 1.0,
+        "pos-x should advance after 10 ticks, got {pos_x}"
+    );
+    assert!(
+        pos_z.abs() < 0.5,
+        "pos-z should stay near zero, got {pos_z}"
+    );
 }

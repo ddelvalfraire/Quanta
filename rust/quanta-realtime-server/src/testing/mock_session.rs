@@ -48,11 +48,7 @@ impl MockSession {
     }
 
     pub fn push_datagram(&self, data: Vec<u8>) {
-        self.inner
-            .lock()
-            .unwrap()
-            .pending_datagrams
-            .push_back(data);
+        self.inner.lock().unwrap().pending_datagrams.push_back(data);
     }
 
     pub fn is_closed(&self) -> bool {
@@ -86,11 +82,7 @@ impl Session for MockSession {
     }
 
     fn recv_datagram(&self) -> Option<Vec<u8>> {
-        self.inner
-            .lock()
-            .unwrap()
-            .pending_datagrams
-            .pop_front()
+        self.inner.lock().unwrap().pending_datagrams.pop_front()
     }
 
     fn transport_type(&self) -> TransportType {

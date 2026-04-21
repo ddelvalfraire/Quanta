@@ -90,6 +90,10 @@ pub struct TickEngine {
     snapshot_buffer: BTreeMap<EntitySlot, SnapshotEntry>,
     heartbeat: Arc<AtomicU64>,
     effect_tx: Option<crate::effect_io::EffectSender>,
+    // Fanout-facing state — updated each tick so downstream fanout tasks
+    // can drive `InterestManager` without re-decoding entity state.
+    position_table: crate::spatial::PositionTable,
+    snapshot_tx: Option<crossbeam_channel::Sender<TickSnapshot>>,
 }
 
 impl TickEngine {
@@ -125,6 +129,8 @@ impl TickEngine {
             snapshot_buffer: BTreeMap::new(),
             heartbeat,
             effect_tx: None,
+            position_table: crate::spatial::PositionTable::new(),
+            snapshot_tx: None,
         }
     }
 
@@ -158,7 +164,7 @@ impl TickEngine {
                         EntityState {
                             slot: EntitySlot(slot_id),
                             state,
-                            owner_session: owner.map(SessionId),
+                            owner_session: owner.map(SessionId::from),
                             dirty: false,
                             init_state,
                             checkpoint_state: None,
@@ -175,6 +181,39 @@ impl TickEngine {
                 );
             }
         }
+    }
+
+    /// Install a channel to receive per-tick state snapshots. When set,
+    /// the engine emits a `TickSnapshot` at the end of every `execute_tick`.
+    /// The sender is bounded — if the consumer lags, `try_send` drops the
+    /// *new* snapshot (crossbeam `bounded` does not overwrite); fanout
+    /// receivers tolerate gaps via per-client last-sent state tracking.
+    pub fn set_snapshot_sender(&mut self, tx: crossbeam_channel::Sender<TickSnapshot>) {
+        self.snapshot_tx = Some(tx);
+    }
+
+    fn emit_snapshot(&mut self) {
+        let Some(tx) = self.snapshot_tx.as_ref() else {
+            return;
+        };
+        let mut entities = Vec::with_capacity(self.entities.len());
+        for (slot, e) in self.entities.iter() {
+            let (x, _y, z) = self.wasm.extract_position(&e.state);
+            self.position_table.ensure_capacity(*slot);
+            self.position_table.set_position(*slot, x, 0.0, z);
+            entities.push(EntitySnapshot {
+                slot: *slot,
+                state: e.state.clone(),
+                pos_x: x,
+                pos_z: z,
+                vel_x: 0.0,
+                vel_z: 0.0,
+            });
+        }
+        let _ = tx.try_send(TickSnapshot {
+            tick: self.tick,
+            entities,
+        });
     }
 
     pub fn set_effect_sender(&mut self, tx: crate::effect_io::EffectSender) {
@@ -248,8 +287,7 @@ impl TickEngine {
 
     /// Attach a checkpoint writer. `interval_secs` controls periodic checkpoints (0 = disabled).
     pub fn set_checkpoint_handle(&mut self, handle: CheckpointHandle, interval_secs: u32) {
-        self.checkpoint_interval_ticks =
-            (interval_secs as u64) * (self.config.tick_rate_hz as u64);
+        self.checkpoint_interval_ticks = (interval_secs as u64) * (self.config.tick_rate_hz as u64);
         self.checkpoint_handle = Some(handle);
     }
 
@@ -281,7 +319,7 @@ impl TickEngine {
                     slot,
                     init_state: state.clone(),
                     state,
-                    owner_session: owner.map(SessionId),
+                    owner_session: owner.map(SessionId::from),
                     dirty: false,
                     checkpoint_state: None,
                 },
@@ -299,7 +337,7 @@ impl TickEngine {
                     *slot,
                     SnapshotEntry {
                         state: entity.state.clone(),
-                        owner_session: entity.owner_session.as_ref().map(|s| s.0.clone()),
+                        owner_session: entity.owner_session.as_ref().map(|s| s.as_str().to_owned()),
                     },
                 );
                 entity.dirty = false;
@@ -397,10 +435,7 @@ impl TickEngine {
                         );
                         self.effects_out.clear();
                         self.effects_out.push(BridgeEffect::EmitTelemetry {
-                            event: format!(
-                                "island_panic:{}:tick={}",
-                                self.island_id, self.tick
-                            ),
+                            event: format!("island_panic:{}:tick={}", self.island_id, self.tick),
                         });
                         self.flush_effects();
                         self.write_final_checkpoint();
@@ -439,6 +474,20 @@ impl TickEngine {
                     self.send_passivation_snapshot(snapshot_tx);
                     return true;
                 }
+                Ok(IslandCommand::AddEntity {
+                    slot,
+                    initial_state,
+                    owner,
+                }) => {
+                    self.add_entity(slot, initial_state, owner);
+                    self.position_table.ensure_capacity(slot);
+                    // continue draining
+                }
+                Ok(IslandCommand::RemoveEntity { slot }) => {
+                    self.remove_entity(&slot);
+                    self.position_table.clear(slot);
+                    // continue draining
+                }
                 Err(crossbeam_channel::TryRecvError::Empty) => return false,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return true,
             }
@@ -462,7 +511,13 @@ impl TickEngine {
         let entries: Vec<(u32, Vec<u8>, Option<String>)> = self
             .entities
             .iter()
-            .map(|(slot, e)| (slot.0, e.state.clone(), e.owner_session.as_ref().map(|s| s.0.clone())))
+            .map(|(slot, e)| {
+                (
+                    slot.0,
+                    e.state.clone(),
+                    e.owner_session.as_ref().map(|s| s.as_str().to_owned()),
+                )
+            })
             .collect();
         bitcode::encode(&entries)
     }
@@ -477,6 +532,7 @@ impl TickEngine {
         let effect_batch = self.phase4_simulate(&actor_queues);
         self.phase5_batch_effects(effect_batch);
         self.check_checkpoint_triggers();
+        self.emit_snapshot();
     }
 
     fn check_checkpoint_triggers(&mut self) {
@@ -649,10 +705,7 @@ impl TickEngine {
             }
 
             for msg in messages {
-                let bridge_cid = if let TickMessage::BridgeRequest {
-                    correlation_id, ..
-                } = msg
-                {
+                let bridge_cid = if let TickMessage::BridgeRequest { correlation_id, .. } = msg {
                     Some(*correlation_id)
                 } else {
                     None
@@ -710,7 +763,10 @@ impl TickEngine {
                                 if let Some(e) = entities.get_mut(entity_slot) {
                                     e.state = e.init_state.clone();
                                     e.checkpoint_state = None;
-                                    warn!(entity = entity_slot.0, "entity recreated with init state");
+                                    warn!(
+                                        entity = entity_slot.0,
+                                        "entity recreated with init state"
+                                    );
                                 }
                             }
                             TrapResponse::Evict => {
@@ -768,8 +824,7 @@ impl TickEngine {
                         self.timers.cancel_timer(&source_slot, &name);
                     }
                     TickEffect::EmitTelemetry { event } => {
-                        self.effects_out
-                            .push(BridgeEffect::EmitTelemetry { event });
+                        self.effects_out.push(BridgeEffect::EmitTelemetry { event });
                     }
                     TickEffect::Reply(_) => {
                         // Reply effects are routed in phase4 via route_effects().

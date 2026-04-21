@@ -183,9 +183,9 @@ fn request_remote_effect_routed_to_bridge() {
     engine.tick();
 
     let effects = engine.take_effects();
-    let req = effects.iter().find(|e| {
-        matches!(e, BridgeEffect::RequestRemote { .. })
-    });
+    let req = effects
+        .iter()
+        .find(|e| matches!(e, BridgeEffect::RequestRemote { .. }));
     assert!(req.is_some(), "should emit RequestRemote bridge effect");
 
     if let BridgeEffect::RequestRemote {
@@ -229,9 +229,9 @@ fn fire_and_forget_effect_routed_to_bridge() {
     engine.tick();
 
     let effects = engine.take_effects();
-    let ff = effects.iter().find(|e| {
-        matches!(e, BridgeEffect::FireAndForget { .. })
-    });
+    let ff = effects
+        .iter()
+        .find(|e| matches!(e, BridgeEffect::FireAndForget { .. }));
     assert!(ff.is_some(), "should emit FireAndForget bridge effect");
 
     if let BridgeEffect::FireAndForget { target, payload } = ff.unwrap() {
@@ -276,7 +276,11 @@ fn saga_failed_delivered_to_entity() {
     engine.tick();
 
     let cid = received_cid.lock().unwrap();
-    assert_eq!(*cid, Some(saga_cid), "entity should receive saga_failed with matching correlation_id");
+    assert_eq!(
+        *cid,
+        Some(saga_cid),
+        "entity should receive saga_failed with matching correlation_id"
+    );
 }
 
 // ── BridgeRequest with no Reply effect produces no BridgeReply ─────
@@ -330,7 +334,10 @@ fn multiple_bridge_messages_all_processed() {
     let cnt = count.clone();
 
     let wasm = MockWasm::new(move |_entity, state, msg| {
-        if matches!(msg, TickMessage::Bridge { .. } | TickMessage::BridgeRequest { .. }) {
+        if matches!(
+            msg,
+            TickMessage::Bridge { .. } | TickMessage::BridgeRequest { .. }
+        ) {
             *cnt.lock().unwrap() += 1;
         }
         Ok(HandleResult {
@@ -384,5 +391,9 @@ fn bridge_message_to_nonexistent_entity_dropped() {
         .unwrap();
 
     engine.tick();
-    assert_eq!(*call_count.lock().unwrap(), 0, "no WASM calls for missing entity");
+    assert_eq!(
+        *call_count.lock().unwrap(),
+        0,
+        "no WASM calls for missing entity"
+    );
 }

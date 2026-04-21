@@ -11,4 +11,3 @@ pub use types::{
     EntityState, HandleResult, NoopWasmExecutor, SessionId, TickEffect, TickEngineConfig,
     TickMessage, WasmExecutor, WasmTrap,
 };
-

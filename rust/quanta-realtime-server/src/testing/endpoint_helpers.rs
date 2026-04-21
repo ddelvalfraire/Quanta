@@ -127,9 +127,12 @@ pub async fn start_test_server(
         config.session_retain_duration,
         config.max_retained_sessions,
     )));
-    let endpoint =
-        QuicEndpoint::bind("127.0.0.1:0".parse().unwrap(), config, &TlsConfig::SelfSigned)
-            .expect("bind server");
+    let endpoint = QuicEndpoint::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        config,
+        &TlsConfig::SelfSigned,
+    )
+    .expect("bind server");
     let addr = endpoint.local_addr().unwrap();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let (session_tx, session_rx) = mpsc::channel(16);

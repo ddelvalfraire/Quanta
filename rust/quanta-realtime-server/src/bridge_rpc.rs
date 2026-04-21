@@ -298,7 +298,9 @@ mod tests {
     fn request_reply_insert_and_resolve() {
         let mut map = RequestReplyMap::new(1024);
         let cid = map.next_correlation_id();
-        let mut rx = map.insert(cid, EntitySlot(1), Duration::from_millis(200)).unwrap();
+        let mut rx = map
+            .insert(cid, EntitySlot(1), Duration::from_millis(200))
+            .unwrap();
 
         assert_eq!(map.pending_count(), 1);
         let entity = map.resolve(&cid, b"response".to_vec());
@@ -319,7 +321,9 @@ mod tests {
     fn request_reply_expired_cleanup() {
         let mut map = RequestReplyMap::new(1024);
         let cid = [42u8; 16];
-        let _rx = map.insert(cid, EntitySlot(5), Duration::from_millis(0)).unwrap();
+        let _rx = map
+            .insert(cid, EntitySlot(5), Duration::from_millis(0))
+            .unwrap();
 
         std::thread::sleep(Duration::from_millis(1));
         let expired = map.remove_expired();
@@ -345,8 +349,12 @@ mod tests {
         let cid2 = map.next_correlation_id();
         let cid3 = map.next_correlation_id();
 
-        let _rx1 = map.insert(cid1, EntitySlot(1), Duration::from_secs(10)).unwrap();
-        let _rx2 = map.insert(cid2, EntitySlot(2), Duration::from_secs(10)).unwrap();
+        let _rx1 = map
+            .insert(cid1, EntitySlot(1), Duration::from_secs(10))
+            .unwrap();
+        let _rx2 = map
+            .insert(cid2, EntitySlot(2), Duration::from_secs(10))
+            .unwrap();
 
         let err = map.insert(cid3, EntitySlot(3), Duration::from_secs(10));
         assert_eq!(err.unwrap_err(), RequestError::AtCapacity);
@@ -374,11 +382,16 @@ mod tests {
     async fn request_reply_timeout_via_tokio() {
         let mut map = RequestReplyMap::new(1024);
         let cid = map.next_correlation_id();
-        let rx = map.insert(cid, EntitySlot(1), Duration::from_millis(50)).unwrap();
+        let rx = map
+            .insert(cid, EntitySlot(1), Duration::from_millis(50))
+            .unwrap();
 
         // Don't resolve — let it timeout
         let result = tokio::time::timeout(Duration::from_millis(100), rx).await;
-        assert!(result.is_err(), "should timeout waiting for unresolved response");
+        assert!(
+            result.is_err(),
+            "should timeout waiting for unresolved response"
+        );
     }
 
     #[test]
@@ -430,7 +443,11 @@ mod tests {
         coalescer.submit("island_a".into(), EntitySlot(1), b"v2".to_vec());
         coalescer.submit("island_a".into(), EntitySlot(1), b"v3".to_vec());
 
-        assert_eq!(coalescer.pending_count(), 1, "3 messages to same key coalesced");
+        assert_eq!(
+            coalescer.pending_count(),
+            1,
+            "3 messages to same key coalesced"
+        );
 
         std::thread::sleep(Duration::from_millis(15));
         let ready = coalescer.drain_ready();

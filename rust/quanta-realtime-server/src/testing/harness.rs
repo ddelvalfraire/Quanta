@@ -24,11 +24,15 @@ impl TestHarness {
     }
 
     pub fn send_input(&self, input: ClientInput) {
-        self.input_tx.send(input).expect("input channel disconnected");
+        self.input_tx
+            .send(input)
+            .expect("input channel disconnected");
     }
 
     pub fn send_bridge(&self, msg: BridgeMessage) {
-        self.bridge_tx.send(msg).expect("bridge channel disconnected");
+        self.bridge_tx
+            .send(msg)
+            .expect("bridge channel disconnected");
     }
 
     pub fn add_entity(&mut self, slot: EntitySlot, state: Vec<u8>, owner: Option<SessionId>) {
@@ -144,8 +148,8 @@ impl Default for TestHarnessBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::test_executors::IncrementWasm;
+    use super::*;
 
     #[test]
     fn builder_defaults_produce_working_harness() {
@@ -180,7 +184,10 @@ mod tests {
             results.push(state);
         }
 
-        assert_eq!(results[0], results[1], "deterministic: same inputs → same state");
+        assert_eq!(
+            results[0], results[1],
+            "deterministic: same inputs → same state"
+        );
     }
 
     #[test]
@@ -192,9 +199,7 @@ mod tests {
 
     #[test]
     fn custom_tick_rate() {
-        let harness = TestHarnessBuilder::new()
-            .tick_rate(60)
-            .build();
+        let harness = TestHarnessBuilder::new().tick_rate(60).build();
         assert_eq!(harness.current_tick(), 0);
     }
 

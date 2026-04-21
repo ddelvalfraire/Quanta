@@ -40,11 +40,15 @@ async fn ws_connect_and_auth(
     addr: std::net::SocketAddr,
 ) -> (
     futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
         Message,
     >,
     futures_util::stream::SplitStream<
-        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+        tokio_tungstenite::WebSocketStream<
+            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+        >,
     >,
     AuthResponse,
 ) {
@@ -172,9 +176,7 @@ async fn ws_close_is_graceful() {
         .expect("channel open");
 
     // Client sends close frame.
-    sink.send(Message::Close(None))
-        .await
-        .expect("send close");
+    sink.send(Message::Close(None)).await.expect("send close");
 
     // Give the background tasks time to notice.
     tokio::time::sleep(Duration::from_millis(100)).await;

@@ -91,11 +91,7 @@ impl Drop for PacingHandle {
     }
 }
 
-async fn pacing_loop(
-    session: Arc<dyn Session>,
-    rx: Receiver<DatagramBatch>,
-    config: PacingConfig,
-) {
+async fn pacing_loop(session: Arc<dyn Session>, rx: Receiver<DatagramBatch>, config: PacingConfig) {
     // Poll crossbeam rx on a 1ms interval since crossbeam channels are
     // synchronous and cannot be .await-ed. This bridges the sync tick
     // thread with the async pacing task.
@@ -128,9 +124,8 @@ async fn pacing_loop(
         // Linear reduction from 100% at threshold to 50% at 2x threshold.
         let batch_len = batch.datagrams.len();
         let send_count = if loss_rate > config.high_loss_threshold {
-            let excess = ((loss_rate - config.high_loss_threshold)
-                / config.high_loss_threshold)
-                .min(1.0);
+            let excess =
+                ((loss_rate - config.high_loss_threshold) / config.high_loss_threshold).min(1.0);
             let keep_fraction = 1.0 - 0.5 * excess;
             let count = ((keep_fraction * batch_len as f64).ceil() as usize).max(1);
             debug!(
@@ -168,9 +163,7 @@ pub fn compute_pacing_period(
     let base = config.tick_period / datagram_count;
 
     let rtt_multiplier = if rtt > config.high_rtt_threshold {
-        let excess = rtt
-            .saturating_sub(config.high_rtt_threshold)
-            .as_secs_f64();
+        let excess = rtt.saturating_sub(config.high_rtt_threshold).as_secs_f64();
         let threshold_secs = config.high_rtt_threshold.as_secs_f64();
         (1.0 + excess / threshold_secs).min(MAX_PACING_MULTIPLIER)
     } else {

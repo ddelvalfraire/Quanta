@@ -43,7 +43,10 @@ async fn run(addr: SocketAddr, token: String) -> Result<AuthResponse, String> {
         .and_then(|hd| hd.protocol)
         .map(|p| String::from_utf8_lossy(&p).into_owned())
         .unwrap_or_else(|| "none".into());
-    eprintln!("[probe] connected alpn={negotiated} rtt={:?}", connection.rtt());
+    eprintln!(
+        "[probe] connected alpn={negotiated} rtt={:?}",
+        connection.rtt()
+    );
 
     let (mut send, mut recv) = connection
         .open_bi()
@@ -58,8 +61,12 @@ async fn run(addr: SocketAddr, token: String) -> Result<AuthResponse, String> {
     };
     let req_bytes = bitcode::encode(&req);
     let req_len = (req_bytes.len() as u32).to_be_bytes();
-    send.write_all(&req_len).await.map_err(|e| format!("write len: {e}"))?;
-    send.write_all(&req_bytes).await.map_err(|e| format!("write body: {e}"))?;
+    send.write_all(&req_len)
+        .await
+        .map_err(|e| format!("write len: {e}"))?;
+    send.write_all(&req_bytes)
+        .await
+        .map_err(|e| format!("write body: {e}"))?;
     eprintln!("[probe] sent AuthRequest {} bytes", req_bytes.len());
 
     let mut resp_len_buf = [0u8; 4];
@@ -75,8 +82,7 @@ async fn run(addr: SocketAddr, token: String) -> Result<AuthResponse, String> {
         .await
         .map_err(|e| format!("read resp body: {e}"))?;
 
-    let resp: AuthResponse =
-        bitcode::decode(&resp_buf).map_err(|e| format!("decode resp: {e}"))?;
+    let resp: AuthResponse = bitcode::decode(&resp_buf).map_err(|e| format!("decode resp: {e}"))?;
 
     connection.close(VarInt::from_u32(0), b"probe done");
     endpoint.wait_idle().await;

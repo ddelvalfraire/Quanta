@@ -1,9 +1,22 @@
+use std::sync::Arc;
+
 use crate::types::{EntitySlot, IslandId};
 
 pub type CorrelationId = [u8; 16];
 
+/// Stable client identifier, cheap to clone.
+///
+/// Internally an `Arc<str>` so cloning is a single atomic ref-count bump —
+/// hot paths (per-datagram input forwarding, per-tick snapshots) can mint
+/// copies without allocating.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SessionId(pub String);
+pub struct SessionId(Arc<str>);
+
+impl SessionId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 impl std::fmt::Display for SessionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -13,7 +26,13 @@ impl std::fmt::Display for SessionId {
 
 impl From<&str> for SessionId {
     fn from(s: &str) -> Self {
-        Self(s.to_owned())
+        Self(Arc::from(s))
+    }
+}
+
+impl From<String> for SessionId {
+    fn from(s: String) -> Self {
+        Self(Arc::from(s))
     }
 }
 
@@ -53,8 +72,12 @@ pub enum BridgeMessageKind {
 /// Added to per-entity queues in priority order: Timer > Bridge > Input > Deferred.
 #[derive(Debug, Clone)]
 pub enum TickMessage {
-    Timer { name: String },
-    Bridge { payload: Vec<u8> },
+    Timer {
+        name: String,
+    },
+    Bridge {
+        payload: Vec<u8>,
+    },
     Input {
         session_id: SessionId,
         input_seq: u32,
@@ -76,16 +99,33 @@ pub enum TickMessage {
 /// Effects returned from WASM handle_message execution.
 #[derive(Debug, Clone)]
 pub enum TickEffect {
-    Send { target: EntitySlot, payload: Vec<u8> },
-    SendRemote { target: String, payload: Vec<u8> },
+    Send {
+        target: EntitySlot,
+        payload: Vec<u8>,
+    },
+    SendRemote {
+        target: String,
+        payload: Vec<u8>,
+    },
     Persist,
-    SetTimer { name: String, delay_ms: u32 },
+    SetTimer {
+        name: String,
+        delay_ms: u32,
+    },
     CancelTimer(String),
-    EmitTelemetry { event: String },
+    EmitTelemetry {
+        event: String,
+    },
     Reply(Vec<u8>),
     StopSelf,
-    RequestRemote { target: String, payload: Vec<u8> },
-    FireAndForget { target: String, payload: Vec<u8> },
+    RequestRemote {
+        target: String,
+        payload: Vec<u8>,
+    },
+    FireAndForget {
+        target: String,
+        payload: Vec<u8>,
+    },
     /// WASM emits this to initiate a zone transfer for a player.
     ZoneTransfer {
         player_id: String,
@@ -139,6 +179,13 @@ pub trait WasmExecutor: Send {
         state: &[u8],
         message: &TickMessage,
     ) -> Result<HandleResult, WasmTrap>;
+
+    /// Return (x, y, z) extracted from the entity's current state bytes.
+    /// Default returns zero — override in game-specific executors that
+    /// encode a position in their state (required for spatial interest).
+    fn extract_position(&self, _state: &[u8]) -> (f32, f32, f32) {
+        (0.0, 0.0, 0.0)
+    }
 }
 
 /// No-op executor that returns state unchanged with no effects.
@@ -196,6 +243,27 @@ pub enum BridgeEffect {
         velocity: [f32; 3],
         buffs: Vec<u8>,
     },
+}
+
+/// Per-entity snapshot emitted by the tick engine at end-of-tick.
+/// Carries a copy of the current state bytes plus spatial components
+/// extracted via `WasmExecutor::extract_position` so the fanout task
+/// can drive `InterestManager` without re-decoding state.
+#[derive(Debug, Clone)]
+pub struct EntitySnapshot {
+    pub slot: EntitySlot,
+    pub state: Vec<u8>,
+    pub pos_x: f32,
+    pub pos_z: f32,
+    pub vel_x: f32,
+    pub vel_z: f32,
+}
+
+/// End-of-tick snapshot shipped to the per-island fanout task.
+#[derive(Debug, Clone)]
+pub struct TickSnapshot {
+    pub tick: u64,
+    pub entities: Vec<EntitySnapshot>,
 }
 
 #[derive(Debug, Clone)]

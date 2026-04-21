@@ -7,11 +7,11 @@ use quanta_realtime_server::command::{
     ActivationError, IslandCommand, LifecycleError, ManagerCommand, ZoneTransferError,
 };
 use quanta_realtime_server::config::ServerConfig;
-use quanta_realtime_server::zone_transfer::{BuffState, TransferredPlayer, ZoneTransferConfig};
 use quanta_realtime_server::manager::{manager_channel, IslandManager};
 use quanta_realtime_server::stubs::StubBridge;
 use quanta_realtime_server::tick::*;
 use quanta_realtime_server::types::{EntitySlot, IslandId, IslandManifest};
+use quanta_realtime_server::zone_transfer::{BuffState, TransferredPlayer, ZoneTransferConfig};
 use tokio::sync::oneshot;
 
 pub fn test_manifest(id: &str, entity_count: u32) -> IslandManifest {
@@ -155,10 +155,10 @@ pub fn spawn_manager(config: ServerConfig) -> tokio::sync::mpsc::Sender<ManagerC
 
     let (tx, rx) = manager_channel(256);
     let bridge = Arc::new(StubBridge);
-    let factory: ExecutorFactory =
-        Arc::new(|| Box::new(NoopWasmExecutor) as Box<dyn WasmExecutor>);
+    let factory: ExecutorFactory = Arc::new(|| Box::new(NoopWasmExecutor) as Box<dyn WasmExecutor>);
+    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     tokio::spawn(async move {
-        let mut mgr = IslandManager::new(config, rx, bridge, factory);
+        let mut mgr = IslandManager::new(config, rx, bridge, factory, None, shutdown_rx);
         mgr.run().await;
     });
     tx

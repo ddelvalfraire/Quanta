@@ -25,10 +25,7 @@ pub async fn handle_connection(
 
     let alpn = connection
         .handshake_data()
-        .and_then(|hd| {
-            hd.downcast::<quinn::crypto::rustls::HandshakeData>()
-                .ok()
-        })
+        .and_then(|hd| hd.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
         .and_then(|hd| hd.protocol)
         .map(|p| p.to_vec());
 
@@ -46,12 +43,8 @@ pub async fn handle_connection(
     );
 
     match alpn.as_deref() {
-        Some(b"quanta-v1") => {
-            handle_quanta_v1(connection, validator, config, session_store).await
-        }
-        Some(b"h3") => {
-            handle_h3_webtransport(connection, validator, config, session_store).await
-        }
+        Some(b"quanta-v1") => handle_quanta_v1(connection, validator, config, session_store).await,
+        Some(b"h3") => handle_h3_webtransport(connection, validator, config, session_store).await,
         _ => {
             warn!(remote = %connection.remote_address(), alpn = %alpn_str, "unknown ALPN");
             connection.close(1u32.into(), b"unknown ALPN");
@@ -67,10 +60,7 @@ async fn handle_quanta_v1(
     session_store: Arc<Mutex<SessionStore>>,
 ) -> Result<ConnectedClient, EndpointError> {
     let result = tokio::time::timeout(config.auth_timeout, async {
-        let (mut send, mut recv) = connection
-            .accept_bi()
-            .await
-            .map_err(EndpointError::Quinn)?;
+        let (mut send, mut recv) = connection.accept_bi().await.map_err(EndpointError::Quinn)?;
         run_auth_handshake(&mut send, &mut recv, validator).await
     })
     .await;
@@ -101,12 +91,11 @@ async fn handle_quanta_v1(
         "auth succeeded"
     );
 
-    let reconnect_tier =
-        classify_reconnect(&session_store, response.session_id, session_token);
+    let reconnect_tier = classify_reconnect(&session_store, response.session_id, session_token);
 
     Ok(ConnectedClient {
         quic_connection: Some(connection.clone()),
-        session: Box::new(QuicSession::new(connection)),
+        session: Arc::new(QuicSession::new(connection)),
         session_id: response.session_id,
         reconnect_tier,
     })
@@ -133,8 +122,7 @@ async fn handle_h3_webtransport(
             .await
             .map_err(|e| EndpointError::WebTransport(e.to_string()))?;
 
-        let (response, session_token) =
-            run_auth_handshake(&mut send, &mut recv, validator).await?;
+        let (response, session_token) = run_auth_handshake(&mut send, &mut recv, validator).await?;
         Ok::<_, EndpointError>((session, response, session_token))
     })
     .await;
@@ -165,12 +153,11 @@ async fn handle_h3_webtransport(
         "webtransport auth succeeded"
     );
 
-    let reconnect_tier =
-        classify_reconnect(&session_store, response.session_id, session_token);
+    let reconnect_tier = classify_reconnect(&session_store, response.session_id, session_token);
 
     Ok(ConnectedClient {
         quic_connection: Some(connection),
-        session: Box::new(WebTransportSession::new(session)),
+        session: Arc::new(WebTransportSession::new(session)),
         session_id: response.session_id,
         reconnect_tier,
     })

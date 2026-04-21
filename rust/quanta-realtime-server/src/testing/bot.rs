@@ -121,9 +121,7 @@ impl BotHarness {
                         BotAction::SendInput { entity, payload } => {
                             self.input_seq += 1;
                             self.harness.send_input(ClientInput {
-                                session_id: SessionId::from(
-                                    format!("bot-{bot_idx}").as_str(),
-                                ),
+                                session_id: SessionId::from(format!("bot-{bot_idx}").as_str()),
                                 entity_slot: EntitySlot(entity),
                                 input_seq: self.input_seq,
                                 payload,
@@ -150,9 +148,9 @@ impl BotHarness {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::super::TestHarnessBuilder;
     use super::super::test_executors::IncrementWasm;
+    use super::super::TestHarnessBuilder;
+    use super::*;
 
     #[test]
     fn idle_bots_run_without_errors() {
@@ -161,8 +159,9 @@ mod tests {
             harness.add_entity(EntitySlot(i), vec![0], None);
         }
 
-        let bots: Vec<Box<dyn BotBehavior>> =
-            (0..100).map(|_| Box::new(IdleBot) as Box<dyn BotBehavior>).collect();
+        let bots: Vec<Box<dyn BotBehavior>> = (0..100)
+            .map(|_| Box::new(IdleBot) as Box<dyn BotBehavior>)
+            .collect();
 
         let mut bot_harness = BotHarness::new(harness, bots);
         bot_harness.run(60);
@@ -176,8 +175,7 @@ mod tests {
         let mut harness = TestHarnessBuilder::new().build();
         harness.add_entity(EntitySlot(0), vec![0], None);
 
-        let bots: Vec<Box<dyn BotBehavior>> =
-            vec![Box::new(StressBot::new(10, 0))];
+        let bots: Vec<Box<dyn BotBehavior>> = vec![Box::new(StressBot::new(10, 0))];
 
         let mut bot_harness = BotHarness::new(harness, bots);
         bot_harness.run(5);
@@ -196,8 +194,7 @@ mod tests {
                 .build();
             harness.add_entity(EntitySlot(0), vec![0], None);
 
-            let bots: Vec<Box<dyn BotBehavior>> =
-                vec![Box::new(RandomWalkBot::new(42, 0))];
+            let bots: Vec<Box<dyn BotBehavior>> = vec![Box::new(RandomWalkBot::new(42, 0))];
 
             let mut bot_harness = BotHarness::new(harness, bots);
             bot_harness.run(20);

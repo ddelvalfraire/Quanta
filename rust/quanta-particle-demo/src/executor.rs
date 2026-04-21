@@ -136,6 +136,22 @@ impl WasmExecutor for ParticleExecutor {
             effects: vec![],
         })
     }
+
+    fn extract_position(&self, state: &[u8]) -> (f32, f32, f32) {
+        if state.is_empty() {
+            return (0.0, 0.0, 0.0);
+        }
+        let schema = particle_schema();
+        let ix = particle_field_indices();
+        let Ok(values) = read_state(schema, state) else {
+            return (0.0, 0.0, 0.0);
+        };
+        let q_x = schema.fields[ix.pos_x].quantization.as_ref().unwrap();
+        let q_z = schema.fields[ix.pos_z].quantization.as_ref().unwrap();
+        let x = dequantize(values[ix.pos_x], q_x) as f32;
+        let z = dequantize(values[ix.pos_z], q_z) as f32;
+        (x, 0.0, z)
+    }
 }
 
 #[cfg(test)]
@@ -165,10 +181,14 @@ mod tests {
         let ix = particle_field_indices();
         let values = read_state(schema, state).unwrap();
         (
-            dequantize(values[ix.pos_x], schema.fields[ix.pos_x].quantization.as_ref().unwrap())
-                as f32,
-            dequantize(values[ix.pos_z], schema.fields[ix.pos_z].quantization.as_ref().unwrap())
-                as f32,
+            dequantize(
+                values[ix.pos_x],
+                schema.fields[ix.pos_x].quantization.as_ref().unwrap(),
+            ) as f32,
+            dequantize(
+                values[ix.pos_z],
+                schema.fields[ix.pos_z].quantization.as_ref().unwrap(),
+            ) as f32,
         )
     }
 
@@ -183,7 +203,10 @@ mod tests {
                 .state;
         }
         let (x, _z) = decode_pos(&state);
-        assert!(x > 1.0, "pos-x should advance to positive after 10 ticks, got {x}");
+        assert!(
+            x > 1.0,
+            "pos-x should advance to positive after 10 ticks, got {x}"
+        );
     }
 
     #[test]

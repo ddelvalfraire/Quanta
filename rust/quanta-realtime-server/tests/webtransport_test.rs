@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
 
+use quanta_realtime_server::session_store::SessionStore;
 use quanta_realtime_server::{
     AuthRequest, AuthResponse, AuthValidator, ConnectedClient, EndpointConfig, EndpointError,
     QuicEndpoint, TlsConfig,
 };
-use quanta_realtime_server::session_store::SessionStore;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -59,8 +59,7 @@ fn build_wt_client() -> web_transport_quinn::Client {
         quinn::crypto::rustls::QuicClientConfig::try_from(crypto).expect("client config");
     let client_config = quinn::ClientConfig::new(Arc::new(quic_config));
 
-    let endpoint =
-        quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).expect("bind client");
+    let endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).expect("bind client");
 
     web_transport_quinn::Client::new(endpoint, client_config)
 }
@@ -125,15 +124,20 @@ async fn start_server(
         config.session_retain_duration,
         config.max_retained_sessions,
     )));
-    let endpoint =
-        QuicEndpoint::bind("127.0.0.1:0".parse().unwrap(), config, &TlsConfig::SelfSigned)
-            .expect("bind server");
+    let endpoint = QuicEndpoint::bind(
+        "127.0.0.1:0".parse().unwrap(),
+        config,
+        &TlsConfig::SelfSigned,
+    )
+    .expect("bind server");
     let addr = endpoint.local_addr().unwrap();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let (session_tx, session_rx) = mpsc::channel(16);
     let validator = TestValidator::new();
     let handle = tokio::spawn(async move {
-        endpoint.run(validator, session_tx, store, shutdown_rx).await;
+        endpoint
+            .run(validator, session_tx, store, shutdown_rx)
+            .await;
     });
     (addr, session_rx, shutdown_tx, handle)
 }
@@ -171,8 +175,7 @@ async fn wt_client_auth(session: &web_transport_quinn::Session) -> AuthResponse 
 
 #[tokio::test]
 async fn webtransport_session_establishment() {
-    let (addr, mut session_rx, shutdown_tx, handle) =
-        start_server(EndpointConfig::default()).await;
+    let (addr, mut session_rx, shutdown_tx, handle) = start_server(EndpointConfig::default()).await;
 
     let client = build_wt_client();
     let url: url::Url = format!("https://127.0.0.1:{}/", addr.port())
@@ -199,8 +202,7 @@ async fn webtransport_session_establishment() {
 
 #[tokio::test]
 async fn webtransport_datagram_roundtrip() {
-    let (addr, mut session_rx, shutdown_tx, handle) =
-        start_server(EndpointConfig::default()).await;
+    let (addr, mut session_rx, shutdown_tx, handle) = start_server(EndpointConfig::default()).await;
 
     let client = build_wt_client();
     let url: url::Url = format!("https://127.0.0.1:{}/", addr.port())

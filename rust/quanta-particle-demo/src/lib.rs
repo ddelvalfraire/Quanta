@@ -5,15 +5,18 @@
 //! `executor_factory` field on `RunServerArgs`.
 
 pub mod executor;
+pub mod fanout;
 pub mod input;
 pub mod schema;
 
 use std::sync::Arc;
 
+use quanta_realtime_server::fanout::{FanoutFactory, IslandFanout};
 use quanta_realtime_server::tick::WasmExecutor;
 use quanta_realtime_server::ExecutorFactory;
 
 use crate::executor::ParticleExecutor;
+use crate::fanout::ParticleFanout;
 
 /// Build an `ExecutorFactory` suitable for `RunServerArgs.executor_factory`.
 ///
@@ -21,4 +24,11 @@ use crate::executor::ParticleExecutor;
 /// configured with the given tick rate (must match `TickEngineConfig.tick_rate_hz`).
 pub fn particle_executor_factory(tick_rate_hz: u8) -> ExecutorFactory {
     Arc::new(move || -> Box<dyn WasmExecutor> { Box::new(ParticleExecutor::new(tick_rate_hz)) })
+}
+
+/// Build a `FanoutFactory` suitable for `RunServerArgs.fanout_factory`.
+///
+/// Each island the server spawns gets a fresh `ParticleFanout` instance.
+pub fn particle_fanout_factory() -> FanoutFactory {
+    Arc::new(|| -> Box<dyn IslandFanout> { Box::new(ParticleFanout::new()) })
 }

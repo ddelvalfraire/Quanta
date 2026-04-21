@@ -191,7 +191,6 @@ impl InterestManager {
         self.interactions.clear();
         results
     }
-
 }
 
 fn accumulate_visible(

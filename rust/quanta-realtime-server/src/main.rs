@@ -58,6 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         shutdown_rx,
         server_id,
         executor_factory: None,
+        fanout_factory: None,
+        default_island_id: None,
     })
     .await?;
 

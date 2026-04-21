@@ -45,7 +45,9 @@ async fn bulk_transfer_200_entities() {
         .await
         .expect("client should arrive")
         .expect("channel should not be closed");
-    let server_conn = connected.quic_connection.expect("should have quic_connection");
+    let server_conn = connected
+        .quic_connection
+        .expect("should have quic_connection");
 
     // Server sends initial state, client receives it — run concurrently.
     let msg = InitialStateMessage {

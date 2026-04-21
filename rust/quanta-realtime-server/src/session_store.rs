@@ -226,22 +226,28 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn insert_duplicate_replaces() {
         let mut store = SessionStore::new(Duration::from_secs(30), 1000);
-        store.insert(1, RetainedSession {
-            baseline_tick: 10,
-            visible_entities: vec![],
-            input_seq: 1,
-            session_token: 1,
-            client_capabilities: FxHashMap::default(),
-            created_at: Instant::now(),
-        });
-        store.insert(1, RetainedSession {
-            baseline_tick: 20,
-            visible_entities: vec![],
-            input_seq: 2,
-            session_token: 1,
-            client_capabilities: FxHashMap::default(),
-            created_at: Instant::now(),
-        });
+        store.insert(
+            1,
+            RetainedSession {
+                baseline_tick: 10,
+                visible_entities: vec![],
+                input_seq: 1,
+                session_token: 1,
+                client_capabilities: FxHashMap::default(),
+                created_at: Instant::now(),
+            },
+        );
+        store.insert(
+            1,
+            RetainedSession {
+                baseline_tick: 20,
+                visible_entities: vec![],
+                input_seq: 2,
+                session_token: 1,
+                client_capabilities: FxHashMap::default(),
+                created_at: Instant::now(),
+            },
+        );
 
         assert_eq!(store.len(), 1);
         let session = store.take(1).unwrap();

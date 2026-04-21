@@ -13,5 +13,9 @@ pub fn generate_server_id(prefix: &str) -> String {
         .unwrap_or_default()
         .as_nanos();
     let pid = std::process::id();
-    format!("{prefix}-{:08x}{:04x}", (nanos / 1_000_000) as u32, pid as u16)
+    format!(
+        "{prefix}-{:08x}{:04x}",
+        (nanos / 1_000_000) as u32,
+        pid as u16
+    )
 }

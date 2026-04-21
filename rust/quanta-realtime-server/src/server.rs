@@ -19,6 +19,7 @@ use crate::command::ManagerCommand;
 use crate::config::{EndpointConfig, ServerConfig};
 use crate::endpoint::QuicEndpoint;
 use crate::error::EndpointError;
+use crate::fanout::FanoutFactory;
 use crate::manager::{manager_channel, IslandManager};
 use crate::reconnect::ConnectedClient;
 use crate::session_store::SessionStore;
@@ -44,6 +45,14 @@ pub struct RunServerArgs {
     /// Factory for the per-island `WasmExecutor`. `None` means every island
     /// uses `NoopWasmExecutor` (platform default — generic no-op).
     pub executor_factory: Option<ExecutorFactory>,
+    /// Factory for the per-island fanout. `None` means no fanout task is
+    /// spawned — tick snapshots are emitted but dropped.
+    pub fanout_factory: Option<FanoutFactory>,
+    /// Island id to route newly-connected clients into via `RegisterClient`.
+    /// When `None`, no per-client registration happens (clients auth and sit
+    /// idle until an app-layer routing scheme is added). Phase 3 demos set
+    /// this to their single demo island.
+    pub default_island_id: Option<crate::types::IslandId>,
 }
 
 pub struct RunningServer {
@@ -51,6 +60,88 @@ pub struct RunningServer {
     pub ws_addr: Option<SocketAddr>,
     pub manager_tx: mpsc::Sender<ManagerCommand>,
     pub tasks: Vec<JoinHandle<()>>,
+}
+
+/// Register an authenticated client with the given island and spawn a reader
+/// task that polls `session.recv_datagram()` and forwards each payload as a
+/// `ClientInput` with a locally-assigned input sequence.
+///
+/// The reader forwards raw bytes — the executor (e.g. `ParticleExecutor`)
+/// owns the payload schema. This keeps the platform decoupled from any demo
+/// wire format.
+async fn register_and_spawn_reader(
+    drain_tx: mpsc::Sender<ManagerCommand>,
+    island_id: crate::types::IslandId,
+    session_id: u64,
+    session_arc: std::sync::Arc<dyn crate::session::Session>,
+    mut reader_shutdown: watch::Receiver<bool>,
+) {
+    let (reg_tx, reg_rx) = oneshot::channel();
+    if drain_tx
+        .send(ManagerCommand::RegisterClient {
+            island_id,
+            session_id,
+            session: session_arc.clone(),
+            reply: reg_tx,
+        })
+        .await
+        .is_err()
+    {
+        warn!(session_id, "manager channel closed during RegisterClient");
+        return;
+    }
+
+    let (entity_slot, _client_index, input_tx) = match reg_rx.await {
+        Ok(Ok(triple)) => triple,
+        Ok(Err(e)) => {
+            warn!(session_id, error = %e, "RegisterClient rejected");
+            return;
+        }
+        Err(_) => {
+            warn!(session_id, "RegisterClient reply dropped");
+            return;
+        }
+    };
+
+    let reader_session = session_arc;
+    tokio::spawn(async move {
+        use crate::tick::{ClientInput, SessionId};
+        // Built once — `SessionId` is `Arc<str>` internally, so per-datagram
+        // `.clone()` is a single atomic ref-count bump.
+        let sid = SessionId::from(session_id.to_string());
+        let mut local_seq: u32 = 0;
+        let mut backoff = Duration::from_millis(1);
+        let max_backoff = Duration::from_millis(5);
+        loop {
+            if *reader_shutdown.borrow() {
+                break;
+            }
+            match reader_session.recv_datagram() {
+                Some(bytes) => {
+                    backoff = Duration::from_millis(1);
+                    local_seq = local_seq.wrapping_add(1);
+                    let _ = input_tx.try_send(ClientInput {
+                        session_id: sid.clone(),
+                        entity_slot,
+                        input_seq: local_seq,
+                        payload: bytes,
+                    });
+                    // Cooperate with the scheduler so a high-rate sender
+                    // can't starve other tasks on this worker thread.
+                    tokio::task::yield_now().await;
+                }
+                None => {
+                    tokio::select! {
+                        _ = tokio::time::sleep(backoff) => {}
+                        _ = reader_shutdown.changed() => { break; }
+                    }
+                    if backoff < max_backoff {
+                        backoff = (backoff * 2).min(max_backoff);
+                    }
+                }
+            }
+        }
+    });
 }
 
 /// Compose QUIC + optional WS + manager + optional NATS.
@@ -68,11 +159,12 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
         shutdown_rx,
         server_id,
         executor_factory,
+        fanout_factory,
+        default_island_id,
     } = args;
 
-    let executor_factory: ExecutorFactory = executor_factory.unwrap_or_else(|| {
-        Arc::new(|| -> Box<dyn WasmExecutor> { Box::new(NoopWasmExecutor) })
-    });
+    let executor_factory: ExecutorFactory = executor_factory
+        .unwrap_or_else(|| Arc::new(|| -> Box<dyn WasmExecutor> { Box::new(NoopWasmExecutor) }));
 
     let session_store = Arc::new(Mutex::new(SessionStore::new(
         endpoint_config.session_retain_duration,
@@ -125,9 +217,17 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
     let manager_config = server_config.clone();
     let bridge = Arc::new(StubBridge);
     let manager_executor = executor_factory.clone();
+    let manager_fanout = fanout_factory.clone();
+    let manager_shutdown = shutdown_rx.clone();
     let manager_handle = tokio::spawn(async move {
-        let mut manager =
-            IslandManager::new(manager_config, manager_rx, bridge, manager_executor);
+        let mut manager = IslandManager::new(
+            manager_config,
+            manager_rx,
+            bridge,
+            manager_executor,
+            manager_fanout,
+            manager_shutdown,
+        );
         manager.run().await;
     });
 
@@ -138,7 +238,12 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
     let drain_handle = {
         let drain_tx = manager_tx.clone();
         let mut drain_shutdown = shutdown_rx.clone();
+        // Per-client fanout registration happens only when both a fanout
+        // factory and a default island are configured. Either missing
+        // means the caller opted out of automatic routing.
+        let auto_register = fanout_factory.is_some() && default_island_id.is_some();
         tokio::spawn(async move {
+            let default_island = default_island_id;
             loop {
                 tokio::select! {
                     maybe = session_rx.recv() => {
@@ -146,6 +251,7 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
                             Some(client) => {
                                 let session_id = client.session_id;
                                 let quic_conn = client.quic_connection.clone();
+                                let session_arc = client.session.clone();
                                 let (reply_tx, reply_rx) = oneshot::channel();
                                 if drain_tx
                                     .send(ManagerCommand::ClientConnected {
@@ -160,15 +266,53 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
                                 }
                                 match reply_rx.await {
                                     Ok(Ok(_)) => {
+                                        if auto_register {
+                                            if let Some(island_id) = default_island.as_ref() {
+                                                register_and_spawn_reader(
+                                                    drain_tx.clone(),
+                                                    island_id.clone(),
+                                                    session_id,
+                                                    session_arc.clone(),
+                                                    drain_shutdown.clone(),
+                                                )
+                                                .await;
+                                            }
+                                        }
                                         if let Some(conn) = quic_conn {
                                             let notify_tx = drain_tx.clone();
+                                            let island_dc = default_island.clone();
                                             tokio::spawn(async move {
                                                 let _ = conn.closed().await;
-                                                let _ = notify_tx
+                                                if auto_register {
+                                                    if let Some(island_id) = island_dc {
+                                                        if notify_tx
+                                                            .send(ManagerCommand::DeregisterClient {
+                                                                island_id,
+                                                                session_id,
+                                                            })
+                                                            .await
+                                                            .is_err()
+                                                        {
+                                                            warn!(
+                                                                session_id,
+                                                                "DeregisterClient send failed — \
+                                                                 entity slot will leak"
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                                if notify_tx
                                                     .send(ManagerCommand::ClientDisconnected {
                                                         session_id,
                                                     })
-                                                    .await;
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    warn!(
+                                                        session_id,
+                                                        "ClientDisconnected send failed"
+                                                    );
+                                                }
                                             });
                                         }
                                     }

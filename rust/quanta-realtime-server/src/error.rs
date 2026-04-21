@@ -73,7 +73,10 @@ mod tests {
 
     #[test]
     fn send_error_display() {
-        let err = SendError::DatagramTooLarge { size: 2000, max: 1200 };
+        let err = SendError::DatagramTooLarge {
+            size: 2000,
+            max: 1200,
+        };
         assert_eq!(err.to_string(), "datagram too large: 2000 bytes, max 1200");
 
         let err = SendError::ConnectionLost("timeout".into());

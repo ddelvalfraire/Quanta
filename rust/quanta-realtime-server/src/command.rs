@@ -1,8 +1,9 @@
 use crate::reconnect::ConnectedClient;
-use crate::types::IslandId;
-use crate::types::IslandManifest;
+use crate::session::Session;
+use crate::types::{ClientIndex, EntitySlot, IslandId, IslandManifest};
 use crate::zone_transfer::{BuffState, TransferError, TransferredPlayer};
 use std::fmt;
+use std::sync::Arc;
 use tokio::sync::oneshot;
 
 pub enum ManagerCommand {
@@ -65,7 +66,21 @@ pub enum ManagerCommand {
     /// Notify the manager that a previously-connected client's underlying
     /// transport has closed. Phase 1 removes the entry from the placeholder
     /// vec; Phase 3 will evict from the per-island registry.
-    ClientDisconnected {
+    ClientDisconnected { session_id: u64 },
+    /// Phase 3: Allocate an entity slot, add the entity to the target island,
+    /// and register the session with the island's fanout task. Reply carries
+    /// the `(EntitySlot, ClientIndex, input_tx)` so the caller can spawn an
+    /// input reader that forwards raw datagrams to the island's input channel.
+    RegisterClient {
+        island_id: IslandId,
+        session_id: u64,
+        session: Arc<dyn Session>,
+        reply: oneshot::Sender<RegisterClientResult>,
+    },
+    /// Phase 3: Remove the entity allocated for this session and deregister
+    /// with the fanout task.
+    DeregisterClient {
+        island_id: IslandId,
         session_id: u64,
     },
 }
@@ -77,6 +92,17 @@ pub enum IslandCommand {
     Passivate {
         snapshot_tx: crossbeam_channel::Sender<crate::types::IslandSnapshot>,
     },
+    /// Add a fresh entity to the tick engine at the given slot. Phase 3
+    /// uses this to allocate a player entity when a client registers.
+    AddEntity {
+        slot: crate::types::EntitySlot,
+        initial_state: Vec<u8>,
+        owner: Option<crate::tick::SessionId>,
+    },
+    /// Remove an entity from the tick engine. Invoked on client disconnect.
+    RemoveEntity {
+        slot: crate::types::EntitySlot,
+    },
 }
 
 impl std::fmt::Debug for IslandCommand {
@@ -85,6 +111,8 @@ impl std::fmt::Debug for IslandCommand {
             Self::Drain => write!(f, "Drain"),
             Self::Stop => write!(f, "Stop"),
             Self::Passivate { .. } => write!(f, "Passivate"),
+            Self::AddEntity { slot, .. } => write!(f, "AddEntity({slot:?})"),
+            Self::RemoveEntity { slot } => write!(f, "RemoveEntity({slot:?})"),
         }
     }
 }
@@ -177,3 +205,32 @@ impl fmt::Display for ClientConnectedError {
 }
 
 impl std::error::Error for ClientConnectedError {}
+
+/// Reply payload for a successful `ManagerCommand::RegisterClient`.
+pub type RegisterClientOk = (
+    EntitySlot,
+    ClientIndex,
+    crossbeam_channel::Sender<crate::tick::ClientInput>,
+);
+
+/// Result type used by `ManagerCommand::RegisterClient`'s oneshot reply.
+pub type RegisterClientResult = Result<RegisterClientOk, RegisterClientError>;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RegisterClientError {
+    IslandNotFound(IslandId),
+    IslandNotRunning(IslandId),
+    AtSlotCapacity,
+}
+
+impl fmt::Display for RegisterClientError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::IslandNotFound(id) => write!(f, "island not found: {id}"),
+            Self::IslandNotRunning(id) => write!(f, "island not running: {id}"),
+            Self::AtSlotCapacity => write!(f, "island at entity slot capacity"),
+        }
+    }
+}
+
+impl std::error::Error for RegisterClientError {}

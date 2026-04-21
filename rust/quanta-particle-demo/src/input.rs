@@ -44,7 +44,10 @@ impl fmt::Display for InputParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::WrongLength { expected, got } => {
-                write!(f, "input datagram wrong length: expected {expected}, got {got}")
+                write!(
+                    f,
+                    "input datagram wrong length: expected {expected}, got {got}"
+                )
             }
             Self::WrongMsgType { got } => write!(f, "input datagram wrong msg_type: {got:#04x}"),
         }
@@ -117,14 +120,13 @@ mod tests {
             dt_ms: 50,
         };
         let expected: [u8; INPUT_DATAGRAM_LEN] = [
-            0x02,
-            0, 0, 0, 1,             // entity_slot = 1
-            0, 0, 0, 2,             // input_seq = 2
+            0x02, 0, 0, 0, 1, // entity_slot = 1
+            0, 0, 0, 2, // input_seq = 2
             0x3F, 0x80, 0x00, 0x00, // dir_x = 1.0
             0x00, 0x00, 0x00, 0x00, // dir_z = 0.0
-            0, 0, 0, 0,             // actions = 0
-            0x00, 0x32,             // dt_ms = 50
-            0x00, 0x00,             // reserved
+            0, 0, 0, 0, // actions = 0
+            0x00, 0x32, // dt_ms = 50
+            0x00, 0x00, // reserved
         ];
         assert_eq!(encode_datagram(&p), expected);
         assert_eq!(parse_datagram(&expected).unwrap(), p);
@@ -134,7 +136,10 @@ mod tests {
     fn rejects_wrong_length() {
         assert_eq!(
             parse_datagram(&[0x02; 24]).unwrap_err(),
-            InputParseError::WrongLength { expected: 25, got: 24 }
+            InputParseError::WrongLength {
+                expected: 25,
+                got: 24
+            }
         );
     }
 

@@ -202,8 +202,7 @@ impl TokenSigner {
     }
 
     fn compute_hmac(&self, data: &[u8]) -> [u8; 32] {
-        let mut mac =
-            HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length");
+        let mut mac = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length");
         mac.update(data);
         let mut out = [0u8; 32];
         out.copy_from_slice(&mac.finalize().into_bytes());
@@ -211,8 +210,7 @@ impl TokenSigner {
     }
 
     fn verify_hmac(&self, data: &[u8], expected: &[u8]) -> bool {
-        let mut mac =
-            HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length");
+        let mut mac = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length");
         mac.update(data);
         mac.verify_slice(expected).is_ok()
     }
@@ -238,8 +236,12 @@ pub enum TransferError {
     TokenExpired,
     /// Target zone does not match. Zone names omitted to avoid topology leakage.
     ZoneMismatch,
-    DuplicateToken { player_id: String },
-    PlayerNotTransferring { player_id: String },
+    DuplicateToken {
+        player_id: String,
+    },
+    PlayerNotTransferring {
+        player_id: String,
+    },
     InvalidToken,
     InvalidPlayerId,
     AtCapacity,
@@ -390,10 +392,8 @@ impl ZoneTransferManager {
             }
         }
 
-        self.dedup_set.insert(
-            token.hmac,
-            Instant::now() + self.config.dedup_retention,
-        );
+        self.dedup_set
+            .insert(token.hmac, Instant::now() + self.config.dedup_retention);
 
         Ok(TransferredPlayer {
             player_id: token.player_id.clone(),
@@ -497,7 +497,9 @@ mod tests {
             vec![],
             ts,
         );
-        assert!(signer.validate_at(&token, &zone("zone-b"), ts + 100).is_ok());
+        assert!(signer
+            .validate_at(&token, &zone("zone-b"), ts + 100)
+            .is_ok());
     }
 
     #[test]
@@ -592,8 +594,12 @@ mod tests {
             vec![],
             ts,
         );
-        assert!(signer.validate_at(&token, &zone("zone-b"), ts + 10_000).is_ok());
-        assert!(signer.validate_at(&token, &zone("zone-b"), ts + 10_001).is_err());
+        assert!(signer
+            .validate_at(&token, &zone("zone-b"), ts + 10_000)
+            .is_ok());
+        assert!(signer
+            .validate_at(&token, &zone("zone-b"), ts + 10_001)
+            .is_err());
     }
 
     #[test]
@@ -635,7 +641,9 @@ mod tests {
         let bytes = token.to_bytes();
         let decoded = ZoneTransferToken::from_bytes(&bytes).unwrap();
         assert_eq!(decoded, token);
-        assert!(signer.validate_at(&decoded, &zone("zone-b"), ts + 100).is_ok());
+        assert!(signer
+            .validate_at(&decoded, &zone("zone-b"), ts + 100)
+            .is_ok());
     }
 
     #[test]
@@ -746,7 +754,9 @@ mod tests {
             .unwrap();
         let ts = token.timestamp;
 
-        assert!(mgr.accept_transfer_at(&token, &zone("zone-b"), ts + 100).is_ok());
+        assert!(mgr
+            .accept_transfer_at(&token, &zone("zone-b"), ts + 100)
+            .is_ok());
 
         assert_eq!(
             mgr.accept_transfer_at(&token, &zone("zone-b"), ts + 200),
@@ -772,7 +782,8 @@ mod tests {
             .unwrap();
 
         let ts = t1.timestamp;
-        mgr.accept_transfer_at(&t1, &zone("zone-b"), ts + 50).unwrap();
+        mgr.accept_transfer_at(&t1, &zone("zone-b"), ts + 50)
+            .unwrap();
         mgr.acknowledge_transfer("player-1").unwrap();
 
         // Same player transfers again immediately (B→C). Different token = different HMAC.
@@ -788,7 +799,9 @@ mod tests {
             .unwrap();
 
         let ts = t2.timestamp;
-        let p = mgr.accept_transfer_at(&t2, &zone("zone-c"), ts + 50).unwrap();
+        let p = mgr
+            .accept_transfer_at(&t2, &zone("zone-c"), ts + 50)
+            .unwrap();
         assert_eq!(p.position, [2.0, 0.0, 0.0]);
     }
 
@@ -892,7 +905,9 @@ mod tests {
         assert_eq!(mgr.in_flight_count(), 2);
 
         let ts = t2.timestamp;
-        let p2 = mgr.accept_transfer_at(&t2, &zone("zone-c"), ts + 100).unwrap();
+        let p2 = mgr
+            .accept_transfer_at(&t2, &zone("zone-c"), ts + 100)
+            .unwrap();
         assert_eq!(p2.position, [2.0, 0.0, 0.0]);
 
         mgr.acknowledge_transfer("player-2").unwrap();
@@ -900,7 +915,9 @@ mod tests {
         assert!(mgr.is_transferring("player-1"));
 
         let ts = t1.timestamp;
-        let p1 = mgr.accept_transfer_at(&t1, &zone("zone-b"), ts + 200).unwrap();
+        let p1 = mgr
+            .accept_transfer_at(&t1, &zone("zone-b"), ts + 200)
+            .unwrap();
         assert_eq!(p1.position, [1.0, 0.0, 0.0]);
     }
 
@@ -911,13 +928,33 @@ mod tests {
             ..test_config()
         });
 
-        mgr.prepare_transfer("p1".into(), zone("a"), zone("b"), [0.0; 3], [0.0; 3], vec![])
-            .unwrap();
-        mgr.prepare_transfer("p2".into(), zone("a"), zone("b"), [0.0; 3], [0.0; 3], vec![])
-            .unwrap();
+        mgr.prepare_transfer(
+            "p1".into(),
+            zone("a"),
+            zone("b"),
+            [0.0; 3],
+            [0.0; 3],
+            vec![],
+        )
+        .unwrap();
+        mgr.prepare_transfer(
+            "p2".into(),
+            zone("a"),
+            zone("b"),
+            [0.0; 3],
+            [0.0; 3],
+            vec![],
+        )
+        .unwrap();
 
-        let result =
-            mgr.prepare_transfer("p3".into(), zone("a"), zone("b"), [0.0; 3], [0.0; 3], vec![]);
+        let result = mgr.prepare_transfer(
+            "p3".into(),
+            zone("a"),
+            zone("b"),
+            [0.0; 3],
+            [0.0; 3],
+            vec![],
+        );
         assert_eq!(result, Err(TransferError::AtCapacity));
     }
 

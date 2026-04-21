@@ -210,7 +210,11 @@ async fn test_loss_reduces_datagram_count() {
     let recorded = times.lock().unwrap();
     // 10% loss with 5% threshold: excess_ratio = 1.0, keep_fraction = 0.5
     // ceil(0.5 * 10) = 5
-    assert_eq!(recorded.len(), 5, "expected reduced datagram count due to loss");
+    assert_eq!(
+        recorded.len(),
+        5,
+        "expected reduced datagram count due to loss"
+    );
 
     drop(handle);
 }

@@ -201,7 +201,7 @@ mod tests {
         ctrl.record_cpu_sample(0.75);
         ctrl.record_cpu_sample(0.75);
         ctrl.record_cpu_sample(0.75); // → Elevated
-        // Continue at same CPU — no new transition
+                                      // Continue at same CPU — no new transition
         assert_eq!(ctrl.record_cpu_sample(0.75), None);
         assert_eq!(ctrl.record_cpu_sample(0.75), None);
     }

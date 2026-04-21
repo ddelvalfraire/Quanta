@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::session::Session;
 use crate::session_store::RetainedSession;
 
@@ -18,7 +20,7 @@ pub enum ReconnectTier {
 
 /// A fully authenticated client connection ready for the application layer.
 pub struct ConnectedClient {
-    pub session: Box<dyn Session>,
+    pub session: Arc<dyn Session>,
     pub session_id: u64,
     /// The raw QUIC connection handle for bulk transfer (None for WebSocket).
     pub quic_connection: Option<quinn::Connection>,

@@ -66,10 +66,7 @@ pub async fn run_capacity_publisher(
         let signal = CapacitySignal::from_metrics(&server_id, max_islands, &metrics);
         match serde_json::to_vec(&signal) {
             Ok(payload) => {
-                if let Err(e) = nats_client
-                    .publish(subject.clone(), payload.into())
-                    .await
-                {
+                if let Err(e) = nats_client.publish(subject.clone(), payload.into()).await {
                     warn!(%e, "failed to publish capacity signal");
                 }
             }
