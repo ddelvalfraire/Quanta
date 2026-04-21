@@ -150,10 +150,15 @@ pub async fn player_input(
 }
 
 pub fn spawn_manager(config: ServerConfig) -> tokio::sync::mpsc::Sender<ManagerCommand> {
+    use quanta_realtime_server::tick::{NoopWasmExecutor, WasmExecutor};
+    use quanta_realtime_server::ExecutorFactory;
+
     let (tx, rx) = manager_channel(256);
     let bridge = Arc::new(StubBridge);
+    let factory: ExecutorFactory =
+        Arc::new(|| Box::new(NoopWasmExecutor) as Box<dyn WasmExecutor>);
     tokio::spawn(async move {
-        let mut mgr = IslandManager::new(config, rx, bridge);
+        let mut mgr = IslandManager::new(config, rx, bridge, factory);
         mgr.run().await;
     });
     tx

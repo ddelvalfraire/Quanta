@@ -57,6 +57,7 @@ async fn server_accepts_quic_and_routes_to_manager() {
         validator,
         shutdown_rx,
         server_id: "srv-test".into(),
+        executor_factory: None,
     })
     .await
     .expect("run_server");
@@ -107,6 +108,7 @@ async fn client_disconnect_shrinks_manager_vec() {
         validator,
         shutdown_rx,
         server_id: "srv-test".into(),
+        executor_factory: None,
     })
     .await
     .expect("run_server");
@@ -157,6 +159,7 @@ async fn server_runs_without_nats() {
         validator,
         shutdown_rx,
         server_id: "srv-test".into(),
+        executor_factory: None,
     })
     .await
     .expect("run_server with no NATS");
