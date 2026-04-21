@@ -401,5 +401,4 @@ mod tests {
         let decoded: TestBaselineAck = bitcode::decode(&bytes[4..4 + len]).unwrap();
         assert_eq!(decoded.baseline_tick, 42000);
     }
-
 }

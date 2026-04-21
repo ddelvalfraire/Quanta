@@ -7,7 +7,6 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::sync::watch;
 use tracing::info;
@@ -15,6 +14,7 @@ use tracing::info;
 use quanta_particle_demo::particle_executor_factory;
 use quanta_realtime_server::auth::DevTokenValidator;
 use quanta_realtime_server::config::{EndpointConfig, ServerConfig};
+use quanta_realtime_server::ids::generate_server_id;
 use quanta_realtime_server::tls::TlsConfig;
 use quanta_realtime_server::{run_server, RunServerArgs};
 
@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..ServerConfig::default()
     };
 
-    let server_id = generate_server_id();
+    let server_id = generate_server_id("particle");
     let dev_token = std::env::var("QUANTA_DEV_TOKEN").unwrap_or_else(|_| DEFAULT_DEV_TOKEN.into());
     let validator = DevTokenValidator::new(dev_token) as Arc<_>;
 
@@ -74,13 +74,4 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = task.await;
     }
     Ok(())
-}
-
-fn generate_server_id() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let pid = std::process::id();
-    format!("particle-{:08x}{:04x}", (nanos / 1_000_000) as u32, pid as u16)
 }

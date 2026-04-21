@@ -10,6 +10,7 @@ pub mod degraded;
 pub mod effect_io;
 pub mod endpoint;
 pub mod error;
+pub mod ids;
 pub mod interest;
 pub mod island;
 pub mod manager;
