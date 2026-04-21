@@ -83,6 +83,21 @@ pub enum ManagerCommand {
         island_id: IslandId,
         session_id: u64,
     },
+    /// Allocate a bare entity slot with no client session and no fanout
+    /// registration — the entity ticks as part of the island's simulation
+    /// and appears in `TickSnapshot` for all watching clients, but never
+    /// receives datagrams itself. The returned input channel lets the
+    /// caller drive the NPC via `ClientInput`s (same codepath as real
+    /// clients).
+    AllocateEntitySlot {
+        island_id: IslandId,
+        reply: oneshot::Sender<
+            Result<
+                (EntitySlot, crossbeam_channel::Sender<crate::tick::ClientInput>),
+                RegisterClientError,
+            >,
+        >,
+    },
 }
 
 pub enum IslandCommand {

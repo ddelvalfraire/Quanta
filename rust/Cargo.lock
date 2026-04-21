@@ -2670,6 +2670,7 @@ version = "0.1.0"
 dependencies = [
  "bitcode",
  "bytes",
+ "crossbeam-channel",
  "hex",
  "quanta-core-rs",
  "quanta-particle-demo",

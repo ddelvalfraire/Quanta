@@ -230,7 +230,43 @@ impl IslandManager {
             } => {
                 self.handle_deregister_client(&island_id, session_id);
             }
+            ManagerCommand::AllocateEntitySlot { island_id, reply } => {
+                let result = self.handle_allocate_entity_slot(&island_id);
+                let _ = reply.send(result);
+            }
         }
+    }
+
+    fn handle_allocate_entity_slot(
+        &mut self,
+        island_id: &IslandId,
+    ) -> Result<
+        (EntitySlot, crossbeam_channel::Sender<ClientInput>),
+        RegisterClientError,
+    > {
+        let handle = self
+            .registry
+            .get(island_id)
+            .ok_or_else(|| RegisterClientError::IslandNotFound(island_id.clone()))?;
+        if handle.state != IslandState::Running {
+            return Err(RegisterClientError::IslandNotRunning(island_id.clone()));
+        }
+        let allocator = self
+            .slot_allocators
+            .entry(island_id.0.clone())
+            .or_default();
+        let slot_id = allocator
+            .allocate()
+            .ok_or(RegisterClientError::AtSlotCapacity)?;
+        let slot = EntitySlot(slot_id);
+        let _ = handle.command_tx.send(IslandCommand::AddEntity {
+            slot,
+            initial_state: Vec::new(),
+            owner: Some(crate::tick::SessionId::from(
+                format!("npc-{}", slot_id).as_str(),
+            )),
+        });
+        Ok((slot, handle.input_tx.clone()))
     }
 
     fn handle_client_connected(

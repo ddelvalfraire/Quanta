@@ -60,7 +60,7 @@ async function main(): Promise<void> {
   });
 
   startInputLoop(wt);
-  startRenderLoop(canvas, world, () => selfSlot);
+  await startRenderLoop(canvas, world, () => selfSlot);
 }
 
 main().catch((e) => {

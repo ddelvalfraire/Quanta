@@ -37,8 +37,16 @@ pub struct ParticleFanout {
 
 impl ParticleFanout {
     pub fn new() -> Self {
+        // Demo scope: subscribe every client to every entity. The world is
+        // 10k units across; setting radii well above that disables interest
+        // filtering so the "see the swarm" demo isn't radius-clipped.
+        let cfg = InterestConfig {
+            subscribe_radius: 20_000.0,
+            unsubscribe_radius: 21_000.0,
+            ..InterestConfig::default()
+        };
         Self {
-            interest: InterestManager::new(InterestConfig::default(), MAX_CLIENTS, MAX_ENTITIES),
+            interest: InterestManager::new(cfg, MAX_CLIENTS, MAX_ENTITIES),
             position_table: PositionTable::new(),
             clients: FxHashMap::default(),
         }
