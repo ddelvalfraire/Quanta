@@ -20,7 +20,7 @@ use crate::types::{ClientIndex, EntitySlot, IslandId, IslandManifest, IslandSnap
 use crate::zone_transfer::{ZoneTransferManager, ZoneTransferToken};
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, watch};
 use tracing::{error, info, warn};
@@ -48,8 +48,19 @@ pub struct IslandManager {
     slot_allocators: FxHashMap<String, SlotAllocator>,
     /// Phase 3: per-island fanout command channel, keyed by island id string.
     fanout_tx: FxHashMap<String, mpsc::Sender<FanoutCommand>>,
-    /// Phase 3: `session_id -> (island_id, slot, client_index)` for deregister lookup.
-    client_registry: FxHashMap<u64, (IslandId, EntitySlot, ClientIndex)>,
+    /// Phase 3: `session_id -> (island_id, slot, client_index, session_weak,
+    /// initial_strong_count)` for deregister lookup.
+    ///
+    /// The `Weak<dyn Session>` and recorded initial strong-count are a liveness
+    /// probe so the manager can detect when the session Arc held by the
+    /// per-session reader task has been dropped without an explicit
+    /// `DeregisterClient` — e.g. because the reader panicked with its
+    /// `JoinHandle` discarded (H-2). `sweep_dead_sessions` walks this map and
+    /// auto-deregisters any entry whose current strong-count has fallen below
+    /// the count observed at registration, so a silently-panicked reader does
+    /// not leak its entity slot indefinitely.
+    client_registry:
+        FxHashMap<u64, (IslandId, EntitySlot, ClientIndex, Weak<dyn Session>, usize)>,
     /// Propagated to fanout tasks so they exit on shutdown.
     shutdown_watch: watch::Receiver<bool>,
 }
@@ -134,6 +145,7 @@ impl IslandManager {
                     }
                 }
                 _ = idle_check.tick() => {
+                    self.sweep_dead_sessions();
                     self.check_passivation();
                     self.check_zone_transfer_timeouts();
                 }
@@ -144,7 +156,43 @@ impl IslandManager {
         info!("island manager shutting down");
     }
 
+    /// Detect client_registry entries whose `Weak<dyn Session>` no longer
+    /// upgrades and deregister them.
+    ///
+    /// This is the cleanup path for H-2: when a per-session reader task panics
+    /// with its `JoinHandle` dropped, the tokio runtime swallows the panic and
+    /// no `DeregisterClient` command is ever sent.  The session `Arc` held by
+    /// the reader is dropped; if no other strong holder remains (no fanout
+    /// factory configured, no QUIC close watcher still pending), the weak ref
+    /// here goes dead and the manager reclaims the entity slot.
+    fn sweep_dead_sessions(&mut self) {
+        // A session is considered "dropped without DeregisterClient" when its
+        // current strong-count has fallen below the count observed at
+        // registration time.  Registration captures the count AFTER handing
+        // the session to the fanout task (if any) and BEFORE returning to the
+        // caller — so a drop below that baseline means an external holder
+        // (typically the per-session reader task) has released its Arc.
+        //
+        // Collect first to avoid a double borrow on `client_registry` while
+        // `handle_deregister_client` mutates it.
+        let dead: Vec<(IslandId, u64)> = self
+            .client_registry
+            .iter()
+            .filter(|(_, (_, _, _, weak, initial))| weak.strong_count() < *initial)
+            .map(|(sid, (island, _, _, _, _))| (island.clone(), *sid))
+            .collect();
+        for (island_id, session_id) in dead {
+            warn!(
+                %island_id,
+                session_id,
+                "session dropped without DeregisterClient — reclaiming slot (H-2 watchdog)"
+            );
+            self.handle_deregister_client(&island_id, session_id);
+        }
+    }
+
     fn handle_command(&mut self, cmd: ManagerCommand) {
+        self.sweep_dead_sessions();
         match cmd {
             ManagerCommand::Activate { manifest, reply } => {
                 let result = self.handle_activate(manifest);
@@ -359,6 +407,17 @@ impl IslandManager {
         });
         let input_tx = handle.input_tx.clone();
 
+        // Downgrade so we can poll liveness without keeping the session Arc
+        // alive ourselves.  Then surrender our local strong ref — either
+        // into the fanout command (fanout holds it until ClientLeft) or by
+        // dropping it on the floor (no fanout configured).  Finally,
+        // snapshot the strong-count AFTER that surrender so it reflects the
+        // population of external holders the caller expects us to track.
+        // `sweep_dead_sessions` auto-deregisters entries whose strong count
+        // has dropped below this baseline, which is how the H-2 watchdog
+        // notices a reader task whose `JoinHandle` was discarded.
+        let session_weak = Arc::downgrade(&session);
+
         if let Some(fan) = self.fanout_tx.get(&island_id.0) {
             if fan
                 .try_send(FanoutCommand::ClientJoined {
@@ -375,10 +434,28 @@ impl IslandManager {
                     "fanout ClientJoined dropped — client will tick without receiving datagrams"
                 );
             }
+        } else {
+            // Explicitly release the local strong ref now so the baseline
+            // snapshot below does not double-count the about-to-be-dropped
+            // function parameter.
+            drop(session);
         }
 
-        self.client_registry
-            .insert(session_id, (island_id.clone(), slot, client_index));
+        // Safety: `strong_count` returns zero if no strong refs remain, which
+        // is a valid baseline — `sweep_dead_sessions` simply never fires for
+        // that entry (no "below zero" possible).
+        let baseline_strong = session_weak.strong_count();
+
+        self.client_registry.insert(
+            session_id,
+            (
+                island_id.clone(),
+                slot,
+                client_index,
+                session_weak,
+                baseline_strong,
+            ),
+        );
         crate::metrics::METRICS.clients_connected.inc();
 
         info!(%island_id, session_id, slot = slot.0, "client registered with island");
@@ -386,7 +463,8 @@ impl IslandManager {
     }
 
     fn handle_deregister_client(&mut self, island_id: &IslandId, session_id: u64) {
-        let Some((_, slot, client_index)) = self.client_registry.remove(&session_id) else {
+        let Some((_, slot, client_index, _, _)) = self.client_registry.remove(&session_id)
+        else {
             return;
         };
         if let Some(handle) = self.registry.get(island_id) {
@@ -865,12 +943,19 @@ impl IslandManager {
     /// background task, which in turn lets them call `client_registry_len()`
     /// between steps.
     pub fn process_one_command(&mut self) -> bool {
+        // Sweep first so a test that drops a Session Arc and calls `flush`
+        // observes the cleanup even when no command is enqueued.  The
+        // production `run()` loop performs this sweep on every idle tick.
+        let before = self.client_registry.len();
+        self.sweep_dead_sessions();
+        let swept = self.client_registry.len() != before;
+
         match self.cmd_rx.try_recv() {
             Ok(cmd) => {
                 self.handle_command(cmd);
                 true
             }
-            Err(_) => false,
+            Err(_) => swept,
         }
     }
 }
