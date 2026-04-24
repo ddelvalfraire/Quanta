@@ -842,6 +842,39 @@ pub fn manager_channel(
     mpsc::channel(buffer)
 }
 
+/// Test-only accessor: returns the number of entries in `client_registry`.
+///
+/// Used by `reader_panic_observable_test` to assert whether a dead reader
+/// task's entity slot has been reclaimed. The field is private to enforce
+/// the command-channel interface in production; exposed only under the
+/// same gate as `ZoneTransferConfig::for_testing()` so integration test
+/// binaries can call it without affecting release builds.
+#[cfg(any(test, feature = "test-utils"))]
+impl IslandManager {
+    /// Returns the number of session entries currently tracked in
+    /// `client_registry`.  Used by tests to detect slot leaks.
+    pub fn client_registry_len(&self) -> usize {
+        self.client_registry.len()
+    }
+
+    /// Drain exactly one pending command from the internal channel and
+    /// process it synchronously.  Returns `true` if a command was processed,
+    /// `false` if the channel was empty.
+    ///
+    /// Lets tests drive the manager step-by-step without spawning a
+    /// background task, which in turn lets them call `client_registry_len()`
+    /// between steps.
+    pub fn process_one_command(&mut self) -> bool {
+        match self.cmd_rx.try_recv() {
+            Ok(cmd) => {
+                self.handle_command(cmd);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
 /// Route a single BridgeEffect to the appropriate handler.
 ///
 /// Currently handles Persist (via checkpoint — TODO: wire checkpoint handle),
