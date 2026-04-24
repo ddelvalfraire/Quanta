@@ -59,8 +59,7 @@ pub struct IslandManager {
     /// auto-deregisters any entry whose current strong-count has fallen below
     /// the count observed at registration, so a silently-panicked reader does
     /// not leak its entity slot indefinitely.
-    client_registry:
-        FxHashMap<u64, (IslandId, EntitySlot, ClientIndex, Weak<dyn Session>, usize)>,
+    client_registry: FxHashMap<u64, (IslandId, EntitySlot, ClientIndex, Weak<dyn Session>, usize)>,
     /// Propagated to fanout tasks so they exit on shutdown.
     shutdown_watch: watch::Receiver<bool>,
 }
@@ -315,10 +314,7 @@ impl IslandManager {
     fn handle_allocate_entity_slot(
         &mut self,
         island_id: &IslandId,
-    ) -> Result<
-        (EntitySlot, crossbeam_channel::Sender<ClientInput>),
-        RegisterClientError,
-    > {
+    ) -> Result<(EntitySlot, crossbeam_channel::Sender<ClientInput>), RegisterClientError> {
         let handle = self
             .registry
             .get(island_id)
@@ -326,10 +322,7 @@ impl IslandManager {
         if handle.state != IslandState::Running {
             return Err(RegisterClientError::IslandNotRunning(island_id.clone()));
         }
-        let allocator = self
-            .slot_allocators
-            .entry(island_id.0.clone())
-            .or_default();
+        let allocator = self.slot_allocators.entry(island_id.0.clone()).or_default();
         let slot_id = allocator
             .allocate()
             .ok_or(RegisterClientError::AtSlotCapacity)?;
@@ -463,8 +456,7 @@ impl IslandManager {
     }
 
     fn handle_deregister_client(&mut self, island_id: &IslandId, session_id: u64) {
-        let Some((_, slot, client_index, _, _)) = self.client_registry.remove(&session_id)
-        else {
+        let Some((_, slot, client_index, _, _)) = self.client_registry.remove(&session_id) else {
             return;
         };
         if let Some(handle) = self.registry.get(island_id) {

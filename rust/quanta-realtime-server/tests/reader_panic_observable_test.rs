@@ -101,8 +101,7 @@ impl Session for PanickingSession {
 fn build_inline_manager() -> (tokio::sync::mpsc::Sender<ManagerCommand>, IslandManager) {
     let (tx, rx) = manager_channel(64);
     let bridge = Arc::new(StubBridge);
-    let factory: ExecutorFactory =
-        Arc::new(|| Box::new(NoopWasmExecutor) as Box<dyn WasmExecutor>);
+    let factory: ExecutorFactory = Arc::new(|| Box::new(NoopWasmExecutor) as Box<dyn WasmExecutor>);
     let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     let mgr = IslandManager::new(
@@ -160,7 +159,10 @@ async fn reader_panic_leaves_client_registry_entry_populated() {
         .await
         .unwrap();
     flush(&mut mgr);
-    reg_rx.await.unwrap().expect("RegisterClient should succeed");
+    reg_rx
+        .await
+        .unwrap()
+        .expect("RegisterClient should succeed");
 
     // Verify the entry is present.
     assert_eq!(
@@ -229,7 +231,10 @@ async fn explicit_deregister_clears_client_registry() {
         .await
         .unwrap();
     flush(&mut mgr);
-    reg_rx.await.unwrap().expect("RegisterClient should succeed");
+    reg_rx
+        .await
+        .unwrap()
+        .expect("RegisterClient should succeed");
 
     assert_eq!(mgr.client_registry_len(), 1);
 

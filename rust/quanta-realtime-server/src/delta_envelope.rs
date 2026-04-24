@@ -75,8 +75,7 @@ pub fn encode_delta_datagram_with_seq_ack(
     last_processed_input_seq: u32,
     delta_bytes: &[u8],
 ) -> Vec<u8> {
-    let mut buf =
-        Vec::with_capacity(DELTA_HEADER_LEN + SEQ_ACK_PREFIX_LEN + delta_bytes.len());
+    let mut buf = Vec::with_capacity(DELTA_HEADER_LEN + SEQ_ACK_PREFIX_LEN + delta_bytes.len());
     buf.push(flags | FLAG_HAS_SEQ_ACK);
     buf.extend_from_slice(&entity_slot.to_be_bytes());
     buf.extend_from_slice(&tick.to_be_bytes());
@@ -158,13 +157,8 @@ mod tests {
     #[test]
     fn encode_with_seq_ack_prepends_u32_and_sets_flag() {
         let delta = [0xAA, 0xBB];
-        let bytes = encode_delta_datagram_with_seq_ack(
-            FLAG_FULL_STATE,
-            7,
-            123,
-            0xDEAD_BEEF,
-            &delta,
-        );
+        let bytes =
+            encode_delta_datagram_with_seq_ack(FLAG_FULL_STATE, 7, 123, 0xDEAD_BEEF, &delta);
         let (flags, slot, tick, payload) = parse_delta_datagram(&bytes).unwrap();
         assert_eq!(flags & FLAG_HAS_SEQ_ACK, FLAG_HAS_SEQ_ACK);
         assert_eq!(flags & FLAG_FULL_STATE, FLAG_FULL_STATE);

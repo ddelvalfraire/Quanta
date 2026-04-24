@@ -160,7 +160,8 @@ async fn same_instance_dedup_rejects_replay() {
     let ts = token.timestamp;
 
     assert!(
-        mgr.accept_transfer_at(&token, &zone("zone-y"), ts + 50).is_ok(),
+        mgr.accept_transfer_at(&token, &zone("zone-y"), ts + 50)
+            .is_ok(),
         "first accept must succeed"
     );
 

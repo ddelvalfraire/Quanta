@@ -13,9 +13,9 @@
 
 mod common;
 
+use common::noop_engine;
 use crossbeam_channel::unbounded;
 use quanta_realtime_server::TickSnapshot;
-use common::noop_engine;
 
 /// Proposed maximum number of snapshot subscribers.
 /// Chosen to be small enough to be reasonable in production yet large enough

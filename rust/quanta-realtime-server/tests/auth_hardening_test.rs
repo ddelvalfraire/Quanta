@@ -105,7 +105,7 @@ fn webtransport_accept_has_no_origin_check() {
     // with `web_transport_quinn`. Their absence is the bug.
     let origin_guard_patterns = [
         "origin",
-        "bad()",        // web_transport_quinn::Request::bad() — rejects the session
+        "bad()", // web_transport_quinn::Request::bad() — rejects the session
         "allowlist",
         "allowed_origins",
     ];

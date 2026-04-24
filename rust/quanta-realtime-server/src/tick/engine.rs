@@ -250,11 +250,7 @@ impl TickEngine {
                 pos_z: z,
                 vel_x: 0.0,
                 vel_z: 0.0,
-                last_input_seq: self
-                    .last_client_input_seq
-                    .get(slot)
-                    .copied()
-                    .unwrap_or(0),
+                last_input_seq: self.last_client_input_seq.get(slot).copied().unwrap_or(0),
             });
         }
         let snapshot = TickSnapshot {
@@ -266,11 +262,12 @@ impl TickEngine {
         }
         // Drop subscribers whose receivers have gone away; tolerate
         // transient "full" by keeping them alive for the next tick.
-        self.snapshot_subscribers.retain(|tx| match tx.try_send(snapshot.clone()) {
-            Ok(()) => true,
-            Err(crossbeam_channel::TrySendError::Full(_)) => true,
-            Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
-        });
+        self.snapshot_subscribers
+            .retain(|tx| match tx.try_send(snapshot.clone()) {
+                Ok(()) => true,
+                Err(crossbeam_channel::TrySendError::Full(_)) => true,
+                Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
+            });
     }
 
     pub fn set_effect_sender(&mut self, tx: crate::effect_io::EffectSender) {
@@ -813,9 +810,7 @@ impl TickEngine {
                         // source of truth for correctness.
                         if let TickMessage::Input { payload, .. } = msg {
                             if let Some(seq) = wasm.extract_client_input_seq(payload) {
-                                let entry = last_client_input_seq
-                                    .entry(*entity_slot)
-                                    .or_insert(0);
+                                let entry = last_client_input_seq.entry(*entity_slot).or_insert(0);
                                 if seq > *entry {
                                     *entry = seq;
                                 }

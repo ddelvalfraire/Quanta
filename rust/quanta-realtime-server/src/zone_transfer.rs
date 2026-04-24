@@ -484,7 +484,8 @@ impl ZoneTransferManager {
             }
         }
 
-        let expiry_unix_ms = now_ms().saturating_add(self.config.dedup_retention.as_millis() as u64);
+        let expiry_unix_ms =
+            now_ms().saturating_add(self.config.dedup_retention.as_millis() as u64);
         self.dedup_set
             .insert(token.hmac, Instant::now() + self.config.dedup_retention);
         self.persist_dedup_entry(&token.hmac, expiry_unix_ms);
