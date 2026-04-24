@@ -80,6 +80,9 @@ fn nats_connect<'a>(env: Env<'a>, urls: Vec<String>, opts: Term<'a>) -> Term<'a>
     nif_safe!(env, {
         let max_in_flight = term_map_get::<usize>(&opts, "max_in_flight")
             .unwrap_or(DEFAULT_MAX_IN_FLIGHT);
+        if max_in_flight == 0 {
+            return (atoms::error(), "max_in_flight must be >= 1").encode(env);
+        }
         let connect_timeout_ms = term_map_get::<u64>(&opts, "connect_timeout_ms")
             .unwrap_or(DEFAULT_CONNECT_TIMEOUT_MS);
 
