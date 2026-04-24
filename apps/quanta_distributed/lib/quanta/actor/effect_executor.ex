@@ -209,6 +209,19 @@ defmodule Quanta.Actor.EffectExecutor do
     acc
   end
 
+  # Catch-all for any :side_effect shape that doesn't match the strict
+  # `{m, f, a}` MFA form above. Without this, malformed tuples (e.g.
+  # `{:side_effect, :bad}`, `{:side_effect, {M, :f, "not_a_list"}}`) would
+  # raise FunctionClauseError inside Enum.reduce_while and crash the actor
+  # GenServer. (CRITICAL-2)
+  defp execute_one({:side_effect, malformed}, acc, context) do
+    Logger.warning(
+      "Dropped malformed :side_effect for actor #{inspect(context.actor_id)}: #{inspect(malformed)}"
+    )
+
+    acc
+  end
+
   defp execute_one({:crdt_ops, ops}, acc, context) when is_list(ops) do
     state = acc.server_state
     doc = state.loro_doc
