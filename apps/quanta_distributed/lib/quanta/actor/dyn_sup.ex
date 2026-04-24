@@ -90,27 +90,7 @@ defmodule Quanta.Actor.DynSup do
   end
 
   defp track_actor(pid) do
-    # Ownership of the atomic counter's decrement is delegated to the
-    # supervised `Quanta.Actor.DynSup.Monitor` GenServer. This eliminates the
-    # drift seen when a bare `spawn/1` monitor process was killed exogenously
-    # before it could decrement the counter.
-    #
-    # The companion spawn below is an observational-only shadow monitor: it
-    # performs `Process.monitor/1` on the actor, logs nothing, touches no
-    # counter, and exits when the actor exits. It exists so that external
-    # tooling (and the HIGH-2 regression test) can observe a per-actor
-    # monitor pid. Whether it lives or dies is irrelevant to counter
-    # correctness — that responsibility belongs entirely to the Monitor
-    # GenServer.
     Quanta.Actor.DynSup.Monitor.track(pid)
-
-    spawn(fn ->
-      mon = Process.monitor(pid)
-
-      receive do
-        {:DOWN, ^mon, :process, ^pid, _reason} -> :ok
-      end
-    end)
   end
 
   @spec stop_actor(pid()) :: :ok
