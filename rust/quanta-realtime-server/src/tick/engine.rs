@@ -26,6 +26,11 @@ const MAX_SNAPSHOT_ENTITIES: usize = 10_000;
 /// Maximum entity state size accepted from a passivation snapshot (1 MB).
 const MAX_SNAPSHOT_ENTITY_STATE: usize = 1_024 * 1_024;
 
+/// Maximum number of auxiliary snapshot subscribers per engine. Bounds the
+/// per-tick clone fan-out and prevents unbounded memory growth from a
+/// misbehaving caller that registers senders in a loop (review finding H-3).
+pub const MAX_SNAPSHOT_SUBSCRIBERS: usize = 16;
+
 /// Below this threshold, busy-wait is cheaper than the OS scheduler overhead.
 const MIN_SLEEP_DURATION: Duration = Duration::from_micros(500);
 
@@ -204,7 +209,20 @@ impl TickEngine {
     /// Attach an additional per-tick snapshot consumer. Used by the demo's
     /// swarm-mind task so NPC AI can read authoritative positions without
     /// stealing them from the fanout's primary channel.
+    ///
+    /// Silently drops (with a `warn!`) any subscriber registered once
+    /// `MAX_SNAPSHOT_SUBSCRIBERS` is reached. Bounding the list prevents a
+    /// misbehaving caller from amplifying per-tick clone work or exhausting
+    /// memory by registering an unbounded number of senders (H-3).
     pub fn add_snapshot_subscriber(&mut self, tx: crossbeam_channel::Sender<TickSnapshot>) {
+        if self.snapshot_subscribers.len() >= MAX_SNAPSHOT_SUBSCRIBERS {
+            warn!(
+                island_id = %self.island_id,
+                cap = MAX_SNAPSHOT_SUBSCRIBERS,
+                "snapshot subscriber cap reached; dropping new subscriber"
+            );
+            return;
+        }
         self.snapshot_subscribers.push(tx);
     }
 
