@@ -42,6 +42,68 @@ export interface QuantaDecoder {
   encodeBaselineAck(baselineTick: bigint): Uint8Array;
 }
 
+// Schema field names produced by quanta-wasm-decoder use snake_case or
+// kebab-case identifiers (lowercase ASCII letters, digits, `_`, `-`).
+// CamelCase / arbitrary keys indicate a malformed WASM return.
+const DECODED_STATE_KEY_RE = /^[a-z0-9_-]+$/;
+
+/**
+ * Narrow an unknown value returned by WASM `decode_state` to `DecodedState`.
+ * Throws a typed `Error` if the shape does not match. The wasm-bindgen layer
+ * types these returns as `any`, so we must validate at the boundary.
+ */
+function assertDecodedState(
+  x: unknown,
+): asserts x is DecodedState {
+  if (x === null || typeof x !== "object") {
+    throw new Error(
+      `decode_state returned non-object value: ${typeof x}`,
+    );
+  }
+  for (const [key, value] of Object.entries(x as Record<string, unknown>)) {
+    if (!DECODED_STATE_KEY_RE.test(key)) {
+      throw new Error(
+        `decode_state returned unexpected field name "${key}"; expected snake_case or kebab-case identifier`,
+      );
+    }
+    if (typeof value !== "number" && typeof value !== "boolean") {
+      throw new Error(
+        `decode_state field "${key}" has invalid type ${typeof value}; expected number or boolean`,
+      );
+    }
+  }
+}
+
+/**
+ * Narrow an unknown value returned by WASM `decode_auth_response` to
+ * `AuthResponseData`. Throws a typed `Error` if the shape does not match.
+ */
+function assertAuthResponse(
+  x: unknown,
+): asserts x is AuthResponseData {
+  if (x === null || typeof x !== "object") {
+    throw new Error(
+      `decode_auth_response returned non-object value: ${typeof x}`,
+    );
+  }
+  const obj = x as Record<string, unknown>;
+  if (typeof obj.sessionId !== "bigint") {
+    throw new Error(
+      `decode_auth_response.sessionId must be bigint; got ${typeof obj.sessionId}`,
+    );
+  }
+  if (typeof obj.accepted !== "boolean") {
+    throw new Error(
+      `decode_auth_response.accepted must be boolean; got ${typeof obj.accepted}`,
+    );
+  }
+  if (typeof obj.reason !== "string") {
+    throw new Error(
+      `decode_auth_response.reason must be string; got ${typeof obj.reason}`,
+    );
+  }
+}
+
 let cached: QuantaDecoder | null = null;
 let pending: Promise<QuantaDecoder> | null = null;
 
@@ -68,14 +130,20 @@ export async function loadDecoder(
       createSchema: (bytes) => wasm.create_schema(bytes),
       applyDelta: (schema, state, delta) =>
         wasm.apply_delta(schema, state, delta),
-      decodeState: (schema, state) =>
-        wasm.decode_state(schema, state) as DecodedState,
+      decodeState: (schema, state) => {
+        const decoded: unknown = wasm.decode_state(schema, state);
+        assertDecodedState(decoded);
+        return decoded;
+      },
       encodeState: (schema, stateObj) =>
         wasm.encode_state(schema, stateObj),
       encodeAuthRequest: (token, clientVersion, sessionToken, transferToken) =>
         wasm.encode_auth_request(token, clientVersion, sessionToken ?? undefined, transferToken ?? undefined),
-      decodeAuthResponse: (bytes) =>
-        wasm.decode_auth_response(bytes) as AuthResponseData,
+      decodeAuthResponse: (bytes) => {
+        const decoded: unknown = wasm.decode_auth_response(bytes);
+        assertAuthResponse(decoded);
+        return decoded;
+      },
       encodeAuthResponse: (sessionId, accepted, reason) =>
         wasm.encode_auth_response(sessionId, accepted, reason),
       encodeBaselineAck: (baselineTick) =>
