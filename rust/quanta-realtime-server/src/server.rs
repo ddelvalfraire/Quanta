@@ -318,43 +318,56 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
                                                 .await;
                                             }
                                         }
-                                        if let Some(conn) = quic_conn {
-                                            let notify_tx = drain_tx.clone();
-                                            let island_dc = default_island.clone();
-                                            tokio::spawn(async move {
-                                                let _ = conn.closed().await;
-                                                if auto_register {
-                                                    if let Some(island_id) = island_dc {
-                                                        if notify_tx
-                                                            .send(ManagerCommand::DeregisterClient {
-                                                                island_id,
-                                                                session_id,
-                                                            })
-                                                            .await
-                                                            .is_err()
-                                                        {
-                                                            warn!(
-                                                                session_id,
-                                                                "DeregisterClient send failed — \
-                                                                 entity slot will leak"
-                                                            );
-                                                        }
+                                        // Unified disconnect watcher (H-1 fix).
+                                        //
+                                        // Previously this branched on
+                                        // `quic_conn.is_some()` and only
+                                        // armed for QUIC sessions — WS
+                                        // clients (`quic_connection: None`)
+                                        // leaked their `client_registry`
+                                        // entry forever. `Session::on_closed`
+                                        // unifies both transports: QUIC
+                                        // awaits `Connection::closed()`,
+                                        // WS awaits a Notify fired by
+                                        // ws_listener's transport tasks.
+                                        let _ = quic_conn; // kept for future reliable-stream call sites
+                                        let notify_tx = drain_tx.clone();
+                                        let island_dc = default_island.clone();
+                                        let watcher_session = session_arc.clone();
+                                        tokio::spawn(async move {
+                                            watcher_session.on_closed().await;
+                                            if auto_register {
+                                                if let Some(island_id) = island_dc {
+                                                    if notify_tx
+                                                        .send(ManagerCommand::DeregisterClient {
+                                                            island_id,
+                                                            session_id,
+                                                        })
+                                                        .await
+                                                        .is_err()
+                                                    {
+                                                        warn!(
+                                                            session_id,
+                                                            "DeregisterClient send failed — \
+                                                             entity slot will leak"
+                                                        );
                                                     }
                                                 }
-                                                if notify_tx
-                                                    .send(ManagerCommand::ClientDisconnected {
-                                                        session_id,
-                                                    })
-                                                    .await
-                                                    .is_err()
-                                                {
-                                                    warn!(
-                                                        session_id,
-                                                        "ClientDisconnected send failed"
-                                                    );
-                                                }
-                                            });
-                                        }
+                                            }
+                                            if notify_tx
+                                                .send(ManagerCommand::ClientDisconnected {
+                                                    session_id,
+                                                })
+                                                .await
+                                                .is_err()
+                                            {
+                                                warn!(
+                                                    session_id,
+                                                    "ClientDisconnected send failed"
+                                                );
+                                            }
+                                            drop(watcher_session);
+                                        });
                                     }
                                     Ok(Err(e)) => warn!(error = %e, "manager rejected client"),
                                     Err(_) => warn!("manager reply dropped"),

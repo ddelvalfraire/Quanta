@@ -128,11 +128,13 @@ async fn ws_session_disconnect_reclaims_client_registry_slot() {
     // 2. Build a WsSession backed by real tokio channels — exactly what
     //    `handle_ws_connection` produces.
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(16);
-    let (inbound_tx, inbound_rx) = mpsc::channel::<Vec<u8>>(16);
+    let (_inbound_tx, inbound_rx) = mpsc::channel::<Vec<u8>>(16);
     let ws = Arc::new(WsSession::new(outbound_tx, inbound_rx));
     let session: Arc<dyn Session> = ws.clone();
 
-    // Stand-in for the tungstenite write task: just drains outbound.
+    // Sink drain — mimics tungstenite's background write task consuming
+    // whatever the server queues.  Exits when `outbound_tx` is dropped
+    // or when `WsSession::close()` queues the empty-Vec sentinel.
     let write_task = tokio::spawn(async move {
         while outbound_rx.recv().await.is_some() {}
     });
@@ -191,17 +193,21 @@ async fn ws_session_disconnect_reclaims_client_registry_slot() {
         drop(watcher_session);
     });
 
-    // Drop the test's external Arcs — only the reader + watcher still hold one.
+    // 6. Simulate WS disconnect: fire the close-trigger the same way
+    //    `ws_listener`'s transport tasks do when they exit.  This is the
+    //    hook the H-1 fix installs — every `Session` impl has an
+    //    `on_closed()` future, and the WS impl fires it from these
+    //    transport tasks.  Once fired, the server.rs drain_handle watcher
+    //    (spawned at RegisterClient time) must dispatch DeregisterClient.
+    ws.trigger_close();
+
+    // Drop the test's external Arcs — only the reader + watcher still hold
+    // theirs (both will release as soon as `on_closed` resolves).
     drop(session);
     drop(ws);
 
-    // 6. Simulate WS disconnect: tungstenite's write sink goes away (the
-    //    TCP stream closed). The inbound tx dropping mirrors the read task
-    //    exiting.  WsSession's close-notify must fire when either side
-    //    tears down.
-    drop(inbound_tx);
-    write_task.abort();
-    let _ = write_task.await;
+    // Drain the write task so it exits cleanly once outbound_tx drops.
+    let _ = tokio::time::timeout(Duration::from_secs(1), write_task).await;
 
     // 7. Reader and watcher observe the close, release their Arcs, and
     //    the watcher dispatches DeregisterClient.

@@ -1,9 +1,17 @@
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 
 use crate::error::SendError;
+
+/// Future returned by [`Session::on_closed`]. Resolves when the underlying
+/// transport has torn down (QUIC connection closed; WS stream or sink
+/// exited). Used by `server.rs` to drive `DeregisterClient` for any
+/// transport without branching on `Option<quinn::Connection>`.
+pub type ClosedFuture = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportType {
@@ -32,6 +40,15 @@ pub trait Session: Send + Sync {
     fn transport_stats(&self) -> TransportStats;
 
     fn close(&self, reason: &str);
+
+    /// Returns a future that resolves when the underlying transport has
+    /// closed. Callers use this to fire `DeregisterClient` without
+    /// branching on transport type — every `Session` impl knows how to
+    /// observe its own peer teardown.
+    ///
+    /// The returned future is `'static`: implementations must clone any
+    /// internal state (Arc, watch, Connection handle) they need to poll.
+    fn on_closed(&self) -> ClosedFuture;
 }
 
 pub struct QuicSession {
@@ -107,5 +124,12 @@ impl Session for QuicSession {
 
     fn close(&self, reason: &str) {
         self.connection.close(0u32.into(), reason.as_bytes());
+    }
+
+    fn on_closed(&self) -> ClosedFuture {
+        let conn = self.connection.clone();
+        Box::pin(async move {
+            let _ = conn.closed().await;
+        })
     }
 }

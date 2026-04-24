@@ -93,6 +93,12 @@ impl Session for PanickingSession {
     }
 
     fn close(&self, _reason: &str) {}
+
+    fn on_closed(&self) -> quanta_realtime_server::session::ClosedFuture {
+        // Never closes — test drives cleanup via explicit DeregisterClient
+        // or by dropping the Arc (which triggers sweep_dead_sessions).
+        Box::pin(std::future::pending())
+    }
 }
 
 // ---------------------------------------------------------------------------

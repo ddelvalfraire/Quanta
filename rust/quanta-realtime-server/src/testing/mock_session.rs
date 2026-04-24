@@ -1,14 +1,20 @@
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use tokio::sync::Notify;
+
 use crate::error::SendError;
-use crate::session::{Session, TransportStats, TransportType};
+use crate::session::{ClosedFuture, Session, TransportStats, TransportType};
 
 pub struct MockSession {
     inner: Mutex<MockSessionInner>,
     transport: TransportType,
     rtt: Duration,
+    close_notify: Arc<Notify>,
+    closed_flag: Arc<AtomicBool>,
 }
 
 struct MockSessionInner {
@@ -29,6 +35,8 @@ impl MockSession {
             }),
             transport: TransportType::Quic,
             rtt: Duration::from_millis(20),
+            close_notify: Arc::new(Notify::new()),
+            closed_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -99,6 +107,25 @@ impl Session for MockSession {
 
     fn close(&self, _reason: &str) {
         self.inner.lock().unwrap().closed = true;
+        if !self.closed_flag.swap(true, Ordering::AcqRel) {
+            self.close_notify.notify_waiters();
+        }
+    }
+
+    fn on_closed(&self) -> ClosedFuture {
+        let notify = self.close_notify.clone();
+        let closed = self.closed_flag.clone();
+        Box::pin(async move {
+            if closed.load(Ordering::Acquire) {
+                return;
+            }
+            let waiter = notify.notified();
+            tokio::pin!(waiter);
+            if closed.load(Ordering::Acquire) {
+                return;
+            }
+            waiter.await;
+        })
     }
 }
 

@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use crate::error::SendError;
-use crate::session::{Session, TransportStats, TransportType};
+use crate::session::{ClosedFuture, Session, TransportStats, TransportType};
 
 pub struct WebTransportSession {
     session: web_transport_quinn::Session,
@@ -67,5 +67,12 @@ impl Session for WebTransportSession {
 
     fn close(&self, reason: &str) {
         self.session.close(0, reason.as_bytes());
+    }
+
+    fn on_closed(&self) -> ClosedFuture {
+        let session = self.session.clone();
+        Box::pin(async move {
+            let _ = session.closed().await;
+        })
     }
 }
