@@ -97,4 +97,11 @@ describe("decodeAuthResponse runtime validation (H-1b)", () => {
     expect(result.accepted).toBe(true);
     expect(result.reason).toBe("");
   });
+
+  it("throws a specific array-rejection error when WASM returns an array", () => {
+    mockDecodeAuthResponse.mockReturnValue([1n, true, ""]);
+    expect(() =>
+      decoder.decodeAuthResponse(new Uint8Array([0])),
+    ).toThrow(/array|non-object/);
+  });
 });
