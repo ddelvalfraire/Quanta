@@ -7,6 +7,14 @@ use quanta_core_rs::delta::encoder::{
 use quanta_core_rs::schema::evolution::import_schema;
 use quanta_core_rs::schema::{CompiledSchema, FieldMeta, FieldType};
 
+/// Forward Rust panics to `console.error` with readable stack traces.
+///
+/// Auto-invoked by wasm-bindgen on module init.
+#[wasm_bindgen(start)]
+pub fn init_panic_hook() {
+    console_error_panic_hook::set_once();
+}
+
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct SchemaHandle {
