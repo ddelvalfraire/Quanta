@@ -330,7 +330,16 @@ pub fn decode_delta_datagram(bytes: &[u8]) -> Result<JsValue, JsError> {
 // without pulling quinn/tokio.
 // ---------------------------------------------------------------------------
 
-const INITIAL_STATE_HEADER: usize = 8 + 1 + 1 + 4;
+// Header layout when `FLAG_INCLUDES_SCHEMA` is CLEARED:
+//   baseline_tick(8) + flags(1) + schema_version(1) + entity_count(4) = 14
+const INITIAL_STATE_HEADER_NO_SCHEMA: usize = 8 + 1 + 1 + 4;
+// Header layout when `FLAG_INCLUDES_SCHEMA` is SET, excluding the variable
+// schema bytes themselves:
+//   baseline_tick(8) + flags(1) + schema_version(1) + schema_len(4) +
+//   entity_count(4) = 18. The schema bytes sit between `schema_len` and
+//   `entity_count`, so this is a minimum — any real flag-set payload must be
+//   larger once the schema is included.
+const INITIAL_STATE_HEADER_WITH_SCHEMA: usize = 8 + 1 + 1 + 4 + 4;
 const FLAG_INCLUDES_SCHEMA: u8 = 0x01;
 
 /// Decoded initial-state payload in plain Rust form. Mirrors the server-side
@@ -363,12 +372,17 @@ pub struct InitialStateEntity {
 /// block entirely (see `quanta-realtime-server/src/sync.rs::encode_initial_state`).
 /// This decoder must mirror that layout exactly.
 pub fn decode_initial_state_native(bytes: &[u8]) -> Result<InitialStatePayload, String> {
-    if bytes.len() < INITIAL_STATE_HEADER {
+    // Minimum header bytes needed before we even know whether to look for
+    // schema metadata: tick(8) + flags(1) + schema_version(1) = 10.
+    const PRE_FLAG_HEADER: usize = 8 + 1 + 1;
+    if bytes.len() < PRE_FLAG_HEADER {
         return Err(format!(
-            "initial state truncated: need {INITIAL_STATE_HEADER}, got {}",
+            "truncated initial state header: need {PRE_FLAG_HEADER} bytes \
+             to read tick/flags/schema_version, got {}",
             bytes.len()
         ));
     }
+
     let mut pos = 0;
     let baseline_tick = u64::from_be_bytes(bytes[pos..pos + 8].try_into().unwrap());
     pos += 8;
@@ -377,9 +391,26 @@ pub fn decode_initial_state_native(bytes: &[u8]) -> Result<InitialStatePayload, 
     let schema_version = bytes[pos];
     pos += 1;
 
+    // Now that the flag is known, enforce the flag-specific minimum: flag-
+    // cleared requires entity_count(4), flag-set requires at least
+    // schema_len(4) + entity_count(4) (schema bytes themselves are validated
+    // against schema_len below).
+    let required = if flags & FLAG_INCLUDES_SCHEMA != 0 {
+        INITIAL_STATE_HEADER_WITH_SCHEMA
+    } else {
+        INITIAL_STATE_HEADER_NO_SCHEMA
+    };
+    if bytes.len() < required {
+        return Err(format!(
+            "truncated initial state header: flag=0x{flags:02x} requires \
+             at least {required} bytes, got {}",
+            bytes.len()
+        ));
+    }
+
     let compiled_schema = if flags & FLAG_INCLUDES_SCHEMA != 0 {
         if pos + 4 > bytes.len() {
-            return Err("truncated schema header".into());
+            return Err("truncated initial state header: schema_len".into());
         }
         let schema_len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
         pos += 4;
