@@ -51,7 +51,6 @@ pub struct NatsConnectionResource {
 }
 
 pub(crate) struct NatsInner {
-    pub client: async_nats::Client,
     pub jetstream: async_nats::jetstream::Context,
     pub runtime: tokio::runtime::Runtime,
     pub semaphore: Arc<Semaphore>,
@@ -93,15 +92,14 @@ fn nats_connect<'a>(env: Env<'a>, urls: Vec<String>, opts: Term<'a>) -> Term<'a>
 
         let server_addr = urls.join(",");
 
-        let (client, jetstream) = match runtime.block_on(async {
+        let jetstream = match runtime.block_on(async {
             let client = async_nats::ConnectOptions::new()
                 .connection_timeout(std::time::Duration::from_millis(connect_timeout_ms))
                 .connect(&server_addr)
                 .await?;
-            let jetstream = async_nats::jetstream::new(client.clone());
-            Ok::<_, async_nats::ConnectError>((client, jetstream))
+            Ok::<_, async_nats::ConnectError>(async_nats::jetstream::new(client))
         }) {
-            Ok(pair) => pair,
+            Ok(js) => js,
             Err(e) => return (atoms::error(), format!("connect_error: {}", e)).encode(env),
         };
 
@@ -109,7 +107,6 @@ fn nats_connect<'a>(env: Env<'a>, urls: Vec<String>, opts: Term<'a>) -> Term<'a>
 
         let resource = ResourceArc::new(NatsConnectionResource {
             inner: NatsInner {
-                client,
                 jetstream,
                 runtime,
                 semaphore,
