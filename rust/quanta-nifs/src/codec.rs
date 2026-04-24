@@ -213,7 +213,8 @@ mod tests {
         };
 
         let bytes = bitcode::encode(&header);
-        let decoded: EnvelopeHeader = bitcode::decode(&bytes).unwrap();
+        let decoded: EnvelopeHeader =
+            bitcode::decode(&bytes).expect("test roundtrip should decode valid bytes");
         assert_eq!(decoded, header);
     }
 
@@ -239,7 +240,8 @@ mod tests {
                 metadata: vec![],
             };
             let bytes = bitcode::encode(&header);
-            let decoded: EnvelopeHeader = bitcode::decode(&bytes).unwrap();
+            let decoded: EnvelopeHeader =
+                bitcode::decode(&bytes).expect("test roundtrip should decode valid bytes");
             assert_eq!(decoded, header);
         }
     }
