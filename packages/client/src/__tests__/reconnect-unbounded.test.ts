@@ -89,4 +89,26 @@ describe("Connection — H-3: bounded reconnect loop", () => {
       "function",
     );
   });
+
+  it("stopReconnecting() interrupts a scheduled retry mid-flight", async () => {
+    const conn = createFailingConnection({ maxReconnectAttempts: 10 });
+    const abandonedEvents: number[] = [];
+    const reconnectingEvents: number[] = [];
+    conn.on("abandoned", (n) => abandonedEvents.push(n));
+    conn.on("reconnecting", (n) => reconnectingEvents.push(n));
+
+    conn.connect().catch(() => {});
+
+    // Let a few retry attempts fire
+    await vi.advanceTimersByTimeAsync(5000);
+    const attemptsBeforeStop = reconnectingEvents.length;
+
+    conn.stopReconnecting();
+
+    // Advance significantly — no more retry attempts should fire
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(reconnectingEvents.length).toBe(attemptsBeforeStop);
+    expect(abandonedEvents).toHaveLength(0); // Not "abandoned" — user stopped it
+  });
 });
