@@ -6,7 +6,7 @@ edition = "2021"
 [lib]
 name = "quanta_nifs"
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 quanta-core-rs = { path = "../quanta-core-rs" }

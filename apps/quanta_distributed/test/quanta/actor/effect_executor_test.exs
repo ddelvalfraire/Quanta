@@ -261,6 +261,35 @@ defmodule Quanta.Actor.EffectExecutorTest do
 
       assert_receive :side_effect_ran, 500
     end
+
+    # FINDING 2 (CRITICAL-3): Unconstrained {:side_effect, MFA} effect
+    #
+    # Any actor can emit {:side_effect, {Module, :function, args}} and
+    # EffectExecutor runs it via Task.Supervisor.start_child + apply/3 with no
+    # allowlist and no arity check (effect_executor.ex lines 186-194).
+    #
+    # This test MUST FAIL today:
+    #   The effect executes and self() receives :pwned, but we assert it must NOT.
+    #   Fixed code must reject arbitrary MFAs and NOT execute them.
+    test "rejects arbitrary MFA side effects not on an allowlist" do
+      # Harmless but observable: if executed, the spawned Task sends :pwned to
+      # this test process.  We then assert the message was NOT received.
+      ctx = make_context()
+
+      EffectExecutor.execute(
+        [{:side_effect, {Kernel, :send, [self(), :pwned]}}],
+        ctx
+      )
+
+      # Give a spawned Task enough time to deliver the message if the bug fires.
+      Process.sleep(200)
+
+      # BUG: today this refute fails because :pwned IS in the mailbox.
+      # Fixed code must reject the MFA before spawning and never deliver :pwned.
+      refute_receive :pwned,
+                     0,
+                     "Arbitrary MFA side-effect was executed — no allowlist enforced (CRITICAL-3)"
+    end
   end
 
   describe ":send" do
