@@ -26,7 +26,7 @@ pub(crate) mod atoms {
     }
 }
 
-const DEFAULT_MAX_IN_FLIGHT: usize = 10_000;
+const DEFAULT_MAX_IN_FLIGHT: usize = 256;
 const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 5_000;
 
 pub(crate) enum NifError {

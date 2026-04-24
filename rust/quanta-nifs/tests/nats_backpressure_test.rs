@@ -89,11 +89,11 @@ fn h5_semaphore_with_zero_permits_blocks_all_acquires() {
 }
 
 /// Runtime probe: confirm that a semaphore constructed with the DEFAULT value
-/// (10_000 permits, as used by DEFAULT_MAX_IN_FLIGHT in nats/mod.rs) does NOT
+/// (256 permits, as used by DEFAULT_MAX_IN_FLIGHT in nats/mod.rs) does NOT
 /// block — so the fix only needs to guard against 0, not change the defaults.
 #[test]
 fn h5_semaphore_with_default_permits_is_usable() {
-    const DEFAULT_MAX_IN_FLIGHT: usize = 10_000;
+    const DEFAULT_MAX_IN_FLIGHT: usize = 256;
     let sem = Arc::new(Semaphore::new(DEFAULT_MAX_IN_FLIGHT));
 
     let result = sem.try_acquire();
