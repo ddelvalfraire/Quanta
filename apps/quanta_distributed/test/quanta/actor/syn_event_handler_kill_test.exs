@@ -30,10 +30,10 @@ defmodule Quanta.Actor.SynEventHandlerKillTest do
                "state gets persisted."
     end
 
-    test "moduledoc does not advertise :kill as the conflict-resolution strategy" do
-      refute @handler_source =~ ":kill",
-             "syn_event_handler.ex still mentions :kill; update moduledoc and " <>
-               "implementation to reflect the graceful-shutdown strategy."
+    test "moduledoc advertises :shutdown (not :kill) as the stop signal" do
+      assert @handler_source =~ ":shutdown",
+             "syn_event_handler.ex should document the :shutdown stop signal " <>
+               "used for the conflict loser (so terminate/2 runs)."
     end
   end
 end

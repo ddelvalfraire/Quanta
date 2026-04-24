@@ -3,8 +3,10 @@ defmodule Quanta.Actor.SynEventHandler do
   Syn event handler for distributed actor registry conflict resolution and lifecycle events.
 
   Conflict resolution strategy: if one side is draining, keep the non-draining side.
-  Otherwise keep the older registration (by syn timestamp). The loser is killed
-  with `Process.exit(pid, :kill)` since syn does not kill it when a custom handler is used.
+  Otherwise keep the older registration (by syn timestamp). The loser is stopped
+  with `Process.exit(pid, :shutdown)` so its `terminate/2` runs within the default
+  shutdown timeout — this preserves ephemeral state that actors persist on
+  passivation (MEDIUM-2).
   """
 
   require Logger
@@ -19,10 +21,12 @@ defmodule Quanta.Actor.SynEventHandler do
 
     Logger.info(
       "Registry conflict resolved for #{inspect(name)}: " <>
-        "keeping #{inspect(winner)}, killing #{inspect(loser)}"
+        "keeping #{inspect(winner)}, stopping #{inspect(loser)}"
     )
 
-    Process.exit(loser, :kill)
+    # :shutdown (not :kill) so the loser's terminate/2 runs and persists
+    # ephemeral state within the default shutdown timeout.
+    Process.exit(loser, :shutdown)
     winner
   end
 
