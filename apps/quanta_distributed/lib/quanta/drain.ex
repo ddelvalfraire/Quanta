@@ -26,7 +26,7 @@ defmodule Quanta.Drain do
   @default_complete_in_flight_delay_ms 2_000
   @default_ordered_passivation_delay_ms 8_000
 
-  defstruct [:caller, :started_at, :step, :remaining_pids, :opts]
+  defstruct [:callers, :started_at, :step, :remaining_pids, :opts]
 
   @spec draining?() :: boolean()
   def draining? do
@@ -44,7 +44,27 @@ defmodule Quanta.Drain do
   """
   @spec start_drain(keyword()) :: {:ok, pid()} | {:error, term()}
   def start_drain(opts \\ []) do
-    GenServer.start(__MODULE__, {self(), opts}, name: __MODULE__)
+    case GenServer.start(__MODULE__, {self(), opts}, name: __MODULE__) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, {:already_started, pid}} = err ->
+        # A drain is already in progress. Register this caller so that
+        # `await/1` from this process also receives `{:drain_complete, _}`
+        # when the drain finishes. The error tuple is preserved for callers
+        # that want to distinguish first-vs-subsequent starts.
+        _ =
+          try do
+            GenServer.call(pid, {:attach_caller, self()}, 5_000)
+          catch
+            :exit, _ -> :ok
+          end
+
+        err
+
+      other ->
+        other
+    end
   end
 
   @spec await(timeout()) :: :ok | :timeout
@@ -59,7 +79,7 @@ defmodule Quanta.Drain do
   @impl true
   def init({caller, opts}) do
     state = %__MODULE__{
-      caller: caller,
+      callers: [caller],
       started_at: System.monotonic_time(:millisecond),
       step: :stop_ingress,
       remaining_pids: [],
@@ -186,7 +206,9 @@ defmodule Quanta.Drain do
 
     :persistent_term.erase(@persistent_term_key)
 
-    send(state.caller, {:drain_complete, __MODULE__})
+    for caller <- state.callers do
+      send(caller, {:drain_complete, __MODULE__})
+    end
 
     {:stop, :normal, state}
   end
@@ -194,6 +216,18 @@ defmodule Quanta.Drain do
   @impl true
   def handle_info(_msg, state) do
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_call({:attach_caller, pid}, _from, state) when is_pid(pid) do
+    callers =
+      if pid in state.callers do
+        state.callers
+      else
+        [pid | state.callers]
+      end
+
+    {:reply, :ok, %{state | callers: callers}}
   end
 
   @impl true
