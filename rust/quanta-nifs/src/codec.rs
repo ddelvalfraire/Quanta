@@ -22,7 +22,7 @@ mod atoms {
     }
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 pub fn encode_envelope_header<'a>(env: Env<'a>, header: Term<'a>) -> Term<'a> {
     safety::nif_safe!(env, {
         match do_encode(env, header) {
@@ -37,7 +37,7 @@ pub fn encode_envelope_header<'a>(env: Env<'a>, header: Term<'a>) -> Term<'a> {
     })
 }
 
-#[rustler::nif]
+#[rustler::nif(schedule = "DirtyCpu")]
 pub fn decode_envelope_header<'a>(env: Env<'a>, data: Binary<'a>) -> Term<'a> {
     safety::nif_safe!(env, {
         match do_decode(env, data.as_slice()) {
