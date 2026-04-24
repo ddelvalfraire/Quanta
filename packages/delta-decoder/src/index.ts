@@ -59,9 +59,9 @@ function assertDecodedState(x: unknown): asserts x is DecodedState {
 }
 
 function assertAuthResponse(x: unknown): asserts x is AuthResponseData {
-  if (x === null || typeof x !== "object") {
+  if (x === null || typeof x !== "object" || Array.isArray(x)) {
     throw new Error(
-      `decode_auth_response returned non-object value: ${typeof x}`,
+      `decode_auth_response returned non-object value: ${x === null ? "null" : Array.isArray(x) ? "array" : typeof x}`,
     );
   }
   const obj = x as Record<string, unknown>;
