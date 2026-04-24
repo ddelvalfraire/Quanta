@@ -30,7 +30,6 @@
 ///   all-zero bytes is also exercised via `std::panic::catch_unwind` to
 ///   confirm whether the crate panics or returns Err on malformed input.
 ///   This is a read-only probe that does NOT modify production code.
-
 use quanta_core_rs::EnvelopeHeader;
 
 const CODEC_RS: &str = include_str!("../src/codec.rs");
@@ -54,7 +53,8 @@ fn count_bitcode_decode_unwrap_occurrences() -> usize {
 fn c2_no_bitcode_decode_unwrap_in_codec_source() {
     let count = count_bitcode_decode_unwrap_occurrences();
     assert_eq!(
-        count, 0,
+        count,
+        0,
         "Found {} occurrence(s) of `bitcode::decode(...).unwrap()` in codec.rs. \
          All bitcode::decode calls must use error-propagation (`?` or `.map_err`) \
          so malformed bytes return an Err instead of panicking. \

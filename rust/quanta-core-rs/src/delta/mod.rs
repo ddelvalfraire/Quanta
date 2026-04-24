@@ -48,10 +48,7 @@ impl fmt::Display for DeltaError {
                 )
             }
             Self::SchemaVersionMismatch { expected, got } => {
-                write!(
-                    f,
-                    "schema version mismatch: expected {expected}, got {got}"
-                )
+                write!(f, "schema version mismatch: expected {expected}, got {got}")
             }
             Self::StateTooShort { expected, got } => {
                 write!(f, "state too short: expected {expected} bytes, got {got}")
@@ -61,19 +58,13 @@ impl fmt::Display for DeltaError {
                 write!(f, "NaN or infinity value for field: {field}")
             }
             Self::FieldCountMismatch { expected, got } => {
-                write!(
-                    f,
-                    "field count mismatch: expected {expected}, got {got}"
-                )
+                write!(f, "field count mismatch: expected {expected}, got {got}")
             }
             Self::UnsupportedDeltaFormat => {
                 write!(f, "unsupported delta format (full snapshot or compressed)")
             }
             Self::PayloadBitsMismatch { expected, got } => {
-                write!(
-                    f,
-                    "payload bits mismatch: expected {expected}, got {got}"
-                )
+                write!(f, "payload bits mismatch: expected {expected}, got {got}")
             }
         }
     }

@@ -22,7 +22,11 @@ impl FieldBitmask {
 
     /// Set the bit for field `index`.
     pub fn set(&mut self, index: u16) {
-        debug_assert!(index < self.n_fields, "index {index} >= n_fields {}", self.n_fields);
+        debug_assert!(
+            index < self.n_fields,
+            "index {index} >= n_fields {}",
+            self.n_fields
+        );
         let byte = (index / 8) as usize;
         let bit = index % 8;
         self.bytes[byte] |= 1 << bit;
@@ -30,7 +34,11 @@ impl FieldBitmask {
 
     /// Test whether field `index` is set.
     pub fn test(&self, index: u16) -> bool {
-        debug_assert!(index < self.n_fields, "index {index} >= n_fields {}", self.n_fields);
+        debug_assert!(
+            index < self.n_fields,
+            "index {index} >= n_fields {}",
+            self.n_fields
+        );
         let byte = (index / 8) as usize;
         let bit = index % 8;
         self.bytes[byte] & (1 << bit) != 0

@@ -30,7 +30,6 @@
 ///   TODAY  — h5_nats_mod_contains_max_in_flight_zero_guard FAILS;
 ///             runtime probes pass (they document behaviour, not gate it)
 ///   FIXED  — all tests pass: guard present in source, Semaphore::new(0) rejected
-
 use std::sync::Arc;
 use tokio::sync::{Semaphore, TryAcquireError};
 

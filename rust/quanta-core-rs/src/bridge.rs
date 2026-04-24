@@ -3,7 +3,7 @@
 //! Wire format: `[version:1][header_len:4 BE][header_bitcode][payload]`
 //! Reuses the same framing pattern as the actor wire codec.
 
-use crate::{CodecError, decode_frame, encode_frame};
+use crate::{decode_frame, encode_frame, CodecError};
 
 pub const BRIDGE_VERSION: u8 = 0x01;
 

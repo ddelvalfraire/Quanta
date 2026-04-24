@@ -139,9 +139,7 @@ fn delta_encode_state<'a>(
 
         let elixir_values: Vec<Term> = match values_list.decode() {
             Ok(v) => v,
-            Err(_) => {
-                return (atoms::error(), "expected a list of values".to_string()).encode(env)
-            }
+            Err(_) => return (atoms::error(), "expected a list of values".to_string()).encode(env),
         };
 
         let active_fields: Vec<_> = schema

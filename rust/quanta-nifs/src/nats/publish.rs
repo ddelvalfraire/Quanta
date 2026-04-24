@@ -76,8 +76,9 @@ fn js_publish_async<'a>(
                         );
                         match map {
                             Ok(map) => (atoms::ok(), ref_term, map).encode(env),
-                            Err(_) => NifError::Other("encoding_error".into())
-                                .encode_term(env, ref_term),
+                            Err(_) => {
+                                NifError::Other("encoding_error".into()).encode_term(env, ref_term)
+                            }
                         }
                     }
                     Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),

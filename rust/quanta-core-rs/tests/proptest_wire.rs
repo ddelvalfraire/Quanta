@@ -61,12 +61,14 @@ fn arb_bridge_header() -> impl Strategy<Value = BridgeHeader> {
         any::<u64>(),
         proptest::option::of(any::<[u8; 16]>()),
     )
-        .prop_map(|(msg_type, sequence, timestamp, correlation_id)| BridgeHeader {
-            msg_type,
-            sequence,
-            timestamp,
-            correlation_id,
-        })
+        .prop_map(
+            |(msg_type, sequence, timestamp, correlation_id)| BridgeHeader {
+                msg_type,
+                sequence,
+                timestamp,
+                correlation_id,
+            },
+        )
 }
 
 proptest! {

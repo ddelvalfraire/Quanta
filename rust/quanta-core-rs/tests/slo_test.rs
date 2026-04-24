@@ -1,8 +1,6 @@
 use std::time::Instant;
 
-use quanta_core_rs::delta::encoder::{
-    apply_delta_into, compute_delta_into, write_state,
-};
+use quanta_core_rs::delta::encoder::{apply_delta_into, compute_delta_into, write_state};
 use quanta_core_rs::schema::{compile_schema, CompileOptions, CompiledSchema};
 
 // Same WIT generator as the bench file — duplicated because Cargo can't share

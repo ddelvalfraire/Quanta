@@ -262,10 +262,7 @@ pub fn native_bit_width(field: &FieldMeta) -> u8 {
 
 /// Converts native-packed state bytes (IEEE 754 floats at full width) into
 /// quantized-packed state bytes (floats mapped to integer grids at schema bit widths).
-pub fn quantize_state(
-    schema: &CompiledSchema,
-    raw_state: &[u8],
-) -> Result<Vec<u8>, DeltaError> {
+pub fn quantize_state(schema: &CompiledSchema, raw_state: &[u8]) -> Result<Vec<u8>, DeltaError> {
     let mut output = Vec::new();
     quantize_state_into(schema, raw_state, &mut output)?;
     Ok(output)
@@ -532,8 +529,7 @@ mod tests {
         let mut schema = two_field_schema();
         schema.version = 5;
         let state = write_state(&schema, &[1, 100]);
-        let delta =
-            compute_delta(&schema, &state, &write_state(&schema, &[0, 100]), None).unwrap();
+        let delta = compute_delta(&schema, &state, &write_state(&schema, &[0, 100]), None).unwrap();
 
         schema.version = 6;
         let err = apply_delta(&schema, &state, &delta).unwrap_err();
@@ -739,6 +735,9 @@ mod tests {
 
         // Both quantize to the same integer → delta is empty
         let delta = compute_delta(&schema, &q_a, &q_b, None).unwrap();
-        assert!(delta.is_empty(), "Expected empty delta for values within precision");
+        assert!(
+            delta.is_empty(),
+            "Expected empty delta for values within precision"
+        );
     }
 }

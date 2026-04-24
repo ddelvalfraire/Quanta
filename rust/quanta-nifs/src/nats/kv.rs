@@ -38,10 +38,7 @@ fn kv_get_async<'a>(
 
                 match store.entry(&key).await {
                     Ok(Some(entry)) => {
-                        if matches!(
-                            entry.operation,
-                            async_nats::jetstream::kv::Operation::Put
-                        ) {
+                        if matches!(entry.operation, async_nats::jetstream::kv::Operation::Put) {
                             Ok((entry.value.to_vec(), entry.revision))
                         } else {
                             Err(NifError::NotFound)
@@ -72,8 +69,9 @@ fn kv_get_async<'a>(
                         );
                         match map {
                             Ok(map) => (atoms::ok(), ref_term, map).encode(env),
-                            Err(_) => NifError::Other("encoding_error".into())
-                                .encode_term(env, ref_term),
+                            Err(_) => {
+                                NifError::Other("encoding_error".into()).encode_term(env, ref_term)
+                            }
                         }
                     }
                     Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),
@@ -136,8 +134,9 @@ fn kv_put_async<'a>(
                         );
                         match map {
                             Ok(map) => (atoms::ok(), ref_term, map).encode(env),
-                            Err(_) => NifError::Other("encoding_error".into())
-                                .encode_term(env, ref_term),
+                            Err(_) => {
+                                NifError::Other("encoding_error".into()).encode_term(env, ref_term)
+                            }
                         }
                     }
                     Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),

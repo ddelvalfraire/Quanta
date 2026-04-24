@@ -33,7 +33,10 @@ pub fn compute_layout(
             .unwrap_or_else(|| "default".to_string());
         let priority = field.annotations.priority.unwrap_or(Priority::Medium);
 
-        if let Some(entry) = group_map.iter_mut().find(|(name, _, _)| *name == group_name) {
+        if let Some(entry) = group_map
+            .iter_mut()
+            .find(|(name, _, _)| *name == group_name)
+        {
             // Use highest priority (lowest enum value) in the group
             if priority < entry.1 {
                 entry.1 = priority;
@@ -73,10 +76,7 @@ pub fn compute_layout(
                 bit_offset: current_bit_offset,
                 group_index: group_idx as u8,
                 quantization,
-                prediction: pf
-                    .annotations
-                    .prediction
-                    .unwrap_or(PredictionMode::None),
+                prediction: pf.annotations.prediction.unwrap_or(PredictionMode::None),
                 smoothing: pf.annotations.smoothing.clone(),
                 interpolation: pf
                     .annotations

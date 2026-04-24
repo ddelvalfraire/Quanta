@@ -22,9 +22,7 @@ fn schema_compile<'a>(
     prediction_enabled: bool,
 ) -> Term<'a> {
     crate::safety::nif_safe!(env, {
-        let opts = schema::CompileOptions {
-            prediction_enabled,
-        };
+        let opts = schema::CompileOptions { prediction_enabled };
         match schema::compile_schema(&wit_source, &type_name, &opts) {
             Ok((compiled, warnings)) => {
                 let resource = ResourceArc::new(CompiledSchemaResource(compiled));
@@ -39,10 +37,7 @@ fn schema_compile<'a>(
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn schema_export<'a>(
-    env: Env<'a>,
-    schema_arc: ResourceArc<CompiledSchemaResource>,
-) -> Term<'a> {
+fn schema_export<'a>(env: Env<'a>, schema_arc: ResourceArc<CompiledSchemaResource>) -> Term<'a> {
     crate::safety::nif_safe!(env, {
         let bytes = schema::export::export_schema(&schema_arc.0);
         let mut bin = NewBinary::new(env, bytes.len());

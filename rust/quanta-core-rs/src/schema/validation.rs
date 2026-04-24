@@ -246,10 +246,7 @@ mod tests {
         let mut warnings = Vec::new();
         validate_field(&field, &CompileOptions::default(), &mut warnings).unwrap();
         assert_eq!(warnings.len(), 1);
-        assert!(matches!(
-            &warnings[0],
-            SchemaWarning::RedundantClamp { .. }
-        ));
+        assert!(matches!(&warnings[0], SchemaWarning::RedundantClamp { .. }));
     }
 
     #[test]
@@ -356,7 +353,14 @@ mod tests {
         ann.prediction = Some(PredictionMode::InputReplay);
         let field = make_field("x", FieldType::F32, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &CompileOptions { prediction_enabled: true }, &mut warnings).unwrap();
+        validate_field(
+            &field,
+            &CompileOptions {
+                prediction_enabled: true,
+            },
+            &mut warnings,
+        )
+        .unwrap();
     }
 
     #[test]
@@ -374,7 +378,14 @@ mod tests {
         ann.prediction = Some(PredictionMode::Cosmetic);
         let field = make_field("flag", FieldType::Bool, ann);
         let mut warnings = Vec::new();
-        validate_field(&field, &CompileOptions { prediction_enabled: true }, &mut warnings).unwrap();
+        validate_field(
+            &field,
+            &CompileOptions {
+                prediction_enabled: true,
+            },
+            &mut warnings,
+        )
+        .unwrap();
         assert!(warnings
             .iter()
             .any(|w| matches!(w, SchemaWarning::PredictOnNonNumeric { .. })));

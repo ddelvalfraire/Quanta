@@ -1,3 +1,4 @@
+use wasmtime::component::Component;
 /// C3 regression test: Component::deserialize with a mismatched Engine config.
 ///
 /// Finding: `unsafe { Component::deserialize(&engine_arc.0, serialized) }` at
@@ -19,7 +20,6 @@
 ///   Component::new(&engine_a, wasm)  →  component.serialize()  →
 ///   unsafe { Component::deserialize(&engine_b, serialized) }
 use wasmtime::{Config, Engine};
-use wasmtime::component::Component;
 
 /// Minimal valid WebAssembly component binary.
 ///

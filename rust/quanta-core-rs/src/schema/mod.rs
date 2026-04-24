@@ -340,7 +340,8 @@ record entity-state {
 }
 "#;
 
-        let (schema, warnings) = compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
+        let (schema, warnings) =
+            compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
         assert!(warnings.is_empty());
         assert_eq!(schema.fields.len(), 10);
 

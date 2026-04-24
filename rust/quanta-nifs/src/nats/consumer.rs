@@ -7,9 +7,8 @@ use super::{atoms, encode_task_panic, NatsConnectionResource, NifError};
 use crate::safety::nif_safe;
 
 pub struct ConsumerResource {
-    pub consumer: async_nats::jetstream::consumer::Consumer<
-        async_nats::jetstream::consumer::pull::Config,
-    >,
+    pub consumer:
+        async_nats::jetstream::consumer::Consumer<async_nats::jetstream::consumer::pull::Config>,
     pub stream_name: String,
     pub consumer_name: String,
 }

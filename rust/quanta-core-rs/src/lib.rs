@@ -134,10 +134,16 @@ impl fmt::Display for CodecError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::TruncatedInput { expected, got } => {
-                write!(f, "truncated input: expected at least {expected} bytes, got {got}")
+                write!(
+                    f,
+                    "truncated input: expected at least {expected} bytes, got {got}"
+                )
             }
             Self::UnsupportedVersion { expected, got } => {
-                write!(f, "unsupported wire version: expected {expected:#04x}, got {got:#04x}")
+                write!(
+                    f,
+                    "unsupported wire version: expected {expected:#04x}, got {got:#04x}"
+                )
             }
             Self::InvalidHeader(msg) => write!(f, "invalid header: {msg}"),
         }

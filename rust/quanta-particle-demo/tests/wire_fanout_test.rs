@@ -110,10 +110,7 @@ async fn two_clients_exchange_deltas() {
     // manager throttles fanout to the Low tier (every 8 ticks) for most of
     // the run. 5 is a safe lower bound that still proves the fanout path
     // is delivering deltas end-to-end.
-    assert!(
-        count >= 5,
-        "observer should receive ≥5 deltas, got {count}"
-    );
+    assert!(count >= 5, "observer should receive ≥5 deltas, got {count}");
 
     conn_a.close(0u32.into(), b"done");
     conn_b.close(0u32.into(), b"done");

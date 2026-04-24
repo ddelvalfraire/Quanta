@@ -132,9 +132,13 @@ fn decode_sender_term<'a>(env: Env<'a>, term: Term<'a>) -> Result<SenderWire, St
 
 fn encode_sender_term<'a>(env: Env<'a>, sender: &SenderWire) -> Term<'a> {
     match sender {
-        SenderWire::Actor { namespace, typ, id } => {
-            (atoms::actor(), namespace.as_str(), typ.as_str(), id.as_str()).encode(env)
-        }
+        SenderWire::Actor { namespace, typ, id } => (
+            atoms::actor(),
+            namespace.as_str(),
+            typ.as_str(),
+            id.as_str(),
+        )
+            .encode(env),
         SenderWire::Client(id) => (atoms::client(), id.as_str()).encode(env),
         SenderWire::System => atoms::system().encode(env),
         SenderWire::None => rustler::types::atom::nil().encode(env),
@@ -175,7 +179,8 @@ fn map_get<'a>(env: Env<'a>, map: Term<'a>, key: Atom) -> Result<Term<'a>, Strin
 
 fn get_string<'a>(env: Env<'a>, map: Term<'a>, key: Atom) -> Result<String, String> {
     let term = map_get(env, map, key)?;
-    term.decode::<String>().map_err(|_| "expected string".into())
+    term.decode::<String>()
+        .map_err(|_| "expected string".into())
 }
 
 fn get_u64<'a>(env: Env<'a>, map: Term<'a>, key: Atom) -> Result<u64, String> {
@@ -188,7 +193,11 @@ fn get_u16<'a>(env: Env<'a>, map: Term<'a>, key: Atom) -> Result<u16, String> {
     term.decode::<u16>().map_err(|_| "expected integer".into())
 }
 
-fn get_optional_string<'a>(env: Env<'a>, map: Term<'a>, key: Atom) -> Result<Option<String>, String> {
+fn get_optional_string<'a>(
+    env: Env<'a>,
+    map: Term<'a>,
+    key: Atom,
+) -> Result<Option<String>, String> {
     let term = map_get(env, map, key)?;
     if term == rustler::types::atom::nil().encode(env) {
         Ok(None)

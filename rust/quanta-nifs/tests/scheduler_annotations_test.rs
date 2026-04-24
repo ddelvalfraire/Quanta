@@ -165,8 +165,9 @@ fn h1_nats_connect_uses_dirty_io() {
 /// can block the scheduler thread under abusive inputs.
 #[test]
 fn h2_encode_envelope_header_uses_dirty_cpu() {
-    let attr = find_nif_attr_for_fn(CODEC_RS, "encode_envelope_header")
-        .expect("could not locate #[rustler::nif(...)] attribute above `fn encode_envelope_header`");
+    let attr = find_nif_attr_for_fn(CODEC_RS, "encode_envelope_header").expect(
+        "could not locate #[rustler::nif(...)] attribute above `fn encode_envelope_header`",
+    );
 
     assert!(
         attr.contains("schedule = \"DirtyCpu\""),
@@ -182,8 +183,9 @@ fn h2_encode_envelope_header_uses_dirty_cpu() {
 /// input binary is O(n) work and must go on DirtyCpu.
 #[test]
 fn h2_decode_envelope_header_uses_dirty_cpu() {
-    let attr = find_nif_attr_for_fn(CODEC_RS, "decode_envelope_header")
-        .expect("could not locate #[rustler::nif(...)] attribute above `fn decode_envelope_header`");
+    let attr = find_nif_attr_for_fn(CODEC_RS, "decode_envelope_header").expect(
+        "could not locate #[rustler::nif(...)] attribute above `fn decode_envelope_header`",
+    );
 
     assert!(
         attr.contains("schedule = \"DirtyCpu\""),
