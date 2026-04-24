@@ -75,7 +75,7 @@ pub(crate) fn encode_task_panic<'a>(
     (atoms::error(), ref_term, msg.encode(env)).encode(env)
 }
 
-#[rustler::nif(schedule = "DirtyCpu")]
+#[rustler::nif(schedule = "DirtyIo")]
 fn nats_connect<'a>(env: Env<'a>, urls: Vec<String>, opts: Term<'a>) -> Term<'a> {
     nif_safe!(env, {
         let max_in_flight = term_map_get::<usize>(&opts, "max_in_flight")
