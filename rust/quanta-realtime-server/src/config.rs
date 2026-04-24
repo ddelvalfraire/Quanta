@@ -22,6 +22,13 @@ pub struct EndpointConfig {
     pub session_retain_duration: Duration,
     /// Maximum number of retained sessions before LRU eviction (default 1000).
     pub max_retained_sessions: usize,
+    /// Allowlist of acceptable `Origin` header values for WebTransport (HTTP/3)
+    /// session requests. When non-empty, incoming sessions whose `Origin`
+    /// header does not appear in this list are rejected with HTTP 403
+    /// before the WebTransport handshake completes (review finding C-2).
+    /// An empty vec means "allow any origin" (dev default) and emits a
+    /// one-time warning at bind time.
+    pub allowed_origins: Vec<String>,
 }
 
 impl Default for EndpointConfig {
@@ -39,6 +46,7 @@ impl Default for EndpointConfig {
             ws_port: None,
             session_retain_duration: Duration::from_secs(30),
             max_retained_sessions: 1000,
+            allowed_origins: Vec::new(),
         }
     }
 }
