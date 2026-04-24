@@ -165,19 +165,22 @@ impl IslandManager {
     /// factory configured, no QUIC close watcher still pending), the weak ref
     /// here goes dead and the manager reclaims the entity slot.
     fn sweep_dead_sessions(&mut self) {
-        // A session is considered "dropped without DeregisterClient" when its
-        // current strong-count has fallen below the count observed at
-        // registration time.  Registration captures the count AFTER handing
-        // the session to the fanout task (if any) and BEFORE returning to the
-        // caller — so a drop below that baseline means an external holder
-        // (typically the per-session reader task) has released its Arc.
+        // Fire only when (a) registration saw at least one external holder
+        // (baseline > 0) and (b) every strong ref has since been dropped.
+        // Requiring `upgrade().is_none()` (equivalent to strong_count == 0)
+        // rather than `< baseline` avoids false-firing under real
+        // fanout + pacer + reader whose combined count can legitimately
+        // fluctuate. The baseline > 0 guard skips registrations that
+        // intentionally ended with no external holder (e.g. test fixtures
+        // with no fanout), which would otherwise be reclaimed on the next
+        // tick despite being a valid registry state.
         //
         // Collect first to avoid a double borrow on `client_registry` while
         // `handle_deregister_client` mutates it.
         let dead: Vec<(IslandId, u64)> = self
             .client_registry
             .iter()
-            .filter(|(_, (_, _, _, weak, initial))| weak.strong_count() < *initial)
+            .filter(|(_, (_, _, _, weak, initial))| *initial > 0 && weak.upgrade().is_none())
             .map(|(sid, (island, _, _, _, _))| (island.clone(), *sid))
             .collect();
         for (island_id, session_id) in dead {
