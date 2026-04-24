@@ -83,9 +83,19 @@ export class Connection extends TypedEmitter<ConnectionEvents> {
     this.decoder = decoder;
   }
 
+  /**
+   * Open a connection to the server and complete the auth + sync handshake.
+   *
+   * Semantics:
+   * - If the initial connection fails and {@link stopReconnecting} has not
+   *   been called, a bounded reconnect loop is started.
+   * - This method does NOT reset the "stopped" state. Once
+   *   {@link stopReconnecting} is called on a Connection instance, subsequent
+   *   failures will never re-arm the retry loop. To reconnect after stopping,
+   *   construct a new Connection.
+   */
   async connect(): Promise<InitialStateMessage> {
     this.intentionalClose = false;
-    this.reconnectStopped = false;
     this.state = "connecting";
 
     let transport: Transport;
@@ -169,8 +179,11 @@ export class Connection extends TypedEmitter<ConnectionEvents> {
 
   /**
    * Halt the reconnect loop without tearing down an existing session. Any
-   * pending retry timer is cleared and no further attempts will be scheduled
-   * until {@link connect} is called again.
+   * pending retry timer is cleared and no further attempts will be scheduled.
+   *
+   * This is permanent for the lifetime of this Connection instance: neither
+   * a subsequent call to {@link connect} nor an in-flight retry can re-arm
+   * the loop. To reconnect after stopping, construct a new Connection.
    */
   stopReconnecting(): void {
     this.reconnectStopped = true;
