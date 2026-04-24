@@ -620,8 +620,14 @@ impl IslandManager {
 
         self.registry.insert(handle);
 
-        let h = self.registry.get_mut(&island_id).unwrap();
-        h.state = h.state.transition(IslandState::Running).unwrap();
+        let h = self
+            .registry
+            .get_mut(&island_id)
+            .expect("island was just inserted into registry on the preceding line");
+        h.state = h
+            .state
+            .transition(IslandState::Running)
+            .expect("island just inserted is in Initializing state; Initializing -> Running is a valid transition");
 
         info!(%island_id, ?thread_model, "island activated");
     }
@@ -738,10 +744,6 @@ impl IslandManager {
         velocity: [f32; 3],
         buffs: Vec<crate::zone_transfer::BuffState>,
     ) -> Result<Vec<u8>, ZoneTransferError> {
-        if self.zone_transfer.is_none() {
-            return Err(ZoneTransferError::NotConfigured);
-        }
-
         let handle = self
             .registry
             .get(source_island)
@@ -750,7 +752,10 @@ impl IslandManager {
             return Err(ZoneTransferError::SourceNotRunning(source_island.clone()));
         }
 
-        let zt = self.zone_transfer.as_mut().unwrap();
+        let zt = self
+            .zone_transfer
+            .as_mut()
+            .ok_or(ZoneTransferError::NotConfigured)?;
         let token = zt.prepare_transfer(
             player_id,
             source_island.clone(),
@@ -782,10 +787,6 @@ impl IslandManager {
         token_bytes: &[u8],
         target_island: &IslandId,
     ) -> Result<crate::zone_transfer::TransferredPlayer, ZoneTransferError> {
-        if self.zone_transfer.is_none() {
-            return Err(ZoneTransferError::NotConfigured);
-        }
-
         let handle = self
             .registry
             .get(target_island)
@@ -796,7 +797,10 @@ impl IslandManager {
 
         let token =
             ZoneTransferToken::from_bytes(token_bytes).map_err(ZoneTransferError::Transfer)?;
-        let zt = self.zone_transfer.as_mut().unwrap();
+        let zt = self
+            .zone_transfer
+            .as_mut()
+            .ok_or(ZoneTransferError::NotConfigured)?;
         let transferred = zt.accept_transfer(&token, target_island)?;
 
         if let Some(h) = self.registry.get_mut(target_island) {
