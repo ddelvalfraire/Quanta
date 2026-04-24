@@ -180,6 +180,28 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
         metrics_addr,
     } = args;
 
+    // Startup guard (C-3): refuse to boot when the hardcoded dev token is
+    // paired with a non-loopback bind address. This is the configuration
+    // `main.rs` falls into when both `QUANTA_DEV_TOKEN` and `QUANTA_QUIC_ADDR`
+    // are unset — allowing it would expose a public endpoint that grants
+    // sessions to anyone who knows the leaked literal.
+    if validator.is_insecure_dev_token() && !quic_addr.ip().is_loopback() {
+        return Err(EndpointError::Auth(format!(
+            "refusing to start: hardcoded dev token must not be used on a \
+             non-loopback bind address ({quic_addr}). Set QUANTA_DEV_TOKEN \
+             to a unique value, or bind to 127.0.0.1/::1 for local dev."
+        )));
+    }
+    if let Some(ws) = ws_addr {
+        if validator.is_insecure_dev_token() && !ws.ip().is_loopback() {
+            return Err(EndpointError::Auth(format!(
+                "refusing to start: hardcoded dev token must not be used on a \
+                 non-loopback WS bind address ({ws}). Set QUANTA_DEV_TOKEN to \
+                 a unique value, or bind to 127.0.0.1/::1 for local dev."
+            )));
+        }
+    }
+
     let executor_factory: ExecutorFactory = executor_factory
         .unwrap_or_else(|| Arc::new(|| -> Box<dyn WasmExecutor> { Box::new(NoopWasmExecutor) }));
 

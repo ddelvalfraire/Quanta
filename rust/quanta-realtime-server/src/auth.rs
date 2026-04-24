@@ -4,6 +4,11 @@ use crate::error::EndpointError;
 
 const MAX_AUTH_REQUEST_BYTES: usize = 65_536;
 
+/// The well-known dev token that ships in `main.rs`'s fallback path. Exposed
+/// here so the library-level startup guard can recognise it and refuse to
+/// run on non-loopback bind addresses (review finding C-3).
+pub const DEFAULT_DEV_TOKEN: &str = "qk_rw_dev_devdevdevdevdevdevdevdevdevdevde";
+
 #[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
 pub struct AuthRequest {
     pub token: String,
@@ -24,6 +29,15 @@ pub struct AuthResponse {
 
 pub trait AuthValidator: Send + Sync {
     fn validate(&self, req: &AuthRequest) -> Result<AuthResponse, EndpointError>;
+
+    /// Returns `true` when this validator is configured with the shipped
+    /// hardcoded dev token. `run_server` uses this to refuse to start on
+    /// non-loopback addresses, preventing an operator from accidentally
+    /// exposing the demo credential to the public internet (C-3).
+    /// Default: `false` — production validators keep their own secrets.
+    fn is_insecure_dev_token(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -122,6 +136,18 @@ impl AuthValidator for DevTokenValidator {
             accepted: true,
             reason: String::new(),
         })
+    }
+
+    fn is_insecure_dev_token(&self) -> bool {
+        // Constant-time compare avoids leaking information about partial
+        // matches via timing.
+        let a = self.expected_token.as_bytes();
+        let b = DEFAULT_DEV_TOKEN.as_bytes();
+        a.len() == b.len()
+            && a.iter()
+                .zip(b.iter())
+                .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+                == 0
     }
 }
 
