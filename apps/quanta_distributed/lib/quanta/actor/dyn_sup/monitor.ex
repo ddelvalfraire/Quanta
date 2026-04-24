@@ -9,9 +9,21 @@ defmodule Quanta.Actor.DynSup.Monitor do
   Prior to this module, `DynSup.track_actor/1` used a bare `spawn/1` to hold
   the monitor. If that spawned process was killed exogenously (e.g. via
   `Process.exit(pid, :kill)`), the `:DOWN` message was lost and the atomic
-  counter leaked. Centralizing ownership here means the only way to lose
-  a decrement is for this GenServer to die — in which case the supervisor
-  restart resets the known-monitored set alongside the atomic.
+  counter leaked.
+
+  ## Restart invariant (CRITICAL-1)
+
+  If this GenServer crashes, its parent `:one_for_one` supervisor restarts
+  only the Monitor — `DynSup.start_link/1` is NOT re-entered, so the atomic
+  counter retains whatever value it had before the crash. To avoid the
+  counter permanently inflating (all previously-tracked pids are now
+  un-monitored and their future exits would no-op here), `init/1` rebuilds
+  monitor refs by scanning the live `Quanta.Actor.DynSup` partition tree
+  and resets the atomic counter to the observed live-actor count.
+
+  Race note: between the scan and the `Process.monitor/1` calls, an actor
+  may exit. That is safe — `Process.monitor/1` on a dead pid fires `:DOWN`
+  immediately, which `handle_info/2` delivers and decrements correctly.
   """
 
   use GenServer
@@ -44,9 +56,38 @@ defmodule Quanta.Actor.DynSup.Monitor do
 
   @impl true
   def init(:ok) do
-    # Map of monitor ref -> pid. We keep the pid side for debugging; the ref
-    # is what the :DOWN message carries.
-    {:ok, %{refs: %{}}}
+    # Rebuild monitor state by scanning the live DynSup partition tree.
+    # Covers both the cold-start case (empty tree → empty refs, counter 0)
+    # and the post-crash restart case (non-empty tree → re-monitor all live
+    # pids and reset the atomic to the observed count).
+    pids = safe_list_actor_pids()
+
+    refs =
+      Enum.reduce(pids, %{}, fn pid, acc ->
+        ref = Process.monitor(pid)
+        Map.put(acc, ref, pid)
+      end)
+
+    :atomics.put(:persistent_term.get(@counter_key), 1, map_size(refs))
+
+    {:ok, %{refs: refs}}
+  end
+
+  # Enumerates live actor pids across every partition of the DynSup
+  # PartitionSupervisor. On cold boot the PartitionSupervisor is declared
+  # before Monitor in `DynSup.start_link/1`'s child list, so it is already
+  # registered by the time this runs; on crash-restart it is still up
+  # (its sibling was the one that died). We guard defensively just in case
+  # so a transient lookup failure never prevents Monitor from starting.
+  defp safe_list_actor_pids do
+    case Process.whereis(Quanta.Actor.DynSup) do
+      nil -> []
+      _pid -> Quanta.Actor.DynSup.list_actor_pids()
+    end
+  rescue
+    _ -> []
+  catch
+    :exit, _ -> []
   end
 
   @impl true
