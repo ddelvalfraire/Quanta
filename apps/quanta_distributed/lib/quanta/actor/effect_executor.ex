@@ -13,6 +13,12 @@ defmodule Quanta.Actor.EffectExecutor do
 
   require Logger
 
+  # Allowlist of MFAs that may be dispatched via a {:side_effect, {m, f, a}}
+  # effect. Anything else is logged and dropped. Intentionally empty: no
+  # actor-initiated MFA is trusted by default. Extend per-module with explicit
+  # audit; do not wildcard. (CRITICAL-3)
+  @allowed_side_effects MapSet.new([])
+
   @type context :: %{
           actor_id: Quanta.ActorId.t(),
           envelope: Envelope.t(),
@@ -183,12 +189,22 @@ defmodule Quanta.Actor.EffectExecutor do
     %{acc | stop_self: true}
   end
 
-  # Phase 1: MFA is unconstrained because actor modules are trusted Elixir code.
-  # T06 (WASM) must restrict this to an allowlist before untrusted code runs.
-  defp execute_one({:side_effect, {m, f, a}}, acc, _context) do
-    Task.Supervisor.start_child(Quanta.SideEffect.TaskSupervisor, fn ->
-      apply(m, f, a)
-    end)
+  # Only MFAs explicitly listed in @allowed_side_effects may be dispatched.
+  # Unknown MFAs are logged and dropped so a compromised or buggy actor can
+  # never exec arbitrary code via apply/3. (CRITICAL-3)
+  defp execute_one({:side_effect, {m, f, a}}, acc, _context)
+       when is_atom(m) and is_atom(f) and is_list(a) do
+    key = {m, f, length(a)}
+
+    if MapSet.member?(@allowed_side_effects, key) do
+      Task.Supervisor.start_child(Quanta.SideEffect.TaskSupervisor, fn ->
+        apply(m, f, a)
+      end)
+    else
+      Logger.warning(
+        "Rejected :side_effect MFA not on allowlist: #{inspect(key)} — dropping"
+      )
+    end
 
     acc
   end
