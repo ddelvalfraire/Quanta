@@ -19,6 +19,9 @@ defmodule Quanta.Supervisor do
     topologies = Application.get_env(:libcluster, :topologies, [])
 
     children = [
+      # MUST be first — configures :syn scopes + event handler before any
+      # child that depends on syn (e.g. Quanta.Actor.DynSup, CommandRouter).
+      Quanta.SynConfig,
       {Cluster.Supervisor, [topologies, [name: Quanta.ClusterSupervisor]]},
       Quanta.Cluster.Topology,
       %{id: Quanta.Actor.CrdtPubSub, start: {:pg, :start_link, [Quanta.Actor.CrdtPubSub]}},

@@ -3,13 +3,10 @@ defmodule QuantaDistributed.Application do
 
   @impl true
   def start(_type, _args) do
-    # Must be initialised before syn, so the event handler's callbacks into
-    # the local mirror are guaranteed to find the table already there.
-    Quanta.Actor.Registry.init_local_index()
-
-    :syn.add_node_to_scopes(Quanta.Actor.Registry.scopes())
-    :syn.set_event_handler(Quanta.Actor.SynEventHandler)
-
+    # Syn scope + event handler setup lives in `Quanta.SynConfig`, supervised
+    # as the first child of `Quanta.Supervisor`. That prevents the Application
+    # callback from crashing the node boot when syn raises on scope conflict
+    # or is not yet started (MEDIUM-5).
     children = [
       Quanta.Wasm.JsExecutor,
       Quanta.Supervisor
