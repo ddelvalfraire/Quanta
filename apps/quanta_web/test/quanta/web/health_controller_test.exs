@@ -28,8 +28,11 @@ defmodule Quanta.Web.HealthControllerTest do
     end
 
     test "returns 503 when a critical process is down", %{conn: conn} do
-      # Suspend supervisor to prevent auto-restart
-      :sys.suspend(Quanta.Supervisor)
+      # After the supervision-tree split (HIGH-3), ManifestRegistry lives
+      # under Quanta.Infrastructure.Supervisor, not the top-level
+      # Quanta.Supervisor. Suspending the direct parent is what actually
+      # prevents auto-restart.
+      :sys.suspend(Quanta.Infrastructure.Supervisor)
 
       pid = Process.whereis(Quanta.Actor.ManifestRegistry)
       ref = Process.monitor(pid)
@@ -41,8 +44,7 @@ defmodule Quanta.Web.HealthControllerTest do
       assert body["status"] == "degraded"
       assert body["checks"]["manifest_registry"] == false
     after
-      :sys.resume(Quanta.Supervisor)
-      # Wait for supervisor to restart ManifestRegistry
+      :sys.resume(Quanta.Infrastructure.Supervisor)
       Process.sleep(100)
     end
   end

@@ -180,17 +180,36 @@ defmodule Quanta.Actor.Server do
 
   @impl true
   def handle_continue({:load_state, manifest}, state) when not is_nil(manifest) do
-    activate(state, manifest)
+    emit_crash_on_raise(state.actor_id, fn -> activate(state, manifest) end)
   end
 
   def handle_continue({:load_state, _nil}, state) do
     case ManifestRegistry.get(state.actor_id.namespace, state.actor_id.type) do
       {:ok, manifest} ->
-        activate(state, manifest)
+        emit_crash_on_raise(state.actor_id, fn -> activate(state, manifest) end)
 
       :error ->
         Logger.error("No manifest for #{inspect(state.actor_id)}")
         {:stop, :no_manifest, state}
+    end
+  end
+
+  # Emit [:quanta, :actor, :crash] telemetry on activation failure, then let
+  # the exception propagate so the supervisor sees the real reason.
+  # Replaces the bespoke retry counter that previously also emitted telemetry
+  # (MEDIUM-1) — kept the observability, dropped the retry logic.
+  defp emit_crash_on_raise(actor_id, fun) do
+    try do
+      fun.()
+    rescue
+      e ->
+        :telemetry.execute(
+          [:quanta, :actor, :crash],
+          %{},
+          %{actor_id: actor_id, reason: e, stacktrace: __STACKTRACE__}
+        )
+
+        reraise e, __STACKTRACE__
     end
   end
 
