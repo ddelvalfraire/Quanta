@@ -47,21 +47,6 @@ const BASE_DELAY_MS = 1_000;
 const JITTER_MS = 1_000;
 export const DEFAULT_MAX_RECONNECT_ATTEMPTS = 20;
 
-// Expose `maxReconnectAttempts` as an inherited, non-enumerable property on
-// every plain object so that runtime presence probes (e.g. `"x" in obj`) on a
-// `ConnectionOptions` literal reflect the type-level field. The slot defaults
-// to `undefined`, so code paths that read it still fall back to the Connection
-// constructor default. Guarded to avoid clobbering user-set values and kept
-// non-enumerable so iteration, serialization, and `Object.keys` are unaffected.
-if (!Object.prototype.hasOwnProperty.call(Object.prototype, "maxReconnectAttempts")) {
-  Object.defineProperty(Object.prototype, "maxReconnectAttempts", {
-    value: undefined,
-    writable: true,
-    configurable: true,
-    enumerable: false,
-  });
-}
-
 function reconnectDelay(attempt: number): number {
   const exponential = Math.min(
     BASE_DELAY_MS * Math.pow(2, attempt),
