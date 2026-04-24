@@ -1,7 +1,9 @@
-use std::hint::black_box;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use quanta_core_rs::delta::encoder::{compute_delta_into, apply_delta_into, read_state, write_state};
+use quanta_core_rs::delta::encoder::{
+    apply_delta_into, compute_delta_into, read_state, write_state,
+};
 use quanta_core_rs::schema::{compile_schema, CompileOptions, CompiledSchema};
+use std::hint::black_box;
 
 // Generates a WIT record with `n` fields using a repeating pattern:
 //   0: quantized f32, 1: clamped u16, 2: bool, 3: raw u32, 4: quantized f32, ...
@@ -134,11 +136,15 @@ fn bench_decode_state(c: &mut Criterion) {
         let values: Vec<u64> = (0..n as u64).map(|i| i % 2).collect();
         let state = write_state(&schema, &values);
 
-        group.bench_with_input(BenchmarkId::from_parameter(n), &(&schema, &state), |b, _| {
-            b.iter(|| {
-                black_box(read_state(black_box(&schema), black_box(&state)).unwrap());
-            });
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(n),
+            &(&schema, &state),
+            |b, _| {
+                b.iter(|| {
+                    black_box(read_state(black_box(&schema), black_box(&state)).unwrap());
+                });
+            },
+        );
     }
     group.finish();
 }

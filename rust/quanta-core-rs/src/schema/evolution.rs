@@ -98,7 +98,9 @@ const MAX_STRING_LEN: usize = 4096;
 /// Import a `CompiledSchema` from the QSCH binary format produced by `export_schema`.
 pub fn import_schema(bytes: &[u8]) -> Result<CompiledSchema, SchemaError> {
     if bytes.len() < 4 {
-        return Err(SchemaError::ParseError("data too short for magic bytes".into()));
+        return Err(SchemaError::ParseError(
+            "data too short for magic bytes".into(),
+        ));
     }
     if &bytes[0..4] != MAGIC {
         return Err(SchemaError::ParseError(format!(
@@ -173,7 +175,11 @@ fn parse_field(r: &mut Reader) -> Result<FieldMeta, SchemaError> {
                 "invalid quantization range for field {name}: min={min}, max={max}, precision={precision}"
             ))
         })?;
-        let mask = if bits >= 64 { u64::MAX } else { (1u64 << bits) - 1 };
+        let mask = if bits >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << bits) - 1
+        };
         Some(QuantizationParams {
             min,
             max,
@@ -212,9 +218,8 @@ fn parse_field(r: &mut Reader) -> Result<FieldMeta, SchemaError> {
         _ => 0,
     };
 
-    let field_type = FieldType::from_byte(type_byte, variant_count).ok_or_else(|| {
-        SchemaError::ParseError(format!("invalid field type byte: {type_byte}"))
-    })?;
+    let field_type = FieldType::from_byte(type_byte, variant_count)
+        .ok_or_else(|| SchemaError::ParseError(format!("invalid field type byte: {type_byte}")))?;
 
     let prediction = PredictionMode::from_byte(prediction_byte).ok_or_else(|| {
         SchemaError::ParseError(format!("invalid prediction mode byte: {prediction_byte}"))

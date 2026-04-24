@@ -169,10 +169,9 @@ fn parse_directive(directive: &str, field_name: &str, ann: &mut FieldAnnotations
             }
             "snap_lerp" => {
                 if raw_params.len() == 2 {
-                    if let (Ok(d), Ok(md)) = (
-                        raw_params[0].parse::<u32>(),
-                        raw_params[1].parse::<f64>(),
-                    ) {
+                    if let (Ok(d), Ok(md)) =
+                        (raw_params[0].parse::<u32>(), raw_params[1].parse::<f64>())
+                    {
                         ann.smoothing = Some(SmoothingParams {
                             mode: SmoothingMode::SnapLerp,
                             duration_ms: d,
@@ -307,7 +306,10 @@ mod tests {
         let ann = parse_annotations(&["/// @quanta:smooth(lerp)"], "f");
         assert!(ann.smoothing.is_none());
         assert_eq!(ann.warnings.len(), 1);
-        assert!(matches!(&ann.warnings[0], SchemaWarning::MalformedAnnotation { .. }));
+        assert!(matches!(
+            &ann.warnings[0],
+            SchemaWarning::MalformedAnnotation { .. }
+        ));
     }
 
     #[test]
@@ -315,7 +317,10 @@ mod tests {
         let ann = parse_annotations(&["/// @quanta:smooth(snap, 100)"], "f");
         assert!(ann.smoothing.is_none());
         assert_eq!(ann.warnings.len(), 1);
-        assert!(matches!(&ann.warnings[0], SchemaWarning::MalformedAnnotation { .. }));
+        assert!(matches!(
+            &ann.warnings[0],
+            SchemaWarning::MalformedAnnotation { .. }
+        ));
     }
 
     #[test]
@@ -323,7 +328,10 @@ mod tests {
         let ann = parse_annotations(&["/// @quanta:smooth(snap_lerp, 100)"], "f");
         assert!(ann.smoothing.is_none());
         assert_eq!(ann.warnings.len(), 1);
-        assert!(matches!(&ann.warnings[0], SchemaWarning::MalformedAnnotation { .. }));
+        assert!(matches!(
+            &ann.warnings[0],
+            SchemaWarning::MalformedAnnotation { .. }
+        ));
     }
 
     #[test]
@@ -393,7 +401,10 @@ mod tests {
         let ann = parse_annotations(&["/// @quanta:clamp(-10000 10000)"], "f");
         assert_eq!(ann.clamp, None);
         assert_eq!(ann.warnings.len(), 1);
-        assert!(matches!(&ann.warnings[0], SchemaWarning::MalformedAnnotation { .. }));
+        assert!(matches!(
+            &ann.warnings[0],
+            SchemaWarning::MalformedAnnotation { .. }
+        ));
     }
 
     #[test]

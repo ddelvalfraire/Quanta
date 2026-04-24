@@ -1,22 +1,21 @@
-mod macros;
-mod safety;
-mod resources;
 mod bridge_codec;
 mod codec;
-mod wasm_runtime;
-mod nats_jetstream;
-mod loro_engine;
-mod ephemeral_store;
-mod nats;
-mod schema_compiler;
 mod delta_encoder;
+mod ephemeral_store;
 mod js_executor;
+mod loro_engine;
+mod nats;
+mod nats_jetstream;
+mod resources;
+mod safety;
+mod schema_compiler;
+mod wasm_runtime;
 
 use rustler::Env;
 
 #[rustler::nif]
 fn ping<'a>(env: rustler::Env<'a>) -> rustler::Term<'a> {
-    macros::nif_safe!(env, {
+    safety::nif_safe!(env, {
         use rustler::Encoder;
         true.encode(env)
     })

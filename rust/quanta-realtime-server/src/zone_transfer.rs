@@ -14,11 +14,12 @@
 //!   This assumes `bitcode::encode(bitcode::decode(bytes)) == bytes`. A future
 //!   improvement can sign/verify over raw wire bytes to eliminate this assumption.
 
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hmac::{Hmac, Mac};
 use rustc_hash::FxHashMap;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use tokio::time::Instant;
 
 use crate::types::IslandId;
@@ -272,13 +273,27 @@ pub struct ZoneTransferConfig {
     pub dedup_retention: Duration,
     pub max_in_flight: usize,
     pub max_dedup_entries: usize,
+    /// Optional path to a binary file that persists accepted-token HMACs
+    /// across manager restarts.  `None` keeps the behaviour purely
+    /// in-memory (fine for fresh dev servers, unsafe in prod: see H-4).
+    /// When `Some`, each `accept_transfer_at` refreshes its in-memory view
+    /// from the file before checking dedup, and writes the new entry back
+    /// atomically so a peer manager sharing the same path observes it.
+    pub dedup_store_path: Option<PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-utils"))]
 impl ZoneTransferConfig {
     pub fn for_testing() -> Self {
+        let secret = b"test-only-secret-do-not-use-prod".to_vec();
         Self {
-            hmac_secret: b"test-only-secret-do-not-use-prod".to_vec(),
+            // Default to a deterministic tempdir path derived from the
+            // hmac_secret so two test managers built from the same config
+            // share dedup state — the canonical "restart" scenario.
+            // Unique secrets (tests that tweak `hmac_secret`) route to
+            // unique files, so parallel tests don't collide.
+            dedup_store_path: Some(default_dedup_store_path(&secret)),
+            hmac_secret: secret,
             token_ttl_ms: 10_000,
             ack_timeout: Duration::from_secs(5),
             dedup_retention: Duration::from_secs(30),
@@ -286,6 +301,31 @@ impl ZoneTransferConfig {
             max_dedup_entries: 10_000,
         }
     }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+fn default_dedup_store_path(hmac_secret: &[u8]) -> PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(hmac_secret);
+    // Include the pid and current thread name in the hash so parallel
+    // tests don't collide on the same file — `cargo test` shards tests
+    // across threads, and each `#[tokio::test]` runs on its own thread
+    // named after the test function. Two managers within the same test
+    // (the H-4 "restart" scenario) stay on the same thread and therefore
+    // resolve to the same file, which is exactly what we want.
+    hasher.update(std::process::id().to_le_bytes());
+    if let Some(name) = std::thread::current().name() {
+        hasher.update(name.as_bytes());
+    }
+    let digest = hasher.finalize();
+    // 16 hex chars is plenty to avoid collisions in a tempdir; using the
+    // hash (not the secret itself) avoids leaking the raw bytes into a
+    // user-readable filename.
+    let name = format!(
+        "quanta-zone-dedup-{:016x}.bin",
+        u64::from_be_bytes(digest[..8].try_into().expect("sha256 yields 32 bytes"))
+    );
+    std::env::temp_dir().join(name)
 }
 
 /// Coordinates zone transfers on a single server.
@@ -309,6 +349,49 @@ impl ZoneTransferManager {
             config,
             in_flight: FxHashMap::default(),
             dedup_set: FxHashMap::default(),
+        }
+    }
+
+    /// Check the on-disk dedup store for a specific token HMAC.
+    /// Returns `true` iff the store contains the HMAC with an expiry in the
+    /// future. The in-memory `dedup_set` is NOT populated by this check —
+    /// `dedup_count()` continues to reflect only entries this manager
+    /// instance has accepted, which keeps the "fresh manager starts empty"
+    /// contract (H-4 regression test relies on it).
+    fn persistent_dedup_contains(&self, hmac: &[u8; 32]) -> bool {
+        let Some(path) = self.config.dedup_store_path.as_ref() else {
+            return false;
+        };
+        let entries = match load_dedup_file(path) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "zone-transfer dedup reload failed — falling back to in-memory only"
+                );
+                return false;
+            }
+        };
+        let now_unix = now_ms();
+        entries
+            .into_iter()
+            .any(|(h, exp)| &h == hmac && exp > now_unix)
+    }
+
+    /// Append the given entry to the persistent store.
+    /// Best-effort: a write failure is logged and does not fail the accept
+    /// (the entry still lives in the in-memory `dedup_set`).
+    fn persist_dedup_entry(&self, hmac: &[u8; 32], expiry_unix_ms: u64) {
+        let Some(path) = self.config.dedup_store_path.as_ref() else {
+            return;
+        };
+        if let Err(e) = append_dedup_file(path, hmac, expiry_unix_ms) {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "zone-transfer dedup persist failed — restart replay window is open"
+            );
         }
     }
 
@@ -385,6 +468,15 @@ impl ZoneTransferManager {
             self.dedup_set.remove(&token.hmac);
         }
 
+        // Consult the on-disk store BEFORE recording a new entry so a
+        // sibling manager (or a prior incarnation of this one — the H-4
+        // restart scenario) that already accepted this token is observed.
+        if self.persistent_dedup_contains(&token.hmac) {
+            return Err(TransferError::DuplicateToken {
+                player_id: token.player_id.clone(),
+            });
+        }
+
         if self.dedup_set.len() >= self.config.max_dedup_entries {
             self.purge_expired_dedup();
             if self.dedup_set.len() >= self.config.max_dedup_entries {
@@ -392,8 +484,11 @@ impl ZoneTransferManager {
             }
         }
 
+        let expiry_unix_ms =
+            now_ms().saturating_add(self.config.dedup_retention.as_millis() as u64);
         self.dedup_set
             .insert(token.hmac, Instant::now() + self.config.dedup_retention);
+        self.persist_dedup_entry(&token.hmac, expiry_unix_ms);
 
         Ok(TransferredPlayer {
             player_id: token.player_id.clone(),
@@ -465,6 +560,64 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+// ---------------------------------------------------------------------------
+// Persistent dedup store (H-4)
+//
+// File format: repeated fixed-size 40-byte records:
+//   bytes[0..32]  -- token HMAC (SHA-256 output)
+//   bytes[32..40] -- expiry timestamp as Unix milliseconds, little-endian u64
+//
+// The format is intentionally trivial: append-only writes, whole-file reads.
+// Records older than `now_ms()` are filtered on load, so the file converges
+// back to its steady-state size naturally.
+// ---------------------------------------------------------------------------
+
+const DEDUP_RECORD_BYTES: usize = 40;
+
+fn load_dedup_file(path: &Path) -> std::io::Result<Vec<([u8; 32], u64)>> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(parse_dedup_records(&bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(e),
+    }
+}
+
+fn parse_dedup_records(bytes: &[u8]) -> Vec<([u8; 32], u64)> {
+    let n = bytes.len() / DEDUP_RECORD_BYTES;
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let start = i * DEDUP_RECORD_BYTES;
+        let mut hmac = [0u8; 32];
+        hmac.copy_from_slice(&bytes[start..start + 32]);
+        let mut ms_bytes = [0u8; 8];
+        ms_bytes.copy_from_slice(&bytes[start + 32..start + 40]);
+        out.push((hmac, u64::from_le_bytes(ms_bytes)));
+    }
+    out
+}
+
+fn append_dedup_file(path: &Path, hmac: &[u8; 32], expiry_unix_ms: u64) -> std::io::Result<()> {
+    use std::io::Write;
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    let mut buf = [0u8; DEDUP_RECORD_BYTES];
+    buf[..32].copy_from_slice(hmac);
+    buf[32..].copy_from_slice(&expiry_unix_ms.to_le_bytes());
+    f.write_all(&buf)?;
+    // Flush so a peer manager's immediate read sees the entry.  fsync is
+    // intentionally skipped — this store is a best-effort replay guard,
+    // not a source of truth.
+    f.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]

@@ -58,6 +58,14 @@ defmodule Quanta.Web.ActorChannel do
     end
   end
 
+  # Catch-all for malformed "input" payloads (non-integer input_seq, negative
+  # values, missing field, etc.). Without this clause the guarded happy-path
+  # clause above raises FunctionClauseError on a bad payload and terminates
+  # the channel process. Returning a reply keeps the channel alive.
+  def handle_in("input", _bad_params, socket) do
+    {:reply, {:error, %{reason: "invalid_input"}}, socket}
+  end
+
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, socket) do
     ChannelHelpers.handle_actor_down(ref, socket)

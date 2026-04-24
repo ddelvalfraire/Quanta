@@ -5,6 +5,13 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
   "files": [
     "dist",
     "wasm"
@@ -12,9 +19,12 @@
   "scripts": {
     "build:wasm": "cd ../../rust/quanta-wasm-decoder && PATH=\"$HOME/.cargo/bin:$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$PATH\" wasm-pack build --target web --release --out-dir ../../packages/delta-decoder/wasm",
     "build:ts": "tsc",
-    "build": "npm run build:wasm && npm run build:ts"
+    "build": "npm run build:wasm && npm run build:ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "devDependencies": {
-    "typescript": "^5.4"
+    "typescript": "^5.4",
+    "vitest": "^3.2.4"
   }
 }

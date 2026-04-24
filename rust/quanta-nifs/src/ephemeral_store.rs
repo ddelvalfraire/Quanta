@@ -35,7 +35,7 @@ fn lock_store(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn ephemeral_store_new(env: Env, timeout_ms: i64) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = EphemeralStore::new(timeout_ms);
         let resource = ResourceArc::new(EphemeralStoreResource(Mutex::new(store)));
         (atoms::ok(), resource).encode(env)
@@ -49,7 +49,7 @@ fn ephemeral_store_set<'a>(
     key: String,
     value: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = match lock_store(&store_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -65,7 +65,7 @@ fn ephemeral_store_get(
     store_arc: ResourceArc<EphemeralStoreResource>,
     key: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = match lock_store(&store_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -90,7 +90,7 @@ fn ephemeral_store_delete(
     store_arc: ResourceArc<EphemeralStoreResource>,
     key: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = match lock_store(&store_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -102,7 +102,7 @@ fn ephemeral_store_delete(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn ephemeral_store_get_all(env: Env, store_arc: ResourceArc<EphemeralStoreResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = match lock_store(&store_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -133,7 +133,7 @@ fn ephemeral_store_get_all(env: Env, store_arc: ResourceArc<EphemeralStoreResour
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn ephemeral_store_keys(env: Env, store_arc: ResourceArc<EphemeralStoreResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = match lock_store(&store_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -151,7 +151,7 @@ fn ephemeral_store_encode(
     store_arc: ResourceArc<EphemeralStoreResource>,
     key: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = match lock_store(&store_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -164,7 +164,7 @@ fn ephemeral_store_encode(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn ephemeral_store_encode_all(env: Env, store_arc: ResourceArc<EphemeralStoreResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = match lock_store(&store_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -181,7 +181,7 @@ fn ephemeral_store_apply_encoded<'a>(
     store_arc: ResourceArc<EphemeralStoreResource>,
     bytes: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let store = match lock_store(&store_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),

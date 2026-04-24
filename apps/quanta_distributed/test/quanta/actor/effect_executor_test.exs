@@ -250,16 +250,76 @@ defmodule Quanta.Actor.EffectExecutorTest do
   end
 
   describe ":side_effect" do
-    test "runs via TaskSupervisor" do
-      test_pid = self()
+    test "rejects arbitrary MFA not on the allowlist (CRITICAL-3)" do
       ctx = make_context()
 
       EffectExecutor.execute(
-        [{:side_effect, {Kernel, :send, [test_pid, :side_effect_ran]}}],
+        [{:side_effect, {Kernel, :send, [self(), :pwned]}}],
         ctx
       )
 
-      assert_receive :side_effect_ran, 500
+      Process.sleep(200)
+
+      refute_receive :pwned,
+                     0,
+                     "Arbitrary MFA side-effect was executed — allowlist bypass"
+    end
+
+    # CRITICAL-2: the guarded clause
+    # `execute_one({:side_effect, {m, f, a}}, ...) when is_atom(m) and is_atom(f) and is_list(a)`
+    # has no catch-all. Any malformed shape raises FunctionClauseError inside
+    # Enum.reduce_while, bubbling up and crashing the actor GenServer.
+    test "drops malformed MFA without crashing actor (CRITICAL-2)" do
+      ctx = make_context()
+
+      result =
+        try do
+          EffectExecutor.execute(
+            [{:side_effect, :bad_shape}, {:reply, "ok"}],
+            ctx
+          )
+        rescue
+          e -> {:raised, e}
+        end
+
+      assert is_map(result), "EffectExecutor raised on malformed :side_effect: #{inspect(result)}"
+      assert result.reply == {:ok, "ok"}
+    end
+
+    test "drops MFA with non-list args without crashing (CRITICAL-2)" do
+      ctx = make_context()
+
+      result =
+        try do
+          EffectExecutor.execute(
+            [{:side_effect, {Kernel, :send, self()}}, {:reply, "ok"}],
+            ctx
+          )
+        rescue
+          e -> {:raised, e}
+        end
+
+      assert is_map(result), "EffectExecutor raised on non-list MFA args: #{inspect(result)}"
+      assert result.reply == {:ok, "ok"}
+    end
+
+    test "drops MFA with non-atom module without crashing (CRITICAL-2)" do
+      ctx = make_context()
+
+      result =
+        try do
+          EffectExecutor.execute(
+            [{:side_effect, {"ModAsString", :f, []}}, {:reply, "ok"}],
+            ctx
+          )
+        rescue
+          e -> {:raised, e}
+        end
+
+      assert is_map(result),
+             "EffectExecutor raised on non-atom module MFA: #{inspect(result)}"
+
+      assert result.reply == {:ok, "ok"}
     end
   end
 

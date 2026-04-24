@@ -93,7 +93,10 @@ pub enum ManagerCommand {
         island_id: IslandId,
         reply: oneshot::Sender<
             Result<
-                (EntitySlot, crossbeam_channel::Sender<crate::tick::ClientInput>),
+                (
+                    EntitySlot,
+                    crossbeam_channel::Sender<crate::tick::ClientInput>,
+                ),
                 RegisterClientError,
             >,
         >,
@@ -103,10 +106,7 @@ pub enum ManagerCommand {
     SubscribeSnapshots {
         island_id: IslandId,
         reply: oneshot::Sender<
-            Result<
-                crossbeam_channel::Receiver<crate::tick::types::TickSnapshot>,
-                LifecycleError,
-            >,
+            Result<crossbeam_channel::Receiver<crate::tick::types::TickSnapshot>, LifecycleError>,
         >,
     },
 }

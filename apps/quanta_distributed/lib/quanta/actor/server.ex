@@ -18,7 +18,6 @@ defmodule Quanta.Actor.Server do
   @mailbox_warn_threshold 1_000
   @mailbox_shed_threshold 5_000
   @mailbox_critical_threshold 10_000
-  @init_attempts_table :quanta_actor_init_attempts
   @ephemeral_ttl_ms 30_000
   @message_event [:quanta, :actor, :message, :stop]
   @activate_event [:quanta, :actor, :activate, :stop]
@@ -181,17 +180,36 @@ defmodule Quanta.Actor.Server do
 
   @impl true
   def handle_continue({:load_state, manifest}, state) when not is_nil(manifest) do
-    activate(state, manifest)
+    emit_crash_on_raise(state.actor_id, fn -> activate(state, manifest) end)
   end
 
   def handle_continue({:load_state, _nil}, state) do
     case ManifestRegistry.get(state.actor_id.namespace, state.actor_id.type) do
       {:ok, manifest} ->
-        activate(state, manifest)
+        emit_crash_on_raise(state.actor_id, fn -> activate(state, manifest) end)
 
       :error ->
         Logger.error("No manifest for #{inspect(state.actor_id)}")
         {:stop, :no_manifest, state}
+    end
+  end
+
+  # Emit [:quanta, :actor, :crash] telemetry on activation failure, then let
+  # the exception propagate so the supervisor sees the real reason.
+  # Replaces the bespoke retry counter that previously also emitted telemetry
+  # (MEDIUM-1) — kept the observability, dropped the retry logic.
+  defp emit_crash_on_raise(actor_id, fun) do
+    try do
+      fun.()
+    rescue
+      e ->
+        :telemetry.execute(
+          [:quanta, :actor, :crash],
+          %{},
+          %{actor_id: actor_id, reason: e, stacktrace: __STACKTRACE__}
+        )
+
+        reraise e, __STACKTRACE__
     end
   end
 
@@ -283,8 +301,15 @@ defmodule Quanta.Actor.Server do
     state = reset_idle_timer(state)
 
     if state.ephemeral_store do
-      {:ok, bytes} = EphemeralStore.encode_all(state.ephemeral_store)
-      send(channel_pid, {:ephemeral_state, bytes})
+      case EphemeralStore.encode_all(state.ephemeral_store) do
+        {:ok, bytes} ->
+          send(channel_pid, {:ephemeral_state, bytes})
+
+        {:error, reason} ->
+          Logger.warning(
+            "EphemeralStore.encode_all failed for #{inspect(state.actor_id)}: #{inspect(reason)}"
+          )
+      end
     end
 
     {:reply, :ok, state}
@@ -352,8 +377,16 @@ defmodule Quanta.Actor.Server do
   def handle_cast({:ephemeral_update, key, value_bytes, sender_pid}, state) do
     if state.ephemeral_store do
       :ok = EphemeralStore.set(state.ephemeral_store, key, value_bytes)
-      {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
-      broadcast_ephemeral(state, encoded, sender_pid)
+
+      case EphemeralStore.encode(state.ephemeral_store, key) do
+        {:ok, encoded} ->
+          broadcast_ephemeral(state, encoded, sender_pid)
+
+        {:error, reason} ->
+          Logger.warning(
+            "EphemeralStore.encode failed for #{inspect(state.actor_id)} key=#{inspect(key)}: #{inspect(reason)}"
+          )
+      end
     end
 
     {:noreply, state}
@@ -364,8 +397,15 @@ defmodule Quanta.Actor.Server do
     if state.ephemeral_store do
       case EphemeralStore.apply_encoded(state.ephemeral_store, bytes) do
         :ok ->
-          {:ok, canonical} = EphemeralStore.encode_all(state.ephemeral_store)
-          broadcast_ephemeral(state, canonical, sender_pid)
+          case EphemeralStore.encode_all(state.ephemeral_store) do
+            {:ok, canonical} ->
+              broadcast_ephemeral(state, canonical, sender_pid)
+
+            {:error, reason} ->
+              Logger.warning(
+                "EphemeralStore.encode_all failed for #{inspect(state.actor_id)}: #{inspect(reason)}"
+              )
+          end
 
         {:error, _} ->
           :ok
@@ -486,26 +526,19 @@ defmodule Quanta.Actor.Server do
     state = %{state | manifest: manifest, rate_limit: manifest.rate_limits.messages_per_second}
     t0 = System.monotonic_time()
 
-    try do
-      state =
-        case manifest.state.kind do
-          {:crdt, _type} -> activate_crdt(state)
-          _ -> activate_standard(state)
-        end
+    state =
+      case manifest.state.kind do
+        {:crdt, _type} -> activate_crdt(state)
+        _ -> activate_standard(state)
+      end
 
-      state = schedule_idle_timer(state)
-      clear_init_failures(state.actor_id)
+    state = schedule_idle_timer(state)
 
-      :telemetry.execute(@activate_event,
-        %{duration: System.monotonic_time() - t0},
-        %{actor_id: state.actor_id})
+    :telemetry.execute(@activate_event,
+      %{duration: System.monotonic_time() - t0},
+      %{actor_id: state.actor_id})
 
-      {:noreply, state}
-    rescue
-      e ->
-        stacktrace = __STACKTRACE__
-        handle_init_failure(state, e, stacktrace)
-    end
+    {:noreply, state}
   end
 
   defp activate_standard(state) do
@@ -802,8 +835,16 @@ defmodule Quanta.Actor.Server do
     if state.ephemeral_store do
       key = "user:#{user_id}"
       :ok = EphemeralStore.delete(state.ephemeral_store, key)
-      {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
-      broadcast_ephemeral(state, encoded, nil)
+
+      case EphemeralStore.encode(state.ephemeral_store, key) do
+        {:ok, encoded} ->
+          broadcast_ephemeral(state, encoded, nil)
+
+        {:error, reason} ->
+          Logger.warning(
+            "EphemeralStore.encode failed during cleanup for #{inspect(state.actor_id)} key=#{inspect(key)}: #{inspect(reason)}"
+          )
+      end
     end
   end
 
@@ -847,49 +888,6 @@ defmodule Quanta.Actor.Server do
     end
   end
 
-
-  defp handle_init_failure(state, error, stacktrace) do
-    actor_id = state.actor_id
-
-    :telemetry.execute(
-      [:quanta, :actor, :crash],
-      %{},
-      %{actor_id: actor_id, reason: error, stacktrace: stacktrace}
-    )
-
-    if :ets.whereis(@init_attempts_table) != :undefined do
-      count =
-        try do
-          :ets.update_counter(@init_attempts_table, actor_id, {2, 1})
-        rescue
-          ArgumentError ->
-            :ets.insert(@init_attempts_table, {actor_id, 1})
-            1
-        end
-
-      if count >= 3 do
-        Logger.error("Actor #{inspect(actor_id)} failed init 3 times, giving up")
-        :ets.delete(@init_attempts_table, actor_id)
-        {:stop, :normal, state}
-      else
-        Logger.error("Actor #{inspect(actor_id)} init failure ##{count}: #{Exception.message(error)}")
-        {:stop, {error, stacktrace}, state}
-      end
-    else
-      Logger.error("Actor #{inspect(actor_id)} init failure: #{Exception.message(error)}")
-      {:stop, {error, stacktrace}, state}
-    end
-  end
-
-  defp clear_init_failures(actor_id) do
-    if :ets.whereis(@init_attempts_table) != :undefined do
-      :ets.delete(@init_attempts_table, actor_id)
-    end
-
-    :ok
-  rescue
-    ArgumentError -> :ok
-  end
 
   defp check_mailbox(state) do
     {:message_queue_len, len} = Process.info(self(), :message_queue_len)

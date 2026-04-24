@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
@@ -18,7 +18,8 @@ use crate::ws_session::{decode_frame, WsSession};
 pub struct WsListener {
     listener: TcpListener,
     config: EndpointConfig,
-    rate_limiter: governor::DefaultDirectRateLimiter,
+    // Per-IP rate limiter — see `QuicEndpoint::rate_limiter` for rationale (M-5).
+    rate_limiter: governor::DefaultKeyedRateLimiter<IpAddr>,
 }
 
 impl WsListener {
@@ -28,7 +29,7 @@ impl WsListener {
         let quota = Quota::per_second(
             NonZeroU32::new(config.rate_limit_per_sec).expect("rate_limit_per_sec must be > 0"),
         );
-        let rate_limiter = RateLimiter::direct(quota);
+        let rate_limiter = RateLimiter::keyed(quota);
 
         info!(addr = %listener.local_addr().unwrap_or(addr), "WebSocket listener bound");
         Ok(Self {
@@ -59,7 +60,7 @@ impl WsListener {
                         }
                     };
 
-                    if self.rate_limiter.check().is_err() {
+                    if self.rate_limiter.check_key(&addr.ip()).is_err() {
                         warn!(remote = %addr, "ws rate limited, dropping connection");
                         drop(stream);
                         continue;
@@ -150,8 +151,16 @@ async fn handle_ws_connection(
     let (outbound_tx, mut outbound_rx) = mpsc::channel::<Vec<u8>>(256);
     let (inbound_tx, inbound_rx) = mpsc::channel::<Vec<u8>>(256);
 
+    let session = Arc::new(WsSession::new(outbound_tx, inbound_rx));
+    let write_close_trigger = session.close_trigger();
+    let read_close_trigger = session.close_trigger();
+
     // Background write task: outbound channel -> WS sink.
     // An empty Vec is the shutdown sentinel from WsSession::close().
+    // When this task exits (sink error, sentinel, or channel closed) the
+    // WS peer has gone away — fire the close-notify so `Session::on_closed`
+    // waiters (the server.rs disconnect watcher) unblock and dispatch
+    // `DeregisterClient`.  H-1 fix.
     tokio::spawn(async move {
         while let Some(data) = outbound_rx.recv().await {
             if data.is_empty() {
@@ -162,9 +171,12 @@ async fn handle_ws_connection(
             }
         }
         let _ = sink.send(Message::Close(None)).await;
+        write_close_trigger.fire();
     });
 
     // Background read task: WS stream -> inbound channel.
+    // Same H-1 close-notify fire on exit — whichever transport task ends
+    // first wins and the trigger de-dupes via its internal `closed` flag.
     tokio::spawn(async move {
         while let Some(Ok(msg)) = stream.next().await {
             match msg {
@@ -182,10 +194,11 @@ async fn handle_ws_connection(
                 _ => continue,
             }
         }
+        read_close_trigger.fire();
     });
 
     Ok(ConnectedClient {
-        session: Arc::new(WsSession::new(outbound_tx, inbound_rx)),
+        session,
         session_id: response.session_id,
         quic_connection: None,
         reconnect_tier: ReconnectTier::Cold,

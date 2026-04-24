@@ -1,51 +1,37 @@
 defmodule Quanta.SupervisorTest do
   use ExUnit.Case, async: false
 
+  # After HIGH-3, the supervision tree is split into two sub-supervisors
+  # under Quanta.Supervisor. Children retain their registered names, so
+  # lookup via `Process.whereis/1` (and therefore every caller that uses
+  # the name) still works across the restructure.
+
+  defp alive_by_name?(name) do
+    pid = Process.whereis(name)
+    is_pid(pid) and Process.alive?(pid)
+  end
+
   describe "supervision tree" do
-    test "all expected children are alive" do
-      children =
-        Quanta.Supervisor
-        |> Supervisor.which_children()
-        |> Map.new(fn {id, pid, _type, _modules} -> {id, pid} end)
+    test "all expected children are alive (across sub-supervisors)" do
+      # Infrastructure layer
+      assert alive_by_name?(Quanta.Infrastructure.Supervisor)
+      assert alive_by_name?(Quanta.SynConfig)
+      assert alive_by_name?(Quanta.ClusterSupervisor)
+      assert alive_by_name?(Quanta.Cluster.Topology)
+      assert alive_by_name?(Quanta.HLC.Server)
+      assert alive_by_name?(Quanta.Wasm.EngineManager)
+      assert alive_by_name?(Quanta.Wasm.ModuleRegistry)
+      assert alive_by_name?(Quanta.Actor.ManifestRegistry)
+      assert alive_by_name?(Quanta.SideEffect.TaskSupervisor)
+      assert alive_by_name?(Quanta.Nats.CoreSupervisor)
+      assert alive_by_name?(Quanta.Nats.JetStream.Connection)
+      assert alive_by_name?(Quanta.Broadway.PipelineSupervisor)
 
-      assert is_pid(children[Cluster.Supervisor])
-      assert Process.alive?(children[Cluster.Supervisor])
-
-      assert is_pid(children[Quanta.Cluster.Topology])
-      assert Process.alive?(children[Quanta.Cluster.Topology])
-
-      assert is_pid(children[Quanta.HLC.Server])
-      assert Process.alive?(children[Quanta.HLC.Server])
-
-      assert is_pid(children[Quanta.Wasm.EngineManager])
-      assert Process.alive?(children[Quanta.Wasm.EngineManager])
-
-      assert is_pid(children[Quanta.Wasm.ModuleRegistry])
-      assert Process.alive?(children[Quanta.Wasm.ModuleRegistry])
-
-      assert is_pid(children[Quanta.Actor.ManifestRegistry])
-      assert Process.alive?(children[Quanta.Actor.ManifestRegistry])
-
-      assert is_pid(children[Quanta.Actor.DynSup])
-      assert Process.alive?(children[Quanta.Actor.DynSup])
-
-      assert is_pid(children[Quanta.SideEffect.TaskSupervisor])
-      assert Process.alive?(children[Quanta.SideEffect.TaskSupervisor])
-
-      assert is_pid(children[Quanta.Nats.CoreSupervisor])
-      assert Process.alive?(children[Quanta.Nats.CoreSupervisor])
-
-      assert is_pid(children[Quanta.Actor.CommandRouter])
-      assert Process.alive?(children[Quanta.Actor.CommandRouter])
-
-      assert is_pid(children[Quanta.Actor.CompactionScheduler])
-      assert Process.alive?(children[Quanta.Actor.CompactionScheduler])
-
-      assert is_pid(children[Quanta.Nats.JetStream.Connection])
-      assert Process.alive?(children[Quanta.Nats.JetStream.Connection])
-
-      assert is_pid(children[Quanta.Broadway.PipelineSupervisor])
-      assert Process.alive?(children[Quanta.Broadway.PipelineSupervisor])
+      # Actor layer
+      assert alive_by_name?(Quanta.Actor.Supervisor)
+      assert alive_by_name?(Quanta.Actor.DynSup)
+      assert alive_by_name?(Quanta.Actor.CommandRouter)
+      assert alive_by_name?(Quanta.Actor.CompactionScheduler)
     end
 
     test "DynSup partitions have max_restarts 10_000" do

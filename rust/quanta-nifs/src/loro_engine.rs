@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use loro::{
-    cursor::Side, ContainerTrait, ExportMode, ExpandType, LoroDoc, LoroListValue, LoroMapValue,
+    cursor::Side, ContainerTrait, ExpandType, ExportMode, LoroDoc, LoroListValue, LoroMapValue,
     LoroValue, StyleConfig, StyleConfigMap, TreeParentId,
 };
 use rustler::{Binary, Encoder, Env, NewBinary, ResourceArc, Term};
@@ -105,7 +105,9 @@ fn term_to_loro_value_depth<'a>(
     }
 
     if term.is_list() {
-        let list: Vec<Term> = term.decode().map_err(|_| "failed to decode list".to_string())?;
+        let list: Vec<Term> = term
+            .decode()
+            .map_err(|_| "failed to decode list".to_string())?;
         let values: Result<Vec<LoroValue>, String> = list
             .into_iter()
             .map(|t| term_to_loro_value_depth(env, t, depth + 1))
@@ -259,7 +261,7 @@ fn value_or_container_to_value(voc: loro::ValueOrContainer) -> LoroValue {
 
 #[rustler::nif]
 fn loro_doc_new(env: Env) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = LoroDocInner {
             doc: LoroDoc::new(),
             text_styles: HashMap::new(),
@@ -271,7 +273,7 @@ fn loro_doc_new(env: Env) -> Term {
 
 #[rustler::nif]
 fn loro_doc_new_with_peer_id(env: Env, peer_id: u64) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let doc = LoroDoc::new();
         if let Err(e) = doc.set_peer_id(peer_id) {
             return err_term(env, e);
@@ -291,7 +293,7 @@ fn loro_doc_import<'a>(
     doc_arc: ResourceArc<LoroDocResource>,
     bytes: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -305,7 +307,7 @@ fn loro_doc_import<'a>(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn loro_doc_export_snapshot(env: Env, doc_arc: ResourceArc<LoroDocResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -319,7 +321,7 @@ fn loro_doc_export_snapshot(env: Env, doc_arc: ResourceArc<LoroDocResource>) -> 
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn loro_doc_export_shallow_snapshot(env: Env, doc_arc: ResourceArc<LoroDocResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -338,7 +340,7 @@ fn loro_doc_export_updates_from<'a>(
     doc_arc: ResourceArc<LoroDocResource>,
     version_bytes: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let vv = match decode_version_vector(version_bytes.as_slice()) {
             Ok(vv) => vv,
             Err(e) => return err_term(env, e),
@@ -356,7 +358,7 @@ fn loro_doc_export_updates_from<'a>(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn loro_doc_get_value(env: Env, doc_arc: ResourceArc<LoroDocResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -368,7 +370,7 @@ fn loro_doc_get_value(env: Env, doc_arc: ResourceArc<LoroDocResource>) -> Term {
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn loro_doc_version(env: Env, doc_arc: ResourceArc<LoroDocResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -381,7 +383,7 @@ fn loro_doc_version(env: Env, doc_arc: ResourceArc<LoroDocResource>) -> Term {
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn loro_doc_state_size(env: Env, doc_arc: ResourceArc<LoroDocResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -401,7 +403,7 @@ fn loro_text_insert(
     pos: usize,
     text: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -422,7 +424,7 @@ fn loro_text_delete(
     pos: usize,
     len: usize,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -442,7 +444,7 @@ fn loro_doc_configure_text_style(
     key: String,
     expand: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let expand_type = match parse_expand(&expand) {
             Ok(e) => e,
             Err(msg) => return err_term(env, msg),
@@ -451,9 +453,12 @@ fn loro_doc_configure_text_style(
             Ok(g) => g,
             Err(e) => return err_term(env, e),
         };
-        inner
-            .text_styles
-            .insert(key, StyleConfig { expand: expand_type });
+        inner.text_styles.insert(
+            key,
+            StyleConfig {
+                expand: expand_type,
+            },
+        );
         inner
             .doc
             .config_text_style(build_style_config_map(&inner.text_styles));
@@ -471,7 +476,7 @@ fn loro_text_mark<'a>(
     key: String,
     value: Term<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let loro_value = match term_to_loro_value(env, value) {
             Ok(v) => v,
             Err(msg) => return err_term(env, msg),
@@ -494,7 +499,7 @@ fn loro_text_to_string(
     doc_arc: ResourceArc<LoroDocResource>,
     container_id: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -506,12 +511,8 @@ fn loro_text_to_string(
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn loro_text_length(
-    env: Env,
-    doc_arc: ResourceArc<LoroDocResource>,
-    container_id: String,
-) -> Term {
-    crate::macros::nif_safe!(env, {
+fn loro_text_length(env: Env, doc_arc: ResourceArc<LoroDocResource>, container_id: String) -> Term {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -529,7 +530,7 @@ fn loro_map_set<'a>(
     key: String,
     value: Term<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let loro_value = match term_to_loro_value(env, value) {
             Ok(v) => v,
             Err(msg) => return err_term(env, msg),
@@ -553,7 +554,7 @@ fn loro_map_delete(
     container_id: String,
     key: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -573,7 +574,7 @@ fn loro_map_get(
     container_id: String,
     key: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -597,7 +598,7 @@ fn loro_list_insert<'a>(
     index: usize,
     value: Term<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let loro_value = match term_to_loro_value(env, value) {
             Ok(v) => v,
             Err(msg) => return err_term(env, msg),
@@ -622,7 +623,7 @@ fn loro_list_delete(
     index: usize,
     len: usize,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -642,7 +643,7 @@ fn loro_list_get(
     container_id: String,
     index: usize,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -659,12 +660,8 @@ fn loro_list_get(
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn loro_list_length(
-    env: Env,
-    doc_arc: ResourceArc<LoroDocResource>,
-    container_id: String,
-) -> Term {
-    crate::macros::nif_safe!(env, {
+fn loro_list_length(env: Env, doc_arc: ResourceArc<LoroDocResource>, container_id: String) -> Term {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -680,7 +677,7 @@ fn loro_tree_create_node(
     doc_arc: ResourceArc<LoroDocResource>,
     container_id: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let inner = match lock_doc(&doc_arc) {
             Ok(g) => g,
             Err(e) => return err_term(env, e),
@@ -701,7 +698,7 @@ fn loro_tree_move<'a>(
     node_id: String,
     parent_id: Term<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let tid = match parse_tree_id(&node_id) {
             Ok(id) => id,
             Err(e) => return err_term(env, e),
@@ -737,7 +734,7 @@ fn loro_tree_delete(
     container_id: String,
     node_id: String,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let tid = match parse_tree_id(&node_id) {
             Ok(id) => id,
             Err(e) => return err_term(env, e),
@@ -762,7 +759,7 @@ fn loro_cursor_at(
     pos: usize,
     side: i32,
 ) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let cursor_side = match parse_side(side) {
             Ok(s) => s,
             Err(e) => return err_term(env, e),
@@ -788,7 +785,7 @@ fn loro_cursor_pos<'a>(
     doc_arc: ResourceArc<LoroDocResource>,
     cursor_bytes: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let cursor = match loro::cursor::Cursor::decode(cursor_bytes.as_slice()) {
             Ok(c) => c,
             Err(e) => return err_term(env, format!("failed to decode cursor: {}", e)),

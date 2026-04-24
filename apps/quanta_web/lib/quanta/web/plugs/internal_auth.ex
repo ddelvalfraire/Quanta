@@ -12,15 +12,21 @@ defmodule Quanta.Web.Plugs.InternalAuth do
            true <- Plug.Crypto.secure_compare(token, expected) do
         conn
       else
-        _ ->
-          conn
-          |> put_status(401)
-          |> Phoenix.Controller.json(%{error: "unauthorized"})
-          |> halt()
+        _ -> unauthorized(conn)
       end
     else
-      # No token configured — allow (e.g., in dev/test or behind network isolation)
-      conn
+      # No token configured — fail closed. The drain endpoint (and any other
+      # caller of this plug) must never be reachable without an explicit
+      # :internal_auth_token, even in dev/test, to prevent unauthenticated
+      # actions if the env var is accidentally unset in production.
+      unauthorized(conn)
     end
+  end
+
+  defp unauthorized(conn) do
+    conn
+    |> put_status(401)
+    |> Phoenix.Controller.json(%{error: "unauthorized"})
+    |> halt()
   end
 end

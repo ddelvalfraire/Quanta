@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroU32;
 use std::sync::{Arc, Mutex};
 
@@ -17,7 +17,11 @@ use crate::tls::{build_server_config, TlsConfig};
 pub struct QuicEndpoint {
     endpoint: quinn::Endpoint,
     config: EndpointConfig,
-    rate_limiter: governor::DefaultDirectRateLimiter,
+    // Per-IP rate limiter: each source IP gets its own bucket so one
+    // noisy client can't exhaust the handshake budget for the rest
+    // (review finding M-5). Keyed on `IpAddr` — callers derive the key
+    // from `quinn::Incoming::remote_address()`.
+    rate_limiter: governor::DefaultKeyedRateLimiter<IpAddr>,
     cert_sha256: [u8; 32],
 }
 
@@ -34,7 +38,7 @@ impl QuicEndpoint {
         let quota = Quota::per_second(
             NonZeroU32::new(config.rate_limit_per_sec).expect("rate_limit_per_sec must be > 0"),
         );
-        let rate_limiter = RateLimiter::direct(quota);
+        let rate_limiter = RateLimiter::keyed(quota);
 
         info!(addr = %endpoint.local_addr().unwrap_or(addr), "QUIC endpoint bound");
         if !cfg!(target_os = "linux") {
@@ -59,6 +63,15 @@ impl QuicEndpoint {
         self.cert_sha256
     }
 
+    /// Consume one cell from the rate limiter bucket for `ip`, returning
+    /// `true` when the request is allowed and `false` when that IP's
+    /// bucket is exhausted. Exposed so integration tests can assert
+    /// per-IP keying semantics without driving a full QUIC handshake
+    /// (M-5 regression guard).
+    pub fn check_ip(&self, ip: IpAddr) -> bool {
+        self.rate_limiter.check_key(&ip).is_ok()
+    }
+
     pub async fn run(
         self,
         validator: Arc<dyn AuthValidator>,
@@ -77,7 +90,8 @@ impl QuicEndpoint {
                         break;
                     };
 
-                    if self.rate_limiter.check().is_err() {
+                    let remote_ip = incoming.remote_address().ip();
+                    if self.rate_limiter.check_key(&remote_ip).is_err() {
                         warn!(
                             remote = %incoming.remote_address(),
                             "rate limited, refusing connection"

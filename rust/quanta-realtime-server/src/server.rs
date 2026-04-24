@@ -180,6 +180,28 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
         metrics_addr,
     } = args;
 
+    // Startup guard (C-3): refuse to boot when the hardcoded dev token is
+    // paired with a non-loopback bind address. This is the configuration
+    // `main.rs` falls into when both `QUANTA_DEV_TOKEN` and `QUANTA_QUIC_ADDR`
+    // are unset — allowing it would expose a public endpoint that grants
+    // sessions to anyone who knows the leaked literal.
+    if validator.is_insecure_dev_token() && !quic_addr.ip().is_loopback() {
+        return Err(EndpointError::Auth(format!(
+            "refusing to start: hardcoded dev token must not be used on a \
+             non-loopback bind address ({quic_addr}). Set QUANTA_DEV_TOKEN \
+             to a unique value, or bind to 127.0.0.1/::1 for local dev."
+        )));
+    }
+    if let Some(ws) = ws_addr {
+        if validator.is_insecure_dev_token() && !ws.ip().is_loopback() {
+            return Err(EndpointError::Auth(format!(
+                "refusing to start: hardcoded dev token must not be used on a \
+                 non-loopback WS bind address ({ws}). Set QUANTA_DEV_TOKEN to \
+                 a unique value, or bind to 127.0.0.1/::1 for local dev."
+            )));
+        }
+    }
+
     let executor_factory: ExecutorFactory = executor_factory
         .unwrap_or_else(|| Arc::new(|| -> Box<dyn WasmExecutor> { Box::new(NoopWasmExecutor) }));
 
@@ -296,43 +318,56 @@ pub async fn run_server(args: RunServerArgs) -> Result<RunningServer, EndpointEr
                                                 .await;
                                             }
                                         }
-                                        if let Some(conn) = quic_conn {
-                                            let notify_tx = drain_tx.clone();
-                                            let island_dc = default_island.clone();
-                                            tokio::spawn(async move {
-                                                let _ = conn.closed().await;
-                                                if auto_register {
-                                                    if let Some(island_id) = island_dc {
-                                                        if notify_tx
-                                                            .send(ManagerCommand::DeregisterClient {
-                                                                island_id,
-                                                                session_id,
-                                                            })
-                                                            .await
-                                                            .is_err()
-                                                        {
-                                                            warn!(
-                                                                session_id,
-                                                                "DeregisterClient send failed — \
-                                                                 entity slot will leak"
-                                                            );
-                                                        }
+                                        // Unified disconnect watcher (H-1 fix).
+                                        //
+                                        // Previously this branched on
+                                        // `quic_conn.is_some()` and only
+                                        // armed for QUIC sessions — WS
+                                        // clients (`quic_connection: None`)
+                                        // leaked their `client_registry`
+                                        // entry forever. `Session::on_closed`
+                                        // unifies both transports: QUIC
+                                        // awaits `Connection::closed()`,
+                                        // WS awaits a Notify fired by
+                                        // ws_listener's transport tasks.
+                                        let _ = quic_conn; // kept for future reliable-stream call sites
+                                        let notify_tx = drain_tx.clone();
+                                        let island_dc = default_island.clone();
+                                        let watcher_session = session_arc.clone();
+                                        tokio::spawn(async move {
+                                            watcher_session.on_closed().await;
+                                            if auto_register {
+                                                if let Some(island_id) = island_dc {
+                                                    if notify_tx
+                                                        .send(ManagerCommand::DeregisterClient {
+                                                            island_id,
+                                                            session_id,
+                                                        })
+                                                        .await
+                                                        .is_err()
+                                                    {
+                                                        warn!(
+                                                            session_id,
+                                                            "DeregisterClient send failed — \
+                                                             entity slot will leak"
+                                                        );
                                                     }
                                                 }
-                                                if notify_tx
-                                                    .send(ManagerCommand::ClientDisconnected {
-                                                        session_id,
-                                                    })
-                                                    .await
-                                                    .is_err()
-                                                {
-                                                    warn!(
-                                                        session_id,
-                                                        "ClientDisconnected send failed"
-                                                    );
-                                                }
-                                            });
-                                        }
+                                            }
+                                            if notify_tx
+                                                .send(ManagerCommand::ClientDisconnected {
+                                                    session_id,
+                                                })
+                                                .await
+                                                .is_err()
+                                            {
+                                                warn!(
+                                                    session_id,
+                                                    "ClientDisconnected send failed"
+                                                );
+                                            }
+                                            drop(watcher_session);
+                                        });
                                     }
                                     Ok(Err(e)) => warn!(error = %e, "manager rejected client"),
                                     Err(_) => warn!("manager reply dropped"),

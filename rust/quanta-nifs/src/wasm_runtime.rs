@@ -91,7 +91,9 @@ fn verify_hmac(key: &[u8], data: &[u8], tag: &[u8]) -> bool {
 const STDOUT_CAPACITY: usize = 65_536;
 
 fn create_store(
-    engine: &Engine, fuel: u64, memory_limit: usize,
+    engine: &Engine,
+    fuel: u64,
+    memory_limit: usize,
 ) -> (Store<ActorStoreData>, MemoryOutputPipe, MemoryOutputPipe) {
     let stdout_pipe = MemoryOutputPipe::new(STDOUT_CAPACITY);
     let stderr_pipe = MemoryOutputPipe::new(STDOUT_CAPACITY);
@@ -117,19 +119,22 @@ fn create_store(
 }
 
 fn collect_stdout(
-    mut result: WitHandleResult, stdout: &MemoryOutputPipe, stderr: &MemoryOutputPipe,
+    mut result: WitHandleResult,
+    stdout: &MemoryOutputPipe,
+    stderr: &MemoryOutputPipe,
 ) -> WitHandleResult {
     let out = stdout.contents();
     if !out.is_empty() {
-        result.effects.push(WitEffect::Log(
-            String::from_utf8_lossy(&out).into_owned(),
-        ));
+        result
+            .effects
+            .push(WitEffect::Log(String::from_utf8_lossy(&out).into_owned()));
     }
     let err = stderr.contents();
     if !err.is_empty() {
-        result.effects.push(WitEffect::Log(
-            format!("[stderr] {}", String::from_utf8_lossy(&err)),
-        ));
+        result.effects.push(WitEffect::Log(format!(
+            "[stderr] {}",
+            String::from_utf8_lossy(&err)
+        )));
     }
     result
 }
@@ -162,51 +167,89 @@ fn encode_effects<'a>(env: Env<'a>, effects: &[WitEffect]) -> Term<'a> {
 }
 
 fn encode_effect<'a>(env: Env<'a>, effect: &WitEffect) -> Term<'a> {
+    // `map_put` only returns `Err(BadArg)` if `self` is not a map. We start
+    // every arm with `Term::map_new(env)`, so the receiver is always a map
+    // and a failure here would indicate a degenerate BEAM env. We use
+    // `.expect(...)` with a descriptive message instead of a bare
+    // `.unwrap()` so that, if the impossible does happen, the crash report
+    // points at the specific effect field that tripped it.
+    const MSG: &str = "encode_effect: map_put on fresh map must not fail";
+
     match effect {
         WitEffect::Persist => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "persist".encode(env)).unwrap();
+            m = m
+                .map_put("type".encode(env), "persist".encode(env))
+                .expect(MSG);
             m
         }
         WitEffect::Send(send) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "send".encode(env)).unwrap();
-            m = m.map_put("target".encode(env), send.target.as_str().encode(env)).unwrap();
-            m = m.map_put("payload".encode(env), bytes_to_binary(env, &send.payload)).unwrap();
+            m = m
+                .map_put("type".encode(env), "send".encode(env))
+                .expect(MSG);
+            m = m
+                .map_put("target".encode(env), send.target.as_str().encode(env))
+                .expect(MSG);
+            m = m
+                .map_put("payload".encode(env), bytes_to_binary(env, &send.payload))
+                .expect(MSG);
             if let Some(ref cid) = send.correlation_id {
-                m = m.map_put("correlation_id".encode(env), cid.as_str().encode(env)).unwrap();
+                m = m
+                    .map_put("correlation_id".encode(env), cid.as_str().encode(env))
+                    .expect(MSG);
             }
             m
         }
         WitEffect::Reply(data) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "reply".encode(env)).unwrap();
-            m = m.map_put("data".encode(env), bytes_to_binary(env, data)).unwrap();
+            m = m
+                .map_put("type".encode(env), "reply".encode(env))
+                .expect(MSG);
+            m = m
+                .map_put("data".encode(env), bytes_to_binary(env, data))
+                .expect(MSG);
             m
         }
         WitEffect::SetTimer(timer) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "set_timer".encode(env)).unwrap();
-            m = m.map_put("name".encode(env), timer.name.as_str().encode(env)).unwrap();
-            m = m.map_put("delay_ms".encode(env), timer.delay_ms.encode(env)).unwrap();
+            m = m
+                .map_put("type".encode(env), "set_timer".encode(env))
+                .expect(MSG);
+            m = m
+                .map_put("name".encode(env), timer.name.as_str().encode(env))
+                .expect(MSG);
+            m = m
+                .map_put("delay_ms".encode(env), timer.delay_ms.encode(env))
+                .expect(MSG);
             m
         }
         WitEffect::CancelTimer(name) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "cancel_timer".encode(env)).unwrap();
-            m = m.map_put("name".encode(env), name.as_str().encode(env)).unwrap();
+            m = m
+                .map_put("type".encode(env), "cancel_timer".encode(env))
+                .expect(MSG);
+            m = m
+                .map_put("name".encode(env), name.as_str().encode(env))
+                .expect(MSG);
             m
         }
         WitEffect::EmitEvent(data) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "emit_event".encode(env)).unwrap();
-            m = m.map_put("data".encode(env), bytes_to_binary(env, data)).unwrap();
+            m = m
+                .map_put("type".encode(env), "emit_event".encode(env))
+                .expect(MSG);
+            m = m
+                .map_put("data".encode(env), bytes_to_binary(env, data))
+                .expect(MSG);
             m
         }
         WitEffect::Log(msg) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "log".encode(env)).unwrap();
-            m = m.map_put("message".encode(env), msg.as_str().encode(env)).unwrap();
+            m = m.map_put("type".encode(env), "log".encode(env)).expect(MSG);
+            m = m
+                .map_put("message".encode(env), msg.as_str().encode(env))
+                .expect(MSG);
             m
         }
     }
@@ -217,26 +260,37 @@ fn encode_effect<'a>(env: Env<'a>, effect: &WitEffect) -> Term<'a> {
 // ---------------------------------------------------------------------------
 
 fn decode_envelope<'a>(term: Term<'a>) -> Result<WitEnvelope, String> {
-    let map: HashMap<String, Term<'a>> = term.decode()
+    let map: HashMap<String, Term<'a>> = term
+        .decode()
         .map_err(|_| "envelope must be a map with string keys".to_string())?;
 
-    let source: String = map.get("source")
+    let source: String = map
+        .get("source")
         .ok_or("envelope missing 'source'")?
-        .decode().map_err(|_| "envelope 'source' must be a string".to_string())?;
+        .decode()
+        .map_err(|_| "envelope 'source' must be a string".to_string())?;
 
     let payload_term = map.get("payload").ok_or("envelope missing 'payload'")?;
-    let payload: Vec<u8> = payload_term.decode::<Binary>()
+    let payload: Vec<u8> = payload_term
+        .decode::<Binary>()
         .map(|b| b.as_slice().to_vec())
         .or_else(|_| payload_term.decode::<Vec<u8>>())
         .map_err(|_| "envelope 'payload' must be a binary or list".to_string())?;
 
     let correlation_id: Option<String> = match map.get("correlation_id") {
         Some(t) if t.is_atom() => None,
-        Some(t) => Some(t.decode().map_err(|_| "envelope 'correlation_id' must be a string or nil".to_string())?),
+        Some(t) => Some(
+            t.decode()
+                .map_err(|_| "envelope 'correlation_id' must be a string or nil".to_string())?,
+        ),
         None => None,
     };
 
-    Ok(WitEnvelope { source, payload, correlation_id })
+    Ok(WitEnvelope {
+        source,
+        payload,
+        correlation_id,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -246,7 +300,12 @@ fn decode_envelope<'a>(term: Term<'a>) -> Result<WitEnvelope, String> {
 fn encode_handle_result<'a>(env: Env<'a>, result: &WitHandleResult) -> Term<'a> {
     let mut state_out = NewBinary::new(env, result.state.len());
     state_out.as_mut_slice().copy_from_slice(&result.state);
-    (atoms::ok(), Binary::from(state_out), encode_effects(env, &result.effects)).encode(env)
+    (
+        atoms::ok(),
+        Binary::from(state_out),
+        encode_effects(env, &result.effects),
+    )
+        .encode(env)
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +377,7 @@ struct WitEnvelope {
 
 #[rustler::nif]
 fn engine_new(env: Env) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match engine_new_inner() {
             Ok(arc) => (atoms::ok(), arc).encode(env),
             Err(e) => err_term(env, e),
@@ -340,7 +399,7 @@ fn component_compile<'a>(
     engine_arc: ResourceArc<EngineResource>,
     wasm_bytes: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match Component::new(&engine_arc.0, wasm_bytes.as_slice()) {
             Ok(c) => (atoms::ok(), ResourceArc::new(ComponentResource(c))).encode(env),
             Err(e) => err_term(env, e),
@@ -350,7 +409,7 @@ fn component_compile<'a>(
 
 #[rustler::nif]
 fn linker_new(env: Env, engine_arc: ResourceArc<EngineResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match linker_new_inner(&engine_arc.0) {
             Ok(arc) => (atoms::ok(), arc).encode(env),
             Err(e) => err_term(env, e),
@@ -370,10 +429,17 @@ fn component_serialize<'a>(
     component_arc: ResourceArc<ComponentResource>,
     hmac_key: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let key = hmac_key.as_slice();
         if key.len() < HMAC_MIN_KEY_LEN {
-            return err_term(env, format!("HMAC key must be at least {} bytes, got {}", HMAC_MIN_KEY_LEN, key.len()));
+            return err_term(
+                env,
+                format!(
+                    "HMAC key must be at least {} bytes, got {}",
+                    HMAC_MIN_KEY_LEN,
+                    key.len()
+                ),
+            );
         }
         match component_arc.0.serialize() {
             Ok(serialized) => {
@@ -396,10 +462,17 @@ fn component_deserialize<'a>(
     bytes: Binary<'a>,
     hmac_key: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let key = hmac_key.as_slice();
         if key.len() < HMAC_MIN_KEY_LEN {
-            return err_term(env, format!("HMAC key must be at least {} bytes, got {}", HMAC_MIN_KEY_LEN, key.len()));
+            return err_term(
+                env,
+                format!(
+                    "HMAC key must be at least {} bytes, got {}",
+                    HMAC_MIN_KEY_LEN,
+                    key.len()
+                ),
+            );
         }
         let data = bytes.as_slice();
         if data.len() < HMAC_TAG_LEN {
@@ -427,8 +500,15 @@ fn call_init<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
-        match call_init_inner(&engine_arc.0, &component_arc.0, &linker_arc.0, init_payload.as_slice(), fuel, memory_limit as usize) {
+    crate::safety::nif_safe!(env, {
+        match call_init_inner(
+            &engine_arc.0,
+            &component_arc.0,
+            &linker_arc.0,
+            init_payload.as_slice(),
+            fuel,
+            memory_limit as usize,
+        ) {
             Ok(result) => encode_handle_result(env, &result),
             Err(e) => classify_wasm_error(env, e),
         }
@@ -436,8 +516,12 @@ fn call_init<'a>(
 }
 
 fn call_init_inner(
-    engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
-    payload: &[u8], fuel: u64, mem: usize,
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<ActorStoreData>,
+    payload: &[u8],
+    fuel: u64,
+    mem: usize,
 ) -> Result<WitHandleResult, wasmtime::Error> {
     let (mut store, stdout, stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
@@ -459,12 +543,20 @@ fn call_handle_message<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let envelope = match decode_envelope(envelope_term) {
             Ok(e) => e,
             Err(msg) => return err_term(env, msg),
         };
-        match call_handle_message_inner(&engine_arc.0, &component_arc.0, &linker_arc.0, state.as_slice(), envelope, fuel, memory_limit as usize) {
+        match call_handle_message_inner(
+            &engine_arc.0,
+            &component_arc.0,
+            &linker_arc.0,
+            state.as_slice(),
+            envelope,
+            fuel,
+            memory_limit as usize,
+        ) {
             Ok(result) => encode_handle_result(env, &result),
             Err(e) => classify_wasm_error(env, e),
         }
@@ -472,13 +564,19 @@ fn call_handle_message<'a>(
 }
 
 fn call_handle_message_inner(
-    engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
-    state: &[u8], envelope: WitEnvelope, fuel: u64, mem: usize,
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<ActorStoreData>,
+    state: &[u8],
+    envelope: WitEnvelope,
+    fuel: u64,
+    mem: usize,
 ) -> Result<WitHandleResult, wasmtime::Error> {
     let (mut store, stdout, stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
     let idx = get_actor_func_index(component, "handle-message").map_err(wasmtime::Error::msg)?;
-    let func = instance.get_typed_func::<(Vec<u8>, WitEnvelope), (WitHandleResult,)>(&mut store, &idx)?;
+    let func =
+        instance.get_typed_func::<(Vec<u8>, WitEnvelope), (WitHandleResult,)>(&mut store, &idx)?;
     let (result,) = func.call(&mut store, (state.to_vec(), envelope))?;
     func.post_return(&mut store)?;
     Ok(collect_stdout(result, &stdout, &stderr))
@@ -495,8 +593,16 @@ fn call_handle_timer<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
-        match call_handle_timer_inner(&engine_arc.0, &component_arc.0, &linker_arc.0, state.as_slice(), &timer_name, fuel, memory_limit as usize) {
+    crate::safety::nif_safe!(env, {
+        match call_handle_timer_inner(
+            &engine_arc.0,
+            &component_arc.0,
+            &linker_arc.0,
+            state.as_slice(),
+            &timer_name,
+            fuel,
+            memory_limit as usize,
+        ) {
             Ok(result) => encode_handle_result(env, &result),
             Err(e) => classify_wasm_error(env, e),
         }
@@ -504,13 +610,19 @@ fn call_handle_timer<'a>(
 }
 
 fn call_handle_timer_inner(
-    engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
-    state: &[u8], timer_name: &str, fuel: u64, mem: usize,
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<ActorStoreData>,
+    state: &[u8],
+    timer_name: &str,
+    fuel: u64,
+    mem: usize,
 ) -> Result<WitHandleResult, wasmtime::Error> {
     let (mut store, stdout, stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
     let idx = get_actor_func_index(component, "handle-timer").map_err(wasmtime::Error::msg)?;
-    let func = instance.get_typed_func::<(Vec<u8>, String), (WitHandleResult,)>(&mut store, &idx)?;
+    let func =
+        instance.get_typed_func::<(Vec<u8>, String), (WitHandleResult,)>(&mut store, &idx)?;
     let (result,) = func.call(&mut store, (state.to_vec(), timer_name.to_string()))?;
     func.post_return(&mut store)?;
     Ok(collect_stdout(result, &stdout, &stderr))
@@ -527,11 +639,19 @@ fn call_migrate<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         if get_actor_func_index(&component_arc.0, "migrate").is_err() {
             return (atoms::error(), atoms::not_exported()).encode(env);
         }
-        match call_migrate_inner(&engine_arc.0, &component_arc.0, &linker_arc.0, state.as_slice(), from_version, fuel, memory_limit as usize) {
+        match call_migrate_inner(
+            &engine_arc.0,
+            &component_arc.0,
+            &linker_arc.0,
+            state.as_slice(),
+            from_version,
+            fuel,
+            memory_limit as usize,
+        ) {
             Ok(result) => encode_handle_result(env, &result),
             Err(e) => classify_wasm_error(env, e),
         }
@@ -539,8 +659,13 @@ fn call_migrate<'a>(
 }
 
 fn call_migrate_inner(
-    engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
-    state: &[u8], from_version: u32, fuel: u64, mem: usize,
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<ActorStoreData>,
+    state: &[u8],
+    from_version: u32,
+    fuel: u64,
+    mem: usize,
 ) -> Result<WitHandleResult, wasmtime::Error> {
     let (mut store, stdout, stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;
@@ -561,11 +686,18 @@ fn call_on_passivate<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         if get_actor_func_index(&component_arc.0, "on-passivate").is_err() {
             return (atoms::error(), atoms::not_exported()).encode(env);
         }
-        match call_on_passivate_inner(&engine_arc.0, &component_arc.0, &linker_arc.0, state.as_slice(), fuel, memory_limit as usize) {
+        match call_on_passivate_inner(
+            &engine_arc.0,
+            &component_arc.0,
+            &linker_arc.0,
+            state.as_slice(),
+            fuel,
+            memory_limit as usize,
+        ) {
             Ok(result_state) => {
                 let mut out = NewBinary::new(env, result_state.len());
                 out.as_mut_slice().copy_from_slice(&result_state);
@@ -577,8 +709,12 @@ fn call_on_passivate<'a>(
 }
 
 fn call_on_passivate_inner(
-    engine: &Engine, component: &Component, linker: &Linker<ActorStoreData>,
-    state: &[u8], fuel: u64, mem: usize,
+    engine: &Engine,
+    component: &Component,
+    linker: &Linker<ActorStoreData>,
+    state: &[u8],
+    fuel: u64,
+    mem: usize,
 ) -> Result<Vec<u8>, wasmtime::Error> {
     let (mut store, _stdout, _stderr) = create_store(engine, fuel, mem);
     let instance = linker.instantiate(&mut store, component)?;

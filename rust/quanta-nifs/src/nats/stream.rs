@@ -4,7 +4,7 @@ use futures_util::FutureExt;
 use rustler::{Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
 
 use super::{atoms, encode_task_panic, NatsConnectionResource, NifError};
-use crate::macros::nif_safe;
+use crate::safety::nif_safe;
 
 #[rustler::nif]
 fn purge_subject_async<'a>(

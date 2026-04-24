@@ -135,7 +135,9 @@ fn msg_type_atoms() -> [Atom; 12] {
 
 fn decode_msg_type_atom<'a>(env: Env<'a>, map: Term<'a>) -> Result<BridgeMsgType, String> {
     let term = map_get(env, map, atoms::msg_type())?;
-    let atom: Atom = term.decode().map_err(|_| "msg_type must be an atom".to_string())?;
+    let atom: Atom = term
+        .decode()
+        .map_err(|_| "msg_type must be an atom".to_string())?;
 
     for (a, variant) in msg_type_atoms().iter().zip(MSG_TYPE_VARIANTS.iter()) {
         if atom == *a {
@@ -172,7 +174,10 @@ fn get_u64<'a>(env: Env<'a>, map: Term<'a>, key: Atom) -> Result<u64, String> {
     term.decode::<u64>().map_err(|_| "expected integer".into())
 }
 
-fn get_optional_correlation_id<'a>(env: Env<'a>, map: Term<'a>) -> Result<Option<[u8; 16]>, String> {
+fn get_optional_correlation_id<'a>(
+    env: Env<'a>,
+    map: Term<'a>,
+) -> Result<Option<[u8; 16]>, String> {
     let term = map_get(env, map, atoms::correlation_id())?;
     if term == rustler::types::atom::nil().encode(env) {
         Ok(None)

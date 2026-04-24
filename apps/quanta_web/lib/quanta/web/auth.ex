@@ -5,8 +5,8 @@ defmodule Quanta.Web.Auth do
 
   @spec authenticate(String.t()) :: {:ok, atom(), String.t()} | :error
   def authenticate(token) do
-    with {:ok, scope, namespace} <- parse_key(token),
-         :ok <- validate_key(token) do
+    with :ok <- validate_key(token),
+         {:ok, scope, namespace} <- parse_key(token) do
       {:ok, scope, namespace}
     end
   end

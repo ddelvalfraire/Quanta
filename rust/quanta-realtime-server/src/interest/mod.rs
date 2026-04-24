@@ -239,7 +239,10 @@ fn accumulate_visible(
 mod mod_tests {
     use super::*;
 
-    fn fixture(force_full_lod: bool, positions: &[(EntitySlot, f32, f32)]) -> Vec<(EntitySlot, LodTier)> {
+    fn fixture(
+        force_full_lod: bool,
+        positions: &[(EntitySlot, f32, f32)],
+    ) -> Vec<(EntitySlot, LodTier)> {
         let mut pri = PriorityAccumulator::new(4, 16);
         let interactions = FxHashSet::default();
         let mut pos = PositionTable::new();

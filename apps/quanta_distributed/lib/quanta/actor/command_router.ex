@@ -308,23 +308,26 @@ defmodule Quanta.Actor.CommandRouter do
       {:noreply, state}
   end
 
-  # NATS messages are dispatched synchronously in the GenServer process.
-  # This serializes throughput to one message at a time (up to timeout).
-  # Acceptable for Phase 1; T09 integration should spawn into a Task pool.
+  # NATS messages are dispatched into a supervised Task so the CommandRouter
+  # GenServer stays responsive even if the routed actor blocks for up to
+  # `route/3`'s full timeout. Each inbound message gets its own Task; the Task
+  # owns the send→receive reply correlation with the actor. (CRITICAL-1)
   @impl true
   def handle_info({:msg, %{topic: topic, body: body, reply_to: reply_to}}, state) do
-    result =
-      case parse_command_subject(topic) do
-        {:ok, actor_id} ->
-          envelope = Envelope.new(payload: body, sender: {:client, "nats"})
-          route(actor_id, envelope)
+    Task.Supervisor.start_child(Quanta.SideEffect.TaskSupervisor, fn ->
+      result =
+        case parse_command_subject(topic) do
+          {:ok, actor_id} ->
+            envelope = Envelope.new(payload: body, sender: {:client, "nats"})
+            route(actor_id, envelope)
 
-        {:error, reason} ->
-          Logger.warning("CommandRouter: invalid subject #{topic}: #{reason}")
-          {:error, :invalid_subject}
-      end
+          {:error, reason} ->
+            Logger.warning("CommandRouter: invalid subject #{topic}: #{reason}")
+            {:error, :invalid_subject}
+        end
 
-    if reply_to, do: send_nats_reply(reply_to, result)
+      if reply_to, do: send_nats_reply(reply_to, result)
+    end)
 
     {:noreply, state}
   end

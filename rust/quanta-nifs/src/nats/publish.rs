@@ -4,8 +4,73 @@ use futures_util::FutureExt;
 use rustler::{Binary, Encoder, Env, LocalPid, OwnedEnv, ResourceArc, Term};
 
 use super::{atoms, encode_task_panic, NatsConnectionResource, NifError};
-use crate::macros::nif_safe;
+use crate::safety::nif_safe;
 
+/// Publish a message to JetStream with a dual-return contract.
+///
+/// # Return contract
+///
+/// This NIF reports its result in one of **two** ways, and every caller must
+/// handle **both** paths:
+///
+/// 1. **Synchronous backpressure error.** If the in-flight semaphore is
+///    exhausted at call time, the NIF returns `{:error, :nats_backpressure}`
+///    **immediately** as the synchronous return value. No message is sent to
+///    `caller_pid` in this case — the error is the direct NIF return.
+///
+/// 2. **Asynchronous mailbox reply.** On the happy path (a permit was
+///    acquired), the NIF returns `:ok` synchronously and spawns a tokio task
+///    that eventually sends one of the following messages to `caller_pid`:
+///
+///    - `{:ok, ref, %{stream: stream_name, seq: sequence}}` on publish + ack success
+///    - `{:error, ref, :wrong_last_sequence}` when JetStream rejects the expected-sequence header
+///    - `{:error, ref, reason}` on any other JetStream failure, where `reason` is
+///      a human-readable string formatted from the underlying async-nats error
+///      (e.g. `"io error: connection reset by peer"`). The string is the raw
+///      `Display` output of the error; do not try to pattern-match on its
+///      contents beyond logging.
+///    - `{:error, ref, reason}` if the spawned task panics, where `reason` is a
+///      `"task_panic: ..."`-prefixed string from the panic payload.
+///
+///    The `ref` in the reply is the `caller_ref` passed in by the caller, used
+///    to correlate replies when multiple publishes are in flight concurrently.
+///
+/// Treating the return value as "always async" silently drops backpressure
+/// errors; treating it as "always sync" deadlocks on a reply that arrives via
+/// mailbox. Callers MUST pattern-match on the synchronous return first, then
+/// `receive` for the async reply only when the sync return was `:ok`.
+///
+/// # Elixir caller example
+///
+/// ```elixir
+/// ref = make_ref()
+///
+/// case Quanta.Nats.js_publish_async(conn, self(), ref, subject, payload, nil) do
+///   :ok ->
+///     # Async mailbox reply is pending — receive it to complete the publish.
+///     receive do
+///       {:ok, ^ref, %{stream: stream, seq: seq}} ->
+///         {:ok, {stream, seq}}
+///
+///       {:error, ^ref, :wrong_last_sequence} ->
+///         {:error, :wrong_last_sequence}
+///
+///       {:error, ^ref, reason} when is_binary(reason) ->
+///         # Catch-all for publish failures and task panics. `reason` is a
+///         # human-readable string; a `"task_panic: "` prefix identifies a
+///         # panic from the spawned tokio task.
+///         {:error, reason}
+///     after
+///       5_000 -> {:error, :timeout}
+///     end
+///
+///   {:error, :nats_backpressure} ->
+///     # Synchronous return — the semaphore was exhausted, no message will
+///     # be sent to the mailbox. Retry with backoff, shed load, or surface
+///     # the error to the caller.
+///     {:error, :nats_backpressure}
+/// end
+/// ```
 #[rustler::nif]
 fn js_publish_async<'a>(
     env: Env<'a>,
@@ -76,8 +141,9 @@ fn js_publish_async<'a>(
                         );
                         match map {
                             Ok(map) => (atoms::ok(), ref_term, map).encode(env),
-                            Err(_) => NifError::Other("encoding_error".into())
-                                .encode_term(env, ref_term),
+                            Err(_) => {
+                                NifError::Other("encoding_error".into()).encode_term(env, ref_term)
+                            }
                         }
                     }
                     Ok(Err(nif_err)) => nif_err.encode_term(env, ref_term),

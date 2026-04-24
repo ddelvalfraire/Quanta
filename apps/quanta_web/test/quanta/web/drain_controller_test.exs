@@ -7,11 +7,15 @@ defmodule Quanta.Web.DrainControllerTest do
     force_stop_delay_ms: 200
   ]
 
+  @internal_token "test-internal-token"
+
   setup do
     Application.put_env(:quanta_web, :drain_opts, @fast_drain_opts)
+    Application.put_env(:quanta_web, :internal_auth_token, @internal_token)
 
     on_exit(fn ->
       Application.delete_env(:quanta_web, :drain_opts)
+      Application.delete_env(:quanta_web, :internal_auth_token)
 
       try do
         :persistent_term.erase({Quanta.Drain, :draining})
@@ -38,7 +42,11 @@ defmodule Quanta.Web.DrainControllerTest do
 
   describe "POST /api/internal/drain" do
     test "returns 200 with status drained on completion", %{conn: conn} do
-      conn = post(conn, "/api/internal/drain")
+      conn =
+        conn
+        |> put_req_header("authorization", "Bearer " <> @internal_token)
+        |> post("/api/internal/drain")
+
       assert json_response(conn, 200) == %{"status" => "drained"}
     end
   end

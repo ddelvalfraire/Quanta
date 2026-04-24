@@ -21,10 +21,8 @@ fn schema_compile<'a>(
     type_name: String,
     prediction_enabled: bool,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
-        let opts = schema::CompileOptions {
-            prediction_enabled,
-        };
+    crate::safety::nif_safe!(env, {
+        let opts = schema::CompileOptions { prediction_enabled };
         match schema::compile_schema(&wit_source, &type_name, &opts) {
             Ok((compiled, warnings)) => {
                 let resource = ResourceArc::new(CompiledSchemaResource(compiled));
@@ -39,11 +37,8 @@ fn schema_compile<'a>(
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]
-fn schema_export<'a>(
-    env: Env<'a>,
-    schema_arc: ResourceArc<CompiledSchemaResource>,
-) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+fn schema_export<'a>(env: Env<'a>, schema_arc: ResourceArc<CompiledSchemaResource>) -> Term<'a> {
+    crate::safety::nif_safe!(env, {
         let bytes = schema::export::export_schema(&schema_arc.0);
         let mut bin = NewBinary::new(env, bytes.len());
         bin.as_mut_slice().copy_from_slice(&bytes);
@@ -54,7 +49,7 @@ fn schema_export<'a>(
 
 #[rustler::nif(schedule = "DirtyCpu")]
 fn schema_import<'a>(env: Env<'a>, bytes: Binary) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match evolution::import_schema(bytes.as_slice()) {
             Ok(compiled) => {
                 let resource = ResourceArc::new(CompiledSchemaResource(compiled));
@@ -71,7 +66,7 @@ fn schema_check_compatibility<'a>(
     old: ResourceArc<CompiledSchemaResource>,
     new: ResourceArc<CompiledSchemaResource>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match evolution::check_schema_compatibility(&old.0, &new.0) {
             CompatibilityResult::Identical => {
                 (atoms::ok(), atoms::identical(), "".to_string()).encode(env)

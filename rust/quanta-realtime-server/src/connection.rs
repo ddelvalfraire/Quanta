@@ -101,6 +101,59 @@ async fn handle_quanta_v1(
     })
 }
 
+/// Check the incoming WebTransport CONNECT request's `Origin` header against
+/// the configured allowlist. When the allowlist is non-empty and the client's
+/// origin does not match, the request is rejected with HTTP 403 before any
+/// WebTransport session is established (review finding C-2).
+///
+/// An empty `allowed_origins` slice disables the check — the request is
+/// accepted with a warning. The `web_transport_quinn` crate exposes
+/// `.reject(StatusCode)` as the moral equivalent of a CONNECT-level `bad()`
+/// response: the H3 CONNECT is answered with a non-2xx status before the
+/// WebTransport session opens, which is the correct denial point for a
+/// failed origin check.
+async fn check_origin(
+    request: web_transport_quinn::Request,
+    allowed_origins: &[String],
+) -> Result<web_transport_quinn::Request, EndpointError> {
+    if allowed_origins.is_empty() {
+        warn!(
+            "WebTransport origin allowlist is empty — accepting any Origin. \
+             Configure EndpointConfig::allowed_origins in production."
+        );
+        return Ok(request);
+    }
+
+    // `ConnectRequest::headers` is an `http::HeaderMap`; the `Origin` header
+    // is case-insensitive per RFC 7230. `HeaderMap::get` handles that.
+    let origin = request
+        .headers
+        .get(web_transport_quinn::http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+
+    let origin_ok = match origin.as_deref() {
+        Some(o) => allowed_origins.iter().any(|allowed| allowed == o),
+        None => false,
+    };
+
+    if !origin_ok {
+        warn!(
+            origin = ?origin,
+            "WebTransport request rejected: Origin not in allowlist"
+        );
+        // Reject with HTTP 403 — the upstream-exposed equivalent of `bad()`.
+        let _ = request
+            .reject(web_transport_quinn::http::StatusCode::FORBIDDEN)
+            .await;
+        return Err(EndpointError::Auth(format!(
+            "webtransport origin rejected: {origin:?} not in allowlist"
+        )));
+    }
+
+    Ok(request)
+}
+
 async fn handle_h3_webtransport(
     connection: quinn::Connection,
     validator: &dyn AuthValidator,
@@ -111,6 +164,8 @@ async fn handle_h3_webtransport(
         let request = web_transport_quinn::Request::accept(connection.clone())
             .await
             .map_err(|e| EndpointError::WebTransport(e.to_string()))?;
+
+        let request = check_origin(request, &config.allowed_origins).await?;
 
         let session = request
             .ok()

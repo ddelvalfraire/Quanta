@@ -42,6 +42,46 @@ export interface QuantaDecoder {
   encodeBaselineAck(baselineTick: bigint): Uint8Array;
 }
 
+// wasm-bindgen types the decoder returns as `any`; validate at the boundary.
+function assertDecodedState(x: unknown): asserts x is DecodedState {
+  if (x === null || typeof x !== "object" || Array.isArray(x)) {
+    throw new Error(
+      `decode_state returned non-object value: ${x === null ? "null" : Array.isArray(x) ? "array" : typeof x}`,
+    );
+  }
+  for (const [key, value] of Object.entries(x as Record<string, unknown>)) {
+    if (typeof value !== "number" && typeof value !== "boolean") {
+      throw new Error(
+        `decode_state field "${key}" has invalid type ${typeof value}; expected number or boolean`,
+      );
+    }
+  }
+}
+
+function assertAuthResponse(x: unknown): asserts x is AuthResponseData {
+  if (x === null || typeof x !== "object" || Array.isArray(x)) {
+    throw new Error(
+      `decode_auth_response returned non-object value: ${x === null ? "null" : Array.isArray(x) ? "array" : typeof x}`,
+    );
+  }
+  const obj = x as Record<string, unknown>;
+  if (typeof obj.sessionId !== "bigint") {
+    throw new Error(
+      `decode_auth_response.sessionId must be bigint; got ${typeof obj.sessionId}`,
+    );
+  }
+  if (typeof obj.accepted !== "boolean") {
+    throw new Error(
+      `decode_auth_response.accepted must be boolean; got ${typeof obj.accepted}`,
+    );
+  }
+  if (typeof obj.reason !== "string") {
+    throw new Error(
+      `decode_auth_response.reason must be string; got ${typeof obj.reason}`,
+    );
+  }
+}
+
 let cached: QuantaDecoder | null = null;
 let pending: Promise<QuantaDecoder> | null = null;
 
@@ -68,14 +108,20 @@ export async function loadDecoder(
       createSchema: (bytes) => wasm.create_schema(bytes),
       applyDelta: (schema, state, delta) =>
         wasm.apply_delta(schema, state, delta),
-      decodeState: (schema, state) =>
-        wasm.decode_state(schema, state) as DecodedState,
+      decodeState: (schema, state) => {
+        const decoded: unknown = wasm.decode_state(schema, state);
+        assertDecodedState(decoded);
+        return decoded;
+      },
       encodeState: (schema, stateObj) =>
         wasm.encode_state(schema, stateObj),
       encodeAuthRequest: (token, clientVersion, sessionToken, transferToken) =>
         wasm.encode_auth_request(token, clientVersion, sessionToken ?? undefined, transferToken ?? undefined),
-      decodeAuthResponse: (bytes) =>
-        wasm.decode_auth_response(bytes) as AuthResponseData,
+      decodeAuthResponse: (bytes) => {
+        const decoded: unknown = wasm.decode_auth_response(bytes);
+        assertAuthResponse(decoded);
+        return decoded;
+      },
       encodeAuthResponse: (sessionId, accepted, reason) =>
         wasm.encode_auth_response(sessionId, accepted, reason),
       encodeBaselineAck: (baselineTick) =>

@@ -2,8 +2,17 @@ defmodule Quanta.Supervisor do
   @moduledoc """
   Top-level supervisor for the Quanta runtime.
 
-  Manages the HLC clock, WASM engine, actor infrastructure,
-  and side-effect task supervision.
+  Composes two sub-supervisors under `:rest_for_one` (HIGH-3):
+
+    1. `Quanta.Infrastructure.Supervisor` — SynConfig, Cluster, HLC, Nats,
+       Broadway, registries, side-effect task supervision.
+    2. `Quanta.Actor.Supervisor` — DynSup, CommandRouter, Bridge.Subscriptions,
+       CompactionScheduler.
+
+  `rest_for_one` means an infrastructure crash (e.g. catastrophic NATS loss)
+  restarts the actor runtime, but a crash inside the actor runtime does NOT
+  restart infrastructure — preventing actor-layer bugs from recycling
+  cluster-critical services.
   """
 
   use Supervisor
@@ -14,30 +23,11 @@ defmodule Quanta.Supervisor do
 
   @impl true
   def init(_opts) do
-    :ets.new(:quanta_actor_init_attempts, [:named_table, :public, :set])
-    Quanta.RateLimit.init()
-
-    topologies = Application.get_env(:libcluster, :topologies, [])
-
     children = [
-      {Cluster.Supervisor, [topologies, [name: Quanta.ClusterSupervisor]]},
-      Quanta.Cluster.Topology,
-      %{id: Quanta.Actor.CrdtPubSub, start: {:pg, :start_link, [Quanta.Actor.CrdtPubSub]}},
-      Quanta.HLC.Server,
-      Quanta.Wasm.EngineManager,
-      Quanta.Wasm.ModuleRegistry,
-      Quanta.Actor.ManifestRegistry,
-      Quanta.Actor.SchemaEvolution,
-      Quanta.Nats.CoreSupervisor,
-      Quanta.Nats.JetStream.Connection,
-      Quanta.Broadway.PipelineSupervisor,
-      Quanta.Actor.DynSup,
-      {Task.Supervisor, name: Quanta.SideEffect.TaskSupervisor},
-      Quanta.Actor.CommandRouter,
-      Quanta.Bridge.Subscriptions,
-      Quanta.Actor.CompactionScheduler
+      Quanta.Infrastructure.Supervisor,
+      Quanta.Actor.Supervisor
     ]
 
-    Supervisor.init(children, strategy: :one_for_one)
+    Supervisor.init(children, strategy: :rest_for_one)
   end
 end

@@ -28,6 +28,7 @@ export interface WebTransportOptions {
 export class WebTransportAdapter implements Transport {
   private wt: WebTransport | null = null;
   private datagramWriter: WritableStreamDefaultWriter<Uint8Array> | null = null;
+  private datagramReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   private closed = false;
 
   onDatagram: ((data: Uint8Array) => void) | null = null;
@@ -44,13 +45,27 @@ export class WebTransportAdapter implements Transport {
       wtOpts.serverCertificateHashes = opts.serverCertificateHashes;
     }
 
-    this.wt = new WebTransport(url, wtOpts);
-    await this.wt.ready;
+    const wt = new WebTransport(url, wtOpts);
+    this.wt = wt;
     this.closed = false;
+    await wt.ready;
+
+    // If close() was called while we were waiting for `ready`, honour the
+    // pending cancel: acquire the reader only to cancel it so the datagram
+    // lock is released, then bail out.
+    if (this.closed || this.wt !== wt) {
+      try {
+        const reader = wt.datagrams.readable.getReader();
+        reader.cancel().catch(() => {});
+      } catch {
+        // Reader may already be closed — ignore
+      }
+      throw new Error("WebTransport closed before ready");
+    }
 
     this.readDatagrams();
 
-    this.wt.closed
+    wt.closed
       .then(({ closeCode, reason }) => {
         this.closed = true;
         this.onClose?.(closeCode ?? 0, reason ?? "");
@@ -94,6 +109,12 @@ export class WebTransportAdapter implements Transport {
 
   close(): void {
     this.closed = true;
+    // Cancel the datagram reader so its lock is released even when the
+    // transport is otherwise quiet. If close() is called before the reader
+    // has been acquired (pre-`wt.ready`), `this.closed` is already set and
+    // `readDatagrams` will cancel immediately on acquisition.
+    this.datagramReader?.cancel().catch(() => {});
+    this.datagramReader = null;
     this.datagramWriter?.close().catch(() => {});
     this.datagramWriter = null;
     this.wt?.close();
@@ -103,6 +124,14 @@ export class WebTransportAdapter implements Transport {
   private async readDatagrams(): Promise<void> {
     if (!this.wt) return;
     const reader = this.wt.datagrams.readable.getReader();
+    this.datagramReader = reader;
+    // If close() fired before the reader was acquired, honour the pending
+    // cancel right away so the lock is released.
+    if (this.closed) {
+      reader.cancel().catch(() => {});
+      this.datagramReader = null;
+      return;
+    }
     try {
       while (!this.closed) {
         const { value, done } = await reader.read();
@@ -111,6 +140,10 @@ export class WebTransportAdapter implements Transport {
       }
     } catch {
       // Reader will throw when transport closes — expected
+    } finally {
+      if (this.datagramReader === reader) {
+        this.datagramReader = null;
+      }
     }
   }
 }

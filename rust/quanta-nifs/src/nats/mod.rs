@@ -8,7 +8,7 @@ use std::sync::Arc;
 use rustler::{Encoder, Env, Resource, ResourceArc, Term};
 use tokio::sync::Semaphore;
 
-use crate::macros::nif_safe;
+use crate::safety::nif_safe;
 
 pub(crate) mod atoms {
     rustler::atoms! {
@@ -26,7 +26,7 @@ pub(crate) mod atoms {
     }
 }
 
-const DEFAULT_MAX_IN_FLIGHT: usize = 10_000;
+const DEFAULT_MAX_IN_FLIGHT: usize = 256;
 const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 5_000;
 
 pub(crate) enum NifError {
@@ -51,7 +51,6 @@ pub struct NatsConnectionResource {
 }
 
 pub(crate) struct NatsInner {
-    pub client: async_nats::Client,
     pub jetstream: async_nats::jetstream::Context,
     pub runtime: tokio::runtime::Runtime,
     pub semaphore: Arc<Semaphore>,
@@ -75,13 +74,16 @@ pub(crate) fn encode_task_panic<'a>(
     (atoms::error(), ref_term, msg.encode(env)).encode(env)
 }
 
-#[rustler::nif(schedule = "DirtyCpu")]
+#[rustler::nif(schedule = "DirtyIo")]
 fn nats_connect<'a>(env: Env<'a>, urls: Vec<String>, opts: Term<'a>) -> Term<'a> {
     nif_safe!(env, {
-        let max_in_flight = term_map_get::<usize>(&opts, "max_in_flight")
-            .unwrap_or(DEFAULT_MAX_IN_FLIGHT);
-        let connect_timeout_ms = term_map_get::<u64>(&opts, "connect_timeout_ms")
-            .unwrap_or(DEFAULT_CONNECT_TIMEOUT_MS);
+        let max_in_flight =
+            term_map_get::<usize>(&opts, "max_in_flight").unwrap_or(DEFAULT_MAX_IN_FLIGHT);
+        if max_in_flight == 0 {
+            return (atoms::error(), "max_in_flight must be >= 1").encode(env);
+        }
+        let connect_timeout_ms =
+            term_map_get::<u64>(&opts, "connect_timeout_ms").unwrap_or(DEFAULT_CONNECT_TIMEOUT_MS);
 
         let runtime = match tokio::runtime::Runtime::new() {
             Ok(rt) => rt,
@@ -90,15 +92,14 @@ fn nats_connect<'a>(env: Env<'a>, urls: Vec<String>, opts: Term<'a>) -> Term<'a>
 
         let server_addr = urls.join(",");
 
-        let (client, jetstream) = match runtime.block_on(async {
+        let jetstream = match runtime.block_on(async {
             let client = async_nats::ConnectOptions::new()
                 .connection_timeout(std::time::Duration::from_millis(connect_timeout_ms))
                 .connect(&server_addr)
                 .await?;
-            let jetstream = async_nats::jetstream::new(client.clone());
-            Ok::<_, async_nats::ConnectError>((client, jetstream))
+            Ok::<_, async_nats::ConnectError>(async_nats::jetstream::new(client))
         }) {
-            Ok(pair) => pair,
+            Ok(js) => js,
             Err(e) => return (atoms::error(), format!("connect_error: {}", e)).encode(env),
         };
 
@@ -106,7 +107,6 @@ fn nats_connect<'a>(env: Env<'a>, urls: Vec<String>, opts: Term<'a>) -> Term<'a>
 
         let resource = ResourceArc::new(NatsConnectionResource {
             inner: NatsInner {
-                client,
                 jetstream,
                 runtime,
                 semaphore,

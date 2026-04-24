@@ -44,7 +44,14 @@ export function setupExecution(
     const payload = msg as Record<string, unknown>;
     if (typeof payload.data !== "string") return;
 
-    const data = JSON.parse(payload.data as string) as Record<string, string>;
+    let data: Record<string, string>;
+    try {
+      data = JSON.parse(payload.data as string) as Record<string, string>;
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "unknown error";
+      appendOutput(`parse error: ${reason}`, "output-error parse-error");
+      return;
+    }
 
     if (data.status === "ok") {
       if (data.stdout) {

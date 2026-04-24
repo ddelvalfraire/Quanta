@@ -26,6 +26,19 @@ const MAX_SNAPSHOT_ENTITIES: usize = 10_000;
 /// Maximum entity state size accepted from a passivation snapshot (1 MB).
 const MAX_SNAPSHOT_ENTITY_STATE: usize = 1_024 * 1_024;
 
+/// Maximum number of auxiliary snapshot subscribers per engine. Bounds the
+/// per-tick clone fan-out and prevents unbounded memory growth from a
+/// misbehaving caller that registers senders in a loop (review finding H-3).
+pub const MAX_SNAPSHOT_SUBSCRIBERS: usize = 16;
+
+/// Maximum number of client inputs `phase1_drain_inputs` will pull from the
+/// input channel in a single tick. The channel itself holds up to 4096
+/// messages, so without this cap a burst from one session could allocate
+/// and process thousands of `TickMessage::Input`s in a single tick — a
+/// denial-of-service amplification vector (review finding M-2). Excess
+/// inputs stay queued in the channel and are picked up on subsequent ticks.
+pub const MAX_INPUTS_PER_TICK: usize = 512;
+
 /// Below this threshold, busy-wait is cheaper than the OS scheduler overhead.
 const MIN_SLEEP_DURATION: Duration = Duration::from_micros(500);
 
@@ -204,7 +217,20 @@ impl TickEngine {
     /// Attach an additional per-tick snapshot consumer. Used by the demo's
     /// swarm-mind task so NPC AI can read authoritative positions without
     /// stealing them from the fanout's primary channel.
+    ///
+    /// Silently drops (with a `warn!`) any subscriber registered once
+    /// `MAX_SNAPSHOT_SUBSCRIBERS` is reached. Bounding the list prevents a
+    /// misbehaving caller from amplifying per-tick clone work or exhausting
+    /// memory by registering an unbounded number of senders (H-3).
     pub fn add_snapshot_subscriber(&mut self, tx: crossbeam_channel::Sender<TickSnapshot>) {
+        if self.snapshot_subscribers.len() >= MAX_SNAPSHOT_SUBSCRIBERS {
+            warn!(
+                island_id = %self.island_id,
+                cap = MAX_SNAPSHOT_SUBSCRIBERS,
+                "snapshot subscriber cap reached; dropping new subscriber"
+            );
+            return;
+        }
         self.snapshot_subscribers.push(tx);
     }
 
@@ -224,11 +250,7 @@ impl TickEngine {
                 pos_z: z,
                 vel_x: 0.0,
                 vel_z: 0.0,
-                last_input_seq: self
-                    .last_client_input_seq
-                    .get(slot)
-                    .copied()
-                    .unwrap_or(0),
+                last_input_seq: self.last_client_input_seq.get(slot).copied().unwrap_or(0),
             });
         }
         let snapshot = TickSnapshot {
@@ -240,11 +262,12 @@ impl TickEngine {
         }
         // Drop subscribers whose receivers have gone away; tolerate
         // transient "full" by keeping them alive for the next tick.
-        self.snapshot_subscribers.retain(|tx| match tx.try_send(snapshot.clone()) {
-            Ok(()) => true,
-            Err(crossbeam_channel::TrySendError::Full(_)) => true,
-            Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
-        });
+        self.snapshot_subscribers
+            .retain(|tx| match tx.try_send(snapshot.clone()) {
+                Ok(()) => true,
+                Err(crossbeam_channel::TrySendError::Full(_)) => true,
+                Err(crossbeam_channel::TrySendError::Disconnected(_)) => false,
+            });
     }
 
     pub fn set_effect_sender(&mut self, tx: crate::effect_io::EffectSender) {
@@ -655,8 +678,16 @@ impl TickEngine {
     }
 
     fn phase1_drain_inputs(&mut self) -> Vec<ClientInput> {
-        let mut inputs = Vec::new();
-        while let Ok(input) = self.input_rx.try_recv() {
+        // Bounded drain: cap iterations at `MAX_INPUTS_PER_TICK` so a burst
+        // from a single session can't allocate thousands of TickMessages in
+        // one tick (review finding M-2). Unconsumed inputs remain in the
+        // channel and are drained on subsequent ticks.
+        let mut inputs = Vec::with_capacity(MAX_INPUTS_PER_TICK.min(64));
+        for _ in 0..MAX_INPUTS_PER_TICK {
+            let input = match self.input_rx.try_recv() {
+                Ok(input) => input,
+                Err(_) => break,
+            };
             let last_seq = self
                 .last_input_seq
                 .entry(input.session_id.clone())
@@ -779,9 +810,7 @@ impl TickEngine {
                         // source of truth for correctness.
                         if let TickMessage::Input { payload, .. } = msg {
                             if let Some(seq) = wasm.extract_client_input_seq(payload) {
-                                let entry = last_client_input_seq
-                                    .entry(*entity_slot)
-                                    .or_insert(0);
+                                let entry = last_client_input_seq.entry(*entity_slot).or_insert(0);
                                 if seq > *entry {
                                     *entry = seq;
                                 }

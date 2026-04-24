@@ -76,7 +76,7 @@ pub fn read_bits_at(data: &[u8], bit_offset: u32, bit_width: u8) -> u64 {
     }
 
     let end_bit = bit_offset as u64 + bit_width as u64;
-    let needed_bytes = ((end_bit + 7) / 8) as usize;
+    let needed_bytes = end_bit.div_ceil(8) as usize;
     if data.len() < needed_bytes {
         return 0;
     }
@@ -189,9 +189,21 @@ record entity-state {
         let [ex, ey, ez] = layout.extract(&state);
 
         let full = read_state(&schema, &state).unwrap();
-        let fx_idx = schema.fields.iter().position(|f| f.name == "pos-x").unwrap();
-        let fy_idx = schema.fields.iter().position(|f| f.name == "pos-y").unwrap();
-        let fz_idx = schema.fields.iter().position(|f| f.name == "pos-z").unwrap();
+        let fx_idx = schema
+            .fields
+            .iter()
+            .position(|f| f.name == "pos-x")
+            .unwrap();
+        let fy_idx = schema
+            .fields
+            .iter()
+            .position(|f| f.name == "pos-y")
+            .unwrap();
+        let fz_idx = schema
+            .fields
+            .iter()
+            .position(|f| f.name == "pos-z")
+            .unwrap();
 
         let full_x = dequantize(full[fx_idx], qx) as f32;
         let full_y = dequantize(full[fy_idx], qy) as f32;
@@ -247,8 +259,7 @@ record entity-state {
     mana: u16,
 }
 "#;
-        let (schema, _) =
-            compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
+        let (schema, _) = compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
         assert!(PositionLayout::from_schema(&schema).is_none());
     }
 
@@ -261,8 +272,7 @@ record entity-state {
     health: u16,
 }
 "#;
-        let (schema, _) =
-            compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
+        let (schema, _) = compile_schema(wit, "entity-state", &CompileOptions::default()).unwrap();
         assert!(PositionLayout::from_schema(&schema).is_none());
     }
 

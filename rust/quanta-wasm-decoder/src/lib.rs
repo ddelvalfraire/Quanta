@@ -7,6 +7,14 @@ use quanta_core_rs::delta::encoder::{
 use quanta_core_rs::schema::evolution::import_schema;
 use quanta_core_rs::schema::{CompiledSchema, FieldMeta, FieldType};
 
+/// Forward Rust panics to `console.error` with readable stack traces.
+///
+/// Auto-invoked by wasm-bindgen on module init.
+#[wasm_bindgen(start)]
+pub fn init_panic_hook() {
+    console_error_panic_hook::set_once();
+}
+
 #[wasm_bindgen]
 #[derive(Debug)]
 pub struct SchemaHandle {
@@ -322,17 +330,59 @@ pub fn decode_delta_datagram(bytes: &[u8]) -> Result<JsValue, JsError> {
 // without pulling quinn/tokio.
 // ---------------------------------------------------------------------------
 
-const INITIAL_STATE_HEADER: usize = 8 + 1 + 1 + 4;
+// Header layout when `FLAG_INCLUDES_SCHEMA` is CLEARED:
+//   baseline_tick(8) + flags(1) + schema_version(1) + entity_count(4) = 14
+const INITIAL_STATE_HEADER_NO_SCHEMA: usize = 8 + 1 + 1 + 4;
+// Header layout when `FLAG_INCLUDES_SCHEMA` is SET, excluding the variable
+// schema bytes themselves:
+//   baseline_tick(8) + flags(1) + schema_version(1) + schema_len(4) +
+//   entity_count(4) = 18. The schema bytes sit between `schema_len` and
+//   `entity_count`, so this is a minimum — any real flag-set payload must be
+//   larger once the schema is included.
+const INITIAL_STATE_HEADER_WITH_SCHEMA: usize = 8 + 1 + 1 + 4 + 4;
 const FLAG_INCLUDES_SCHEMA: u8 = 0x01;
 
-#[wasm_bindgen]
-pub fn decode_initial_state(bytes: &[u8]) -> Result<JsValue, JsError> {
-    if bytes.len() < INITIAL_STATE_HEADER {
-        return Err(JsError::new(&format!(
-            "initial state truncated: need {INITIAL_STATE_HEADER}, got {}",
+/// Decoded initial-state payload in plain Rust form. Mirrors the server-side
+/// `InitialStateMessage` from `quanta-realtime-server/src/sync.rs`.
+///
+/// This pure-Rust shape exists so native tests (not just wasm-bindgen-test)
+/// can exercise the byte-offset math for the flag-cleared path without
+/// pulling in quinn/tokio via the server crate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InitialStatePayload {
+    pub baseline_tick: u64,
+    pub flags: u8,
+    pub schema_version: u8,
+    pub compiled_schema: Option<Vec<u8>>,
+    pub entities: Vec<InitialStateEntity>,
+}
+
+/// Single entity entry inside an [`InitialStatePayload`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InitialStateEntity {
+    pub entity_slot: u32,
+    pub state: Vec<u8>,
+}
+
+/// Decode an initial-state wire payload into plain Rust values.
+///
+/// The `FLAG_INCLUDES_SCHEMA` bit (0x01) in `flags` determines whether the
+/// `schema_len:u32 + compiled_schema_bytes` block is present BEFORE
+/// `entity_count`. When the flag is cleared, the server encoder elides that
+/// block entirely (see `quanta-realtime-server/src/sync.rs::encode_initial_state`).
+/// This decoder must mirror that layout exactly.
+pub fn decode_initial_state_native(bytes: &[u8]) -> Result<InitialStatePayload, String> {
+    // Minimum header bytes needed before we even know whether to look for
+    // schema metadata: tick(8) + flags(1) + schema_version(1) = 10.
+    const PRE_FLAG_HEADER: usize = 8 + 1 + 1;
+    if bytes.len() < PRE_FLAG_HEADER {
+        return Err(format!(
+            "truncated initial state header: need {PRE_FLAG_HEADER} bytes \
+             to read tick/flags/schema_version, got {}",
             bytes.len()
-        )));
+        ));
     }
+
     let mut pos = 0;
     let baseline_tick = u64::from_be_bytes(bytes[pos..pos + 8].try_into().unwrap());
     pos += 8;
@@ -341,14 +391,31 @@ pub fn decode_initial_state(bytes: &[u8]) -> Result<JsValue, JsError> {
     let schema_version = bytes[pos];
     pos += 1;
 
+    // Now that the flag is known, enforce the flag-specific minimum: flag-
+    // cleared requires entity_count(4), flag-set requires at least
+    // schema_len(4) + entity_count(4) (schema bytes themselves are validated
+    // against schema_len below).
+    let required = if flags & FLAG_INCLUDES_SCHEMA != 0 {
+        INITIAL_STATE_HEADER_WITH_SCHEMA
+    } else {
+        INITIAL_STATE_HEADER_NO_SCHEMA
+    };
+    if bytes.len() < required {
+        return Err(format!(
+            "truncated initial state header: flag=0x{flags:02x} requires \
+             at least {required} bytes, got {}",
+            bytes.len()
+        ));
+    }
+
     let compiled_schema = if flags & FLAG_INCLUDES_SCHEMA != 0 {
         if pos + 4 > bytes.len() {
-            return Err(JsError::new("truncated schema header"));
+            return Err("truncated initial state header: schema_len".into());
         }
         let schema_len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
         pos += 4;
         if pos + schema_len > bytes.len() {
-            return Err(JsError::new("truncated schema bytes"));
+            return Err("truncated schema bytes".into());
         }
         let s = bytes[pos..pos + schema_len].to_vec();
         pos += schema_len;
@@ -358,49 +425,78 @@ pub fn decode_initial_state(bytes: &[u8]) -> Result<JsValue, JsError> {
     };
 
     if pos + 4 > bytes.len() {
-        return Err(JsError::new("truncated entity count"));
+        return Err("truncated entity count".into());
     }
     let entity_count = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap());
     pos += 4;
 
-    let entities = js_sys::Array::new();
+    let mut entities = Vec::with_capacity(entity_count as usize);
     for _ in 0..entity_count {
         if pos + 8 > bytes.len() {
-            return Err(JsError::new("truncated entity header"));
+            return Err("truncated entity header".into());
         }
         let slot = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap());
         pos += 4;
         let state_len = u32::from_be_bytes(bytes[pos..pos + 4].try_into().unwrap()) as usize;
         pos += 4;
         if pos + state_len > bytes.len() {
-            return Err(JsError::new("truncated entity state"));
+            return Err("truncated entity state".into());
         }
-        let state = &bytes[pos..pos + state_len];
+        let state = bytes[pos..pos + state_len].to_vec();
         pos += state_len;
+        entities.push(InitialStateEntity {
+            entity_slot: slot,
+            state,
+        });
+    }
+
+    Ok(InitialStatePayload {
+        baseline_tick,
+        flags,
+        schema_version,
+        compiled_schema,
+        entities,
+    })
+}
+
+#[wasm_bindgen]
+pub fn decode_initial_state(bytes: &[u8]) -> Result<JsValue, JsError> {
+    let payload = decode_initial_state_native(bytes).map_err(|e| JsError::new(&e))?;
+
+    let entities = js_sys::Array::new();
+    for entity in &payload.entities {
         let entry = js_sys::Object::new();
-        js_sys::Reflect::set(&entry, &"entitySlot".into(), &JsValue::from(slot))
-            .map_err(|_| JsError::new("set entitySlot"))?;
+        js_sys::Reflect::set(
+            &entry,
+            &"entitySlot".into(),
+            &JsValue::from(entity.entity_slot),
+        )
+        .map_err(|_| JsError::new("set entitySlot"))?;
         js_sys::Reflect::set(
             &entry,
             &"state".into(),
-            &js_sys::Uint8Array::from(state).into(),
+            &js_sys::Uint8Array::from(entity.state.as_slice()).into(),
         )
         .map_err(|_| JsError::new("set state"))?;
         entities.push(&entry);
     }
 
     let out = js_sys::Object::new();
-    js_sys::Reflect::set(&out, &"baselineTick".into(), &JsValue::from(baseline_tick))
-        .map_err(|_| JsError::new("set baselineTick"))?;
-    js_sys::Reflect::set(&out, &"flags".into(), &JsValue::from(flags))
+    js_sys::Reflect::set(
+        &out,
+        &"baselineTick".into(),
+        &JsValue::from(payload.baseline_tick),
+    )
+    .map_err(|_| JsError::new("set baselineTick"))?;
+    js_sys::Reflect::set(&out, &"flags".into(), &JsValue::from(payload.flags))
         .map_err(|_| JsError::new("set flags"))?;
     js_sys::Reflect::set(
         &out,
         &"schemaVersion".into(),
-        &JsValue::from(schema_version),
+        &JsValue::from(payload.schema_version),
     )
     .map_err(|_| JsError::new("set schemaVersion"))?;
-    if let Some(s) = compiled_schema {
+    if let Some(s) = &payload.compiled_schema {
         js_sys::Reflect::set(
             &out,
             &"compiledSchema".into(),

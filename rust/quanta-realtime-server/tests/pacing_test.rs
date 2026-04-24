@@ -57,6 +57,10 @@ impl Session for MockSession {
     }
 
     fn close(&self, _reason: &str) {}
+
+    fn on_closed(&self) -> quanta_realtime_server::session::ClosedFuture {
+        Box::pin(std::future::pending())
+    }
 }
 
 #[tokio::test(start_paused = true)]

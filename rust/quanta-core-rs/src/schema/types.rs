@@ -337,12 +337,28 @@ impl std::error::Error for SchemaError {}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SchemaWarning {
-    QuantizeWithoutClamp { field: String },
-    BitsGeNativeWidth { field: String, computed: u8, native: u8 },
-    RedundantClamp { field: String },
-    UnknownAnnotation { field: String, annotation: String },
-    MalformedAnnotation { field: String, directive: String },
-    PredictOnNonNumeric { field: String },
+    QuantizeWithoutClamp {
+        field: String,
+    },
+    BitsGeNativeWidth {
+        field: String,
+        computed: u8,
+        native: u8,
+    },
+    RedundantClamp {
+        field: String,
+    },
+    UnknownAnnotation {
+        field: String,
+        annotation: String,
+    },
+    MalformedAnnotation {
+        field: String,
+        directive: String,
+    },
+    PredictOnNonNumeric {
+        field: String,
+    },
 }
 
 impl fmt::Display for SchemaWarning {
@@ -452,9 +468,7 @@ mod tests {
 
     #[test]
     fn schema_warning_display() {
-        let w = SchemaWarning::QuantizeWithoutClamp {
-            field: "x".into(),
-        };
+        let w = SchemaWarning::QuantizeWithoutClamp { field: "x".into() };
         assert!(w.to_string().contains("quantize without clamp"));
     }
 }

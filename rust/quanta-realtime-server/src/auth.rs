@@ -4,6 +4,11 @@ use crate::error::EndpointError;
 
 const MAX_AUTH_REQUEST_BYTES: usize = 65_536;
 
+/// The well-known dev token that ships in `main.rs`'s fallback path. Exposed
+/// here so the library-level startup guard can recognise it and refuse to
+/// run on non-loopback bind addresses (review finding C-3).
+pub const DEFAULT_DEV_TOKEN: &str = "qk_rw_dev_devdevdevdevdevdevdevdevdevdevde";
+
 #[derive(Debug, Clone, PartialEq, bitcode::Encode, bitcode::Decode)]
 pub struct AuthRequest {
     pub token: String,
@@ -24,6 +29,15 @@ pub struct AuthResponse {
 
 pub trait AuthValidator: Send + Sync {
     fn validate(&self, req: &AuthRequest) -> Result<AuthResponse, EndpointError>;
+
+    /// Returns `true` when this validator is configured with the shipped
+    /// hardcoded dev token. `run_server` uses this to refuse to start on
+    /// non-loopback addresses, preventing an operator from accidentally
+    /// exposing the demo credential to the public internet (C-3).
+    /// Default: `false` — production validators keep their own secrets.
+    fn is_insecure_dev_token(&self) -> bool {
+        false
+    }
 }
 
 #[cfg(any(test, feature = "test-utils"))]
@@ -59,15 +73,43 @@ impl AuthValidator for AcceptAllValidator {
 /// suitable for production deployments.
 pub struct DevTokenValidator {
     expected_token: String,
-    counter: std::sync::atomic::AtomicU64,
 }
 
 impl DevTokenValidator {
     pub fn new(expected_token: impl Into<String>) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             expected_token: expected_token.into(),
-            counter: std::sync::atomic::AtomicU64::new(1),
         })
+    }
+}
+
+/// Draw a fresh 64-bit session id from the operating system's CSPRNG.
+///
+/// Sequential counters leak the total-session count and let any authenticated
+/// client trivially enumerate every other active session id (review finding
+/// C-1). `getrandom` pulls from the OS entropy source, so two consecutive
+/// session ids have no predictable relationship. The returned value is
+/// never zero — zero is the sentinel used for rejected auth responses.
+fn fresh_session_id() -> u64 {
+    loop {
+        let mut buf = [0u8; 8];
+        if getrandom::getrandom(&mut buf).is_err() {
+            // CSPRNG failure is a platform-level fault. Fall back to a
+            // non-zero nanosecond timestamp so the server still makes
+            // forward progress rather than panicking.
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as u64)
+                .unwrap_or(1);
+            if now != 0 {
+                return now;
+            }
+            continue;
+        }
+        let id = u64::from_le_bytes(buf);
+        if id != 0 {
+            return id;
+        }
     }
 }
 
@@ -89,14 +131,23 @@ impl AuthValidator for DevTokenValidator {
                 reason: "invalid token".into(),
             });
         }
-        let session_id = self
-            .counter
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(AuthResponse {
-            session_id,
+            session_id: fresh_session_id(),
             accepted: true,
             reason: String::new(),
         })
+    }
+
+    fn is_insecure_dev_token(&self) -> bool {
+        // Constant-time compare avoids leaking information about partial
+        // matches via timing.
+        let a = self.expected_token.as_bytes();
+        let b = DEFAULT_DEV_TOKEN.as_bytes();
+        a.len() == b.len()
+            && a.iter()
+                .zip(b.iter())
+                .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+                == 0
     }
 }
 

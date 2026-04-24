@@ -32,6 +32,7 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 rustc-hash = "2"
 crossbeam-channel = "0.5"
+getrandom = "0.2"
 hmac = "0.12"
 sha2 = "0.10"
 arc-swap = "1"
