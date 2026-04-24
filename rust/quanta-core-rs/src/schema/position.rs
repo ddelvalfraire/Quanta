@@ -76,7 +76,7 @@ pub fn read_bits_at(data: &[u8], bit_offset: u32, bit_width: u8) -> u64 {
     }
 
     let end_bit = bit_offset as u64 + bit_width as u64;
-    let needed_bytes = ((end_bit + 7) / 8) as usize;
+    let needed_bytes = end_bit.div_ceil(8) as usize;
     if data.len() < needed_bytes {
         return 0;
     }
