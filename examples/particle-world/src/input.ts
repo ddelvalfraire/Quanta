@@ -9,9 +9,14 @@
 
 import { encode_client_input } from "../wasm-decoder/quanta_wasm_decoder";
 import { SelfPredictor } from "./predictor";
+import { TICK_PERIOD_MS } from "./state";
 
-// Match server `DEMO_TICK_RATE_HZ = 30` in particle-server.rs.
-const TICK_PERIOD_MS = Math.round(1000 / 30);
+// `TICK_PERIOD_MS` is the precise 1000 / 30 Hz period (33.333…ms), shared
+// with state.ts and predictor.ts so all three agree on tick duration. The
+// Rust `encode_client_input` accepts `dt_ms: u16`, so we round only at the
+// call site — the constant itself must stay exact for setInterval cadence
+// and cross-module math.
+const TICK_PERIOD_DT_MS_U16 = Math.round(TICK_PERIOD_MS);
 
 export function startInputLoop(
   wt: WebTransport,
@@ -64,7 +69,7 @@ export function startInputLoop(
     // server eventually acks `seq`, the predictor will drop it and
     // replay only inputs with higher seq.
     predictor.recordInput(seq, dx, dz);
-    const bytes = encode_client_input(0, seq, dx, dz, 0, TICK_PERIOD_MS);
+    const bytes = encode_client_input(0, seq, dx, dz, 0, TICK_PERIOD_DT_MS_U16);
     writer.write(bytes).catch(() => {
       /* connection closing */
     });
