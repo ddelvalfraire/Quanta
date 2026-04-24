@@ -164,6 +164,14 @@ impl IslandManager {
     /// the reader is dropped; if no other strong holder remains (no fanout
     /// factory configured, no QUIC close watcher still pending), the weak ref
     /// here goes dead and the manager reclaims the entity slot.
+    ///
+    /// Invocation sites (intentionally narrow, see H-2 perf fix):
+    ///   - `run()` idle tick (1 Hz) — production liveness probe.
+    ///   - `process_one_command` (#[cfg(test)]) — lets tests observe a drop
+    ///     without waiting for the tick.
+    /// Never called from the per-command path — the walk is O(N) and at 1k
+    /// clients + 15k commands/sec that's 15M hash-map scans/sec of pure
+    /// overhead.
     fn sweep_dead_sessions(&mut self) {
         // Fire only when (a) registration saw at least one external holder
         // (baseline > 0) and (b) every strong ref has since been dropped.
@@ -194,7 +202,12 @@ impl IslandManager {
     }
 
     fn handle_command(&mut self, cmd: ManagerCommand) {
-        self.sweep_dead_sessions();
+        // Deliberately does NOT call `sweep_dead_sessions()`.  The sweep walks
+        // every registry entry and is O(N) in connected clients; at 1k clients
+        // and ~15k commands/sec it costs 15M hash-map scans/sec.  The idle
+        // `tokio::time::interval(1s)` branch in `run()` covers production
+        // cleanup, and `process_one_command` (#[cfg(test)]) sweeps explicitly
+        // so tests can observe drops without waiting a full tick.
         match cmd {
             ManagerCommand::Activate { manifest, reply } => {
                 let result = self.handle_activate(manifest);
