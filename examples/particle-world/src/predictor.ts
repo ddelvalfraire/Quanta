@@ -36,6 +36,16 @@ const TICK_PERIOD_MS = TICK_DT_SEC * 1000;
  */
 const HARD_SNAP_THRESHOLD = 500;
 
+/**
+ * Upper bound on unacknowledged inputs retained for replay. At 30 Hz
+ * this is 10 seconds of backlog — well beyond any realistic RTT or
+ * congestion window. Past this point the server has effectively stopped
+ * acking and replaying every entry on reconcile would cause a long task
+ * on the main thread. We drop the oldest inputs to preserve the most
+ * recent user intent, which is what the next reconcile will care about.
+ */
+export const MAX_PENDING_INPUTS = 300;
+
 export type PredictedState = {
   posX: number;
   posZ: number;
@@ -104,6 +114,12 @@ export class SelfPredictor {
     this.prev = { ...this.curr };
     this.curr = applyTickStep(this.curr, ndx, ndz);
     this.currBoundaryT = now;
+    // Bound the pending buffer so a stalled-ack condition can't cause
+    // unbounded growth + a long task on the next reconcile. Dropping
+    // the oldest preserves the most recent user intent.
+    if (this.pending.length >= MAX_PENDING_INPUTS) {
+      this.pending.shift();
+    }
     this.pending.push({ seq, dirX: ndx, dirZ: ndz, recordedAt: now });
   }
 
