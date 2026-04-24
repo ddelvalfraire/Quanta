@@ -162,51 +162,59 @@ fn encode_effects<'a>(env: Env<'a>, effects: &[WitEffect]) -> Term<'a> {
 }
 
 fn encode_effect<'a>(env: Env<'a>, effect: &WitEffect) -> Term<'a> {
+    // `map_put` only returns `Err(BadArg)` if `self` is not a map. We start
+    // every arm with `Term::map_new(env)`, so the receiver is always a map
+    // and a failure here would indicate a degenerate BEAM env. We use
+    // `.expect(...)` with a descriptive message instead of a bare
+    // `.unwrap()` so that, if the impossible does happen, the crash report
+    // points at the specific effect field that tripped it.
+    const MSG: &str = "encode_effect: map_put on fresh map must not fail";
+
     match effect {
         WitEffect::Persist => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "persist".encode(env)).unwrap();
+            m = m.map_put("type".encode(env), "persist".encode(env)).expect(MSG);
             m
         }
         WitEffect::Send(send) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "send".encode(env)).unwrap();
-            m = m.map_put("target".encode(env), send.target.as_str().encode(env)).unwrap();
-            m = m.map_put("payload".encode(env), bytes_to_binary(env, &send.payload)).unwrap();
+            m = m.map_put("type".encode(env), "send".encode(env)).expect(MSG);
+            m = m.map_put("target".encode(env), send.target.as_str().encode(env)).expect(MSG);
+            m = m.map_put("payload".encode(env), bytes_to_binary(env, &send.payload)).expect(MSG);
             if let Some(ref cid) = send.correlation_id {
-                m = m.map_put("correlation_id".encode(env), cid.as_str().encode(env)).unwrap();
+                m = m.map_put("correlation_id".encode(env), cid.as_str().encode(env)).expect(MSG);
             }
             m
         }
         WitEffect::Reply(data) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "reply".encode(env)).unwrap();
-            m = m.map_put("data".encode(env), bytes_to_binary(env, data)).unwrap();
+            m = m.map_put("type".encode(env), "reply".encode(env)).expect(MSG);
+            m = m.map_put("data".encode(env), bytes_to_binary(env, data)).expect(MSG);
             m
         }
         WitEffect::SetTimer(timer) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "set_timer".encode(env)).unwrap();
-            m = m.map_put("name".encode(env), timer.name.as_str().encode(env)).unwrap();
-            m = m.map_put("delay_ms".encode(env), timer.delay_ms.encode(env)).unwrap();
+            m = m.map_put("type".encode(env), "set_timer".encode(env)).expect(MSG);
+            m = m.map_put("name".encode(env), timer.name.as_str().encode(env)).expect(MSG);
+            m = m.map_put("delay_ms".encode(env), timer.delay_ms.encode(env)).expect(MSG);
             m
         }
         WitEffect::CancelTimer(name) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "cancel_timer".encode(env)).unwrap();
-            m = m.map_put("name".encode(env), name.as_str().encode(env)).unwrap();
+            m = m.map_put("type".encode(env), "cancel_timer".encode(env)).expect(MSG);
+            m = m.map_put("name".encode(env), name.as_str().encode(env)).expect(MSG);
             m
         }
         WitEffect::EmitEvent(data) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "emit_event".encode(env)).unwrap();
-            m = m.map_put("data".encode(env), bytes_to_binary(env, data)).unwrap();
+            m = m.map_put("type".encode(env), "emit_event".encode(env)).expect(MSG);
+            m = m.map_put("data".encode(env), bytes_to_binary(env, data)).expect(MSG);
             m
         }
         WitEffect::Log(msg) => {
             let mut m = Term::map_new(env);
-            m = m.map_put("type".encode(env), "log".encode(env)).unwrap();
-            m = m.map_put("message".encode(env), msg.as_str().encode(env)).unwrap();
+            m = m.map_put("type".encode(env), "log".encode(env)).expect(MSG);
+            m = m.map_put("message".encode(env), msg.as_str().encode(env)).expect(MSG);
             m
         }
     }

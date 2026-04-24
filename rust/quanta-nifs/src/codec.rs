@@ -161,7 +161,10 @@ fn encode_metadata<'a>(env: Env<'a>, metadata: &[(String, String)]) -> Term<'a> 
         .collect();
     Term::map_from_pairs(env, &pairs).unwrap_or_else(|_| {
         let empty: &[(Term, Term)] = &[];
-        Term::map_from_pairs(env, empty).unwrap()
+        Term::map_from_pairs(env, empty).expect(
+            "empty metadata fallback map construction cannot fail: \
+             no duplicate keys possible with zero pairs",
+        )
     })
 }
 
