@@ -283,8 +283,15 @@ defmodule Quanta.Actor.Server do
     state = reset_idle_timer(state)
 
     if state.ephemeral_store do
-      {:ok, bytes} = EphemeralStore.encode_all(state.ephemeral_store)
-      send(channel_pid, {:ephemeral_state, bytes})
+      case EphemeralStore.encode_all(state.ephemeral_store) do
+        {:ok, bytes} ->
+          send(channel_pid, {:ephemeral_state, bytes})
+
+        {:error, reason} ->
+          Logger.warning(
+            "EphemeralStore.encode_all failed for #{inspect(state.actor_id)}: #{inspect(reason)}"
+          )
+      end
     end
 
     {:reply, :ok, state}
@@ -352,8 +359,16 @@ defmodule Quanta.Actor.Server do
   def handle_cast({:ephemeral_update, key, value_bytes, sender_pid}, state) do
     if state.ephemeral_store do
       :ok = EphemeralStore.set(state.ephemeral_store, key, value_bytes)
-      {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
-      broadcast_ephemeral(state, encoded, sender_pid)
+
+      case EphemeralStore.encode(state.ephemeral_store, key) do
+        {:ok, encoded} ->
+          broadcast_ephemeral(state, encoded, sender_pid)
+
+        {:error, reason} ->
+          Logger.warning(
+            "EphemeralStore.encode failed for #{inspect(state.actor_id)} key=#{inspect(key)}: #{inspect(reason)}"
+          )
+      end
     end
 
     {:noreply, state}
@@ -364,8 +379,15 @@ defmodule Quanta.Actor.Server do
     if state.ephemeral_store do
       case EphemeralStore.apply_encoded(state.ephemeral_store, bytes) do
         :ok ->
-          {:ok, canonical} = EphemeralStore.encode_all(state.ephemeral_store)
-          broadcast_ephemeral(state, canonical, sender_pid)
+          case EphemeralStore.encode_all(state.ephemeral_store) do
+            {:ok, canonical} ->
+              broadcast_ephemeral(state, canonical, sender_pid)
+
+            {:error, reason} ->
+              Logger.warning(
+                "EphemeralStore.encode_all failed for #{inspect(state.actor_id)}: #{inspect(reason)}"
+              )
+          end
 
         {:error, _} ->
           :ok
@@ -802,8 +824,16 @@ defmodule Quanta.Actor.Server do
     if state.ephemeral_store do
       key = "user:#{user_id}"
       :ok = EphemeralStore.delete(state.ephemeral_store, key)
-      {:ok, encoded} = EphemeralStore.encode(state.ephemeral_store, key)
-      broadcast_ephemeral(state, encoded, nil)
+
+      case EphemeralStore.encode(state.ephemeral_store, key) do
+        {:ok, encoded} ->
+          broadcast_ephemeral(state, encoded, nil)
+
+        {:error, reason} ->
+          Logger.warning(
+            "EphemeralStore.encode failed during cleanup for #{inspect(state.actor_id)} key=#{inspect(key)}: #{inspect(reason)}"
+          )
+      end
     end
   end
 
