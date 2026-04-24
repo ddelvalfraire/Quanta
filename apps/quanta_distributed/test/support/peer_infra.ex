@@ -20,10 +20,6 @@ defmodule Quanta.Test.PeerInfra do
 
         Application.put_env(:quanta_distributed, :actor_modules, actor_modules)
 
-        if :ets.whereis(:quanta_actor_init_attempts) == :undefined do
-          :ets.new(:quanta_actor_init_attempts, [:named_table, :public, :set])
-        end
-
         {:ok, _} = Quanta.Actor.DynSup.start_link([])
 
         # Topology is intentionally omitted — RPC targets always activate

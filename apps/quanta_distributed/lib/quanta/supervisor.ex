@@ -14,7 +14,6 @@ defmodule Quanta.Supervisor do
 
   @impl true
   def init(_opts) do
-    :ets.new(:quanta_actor_init_attempts, [:named_table, :public, :set])
     Quanta.RateLimit.init()
 
     topologies = Application.get_env(:libcluster, :topologies, [])

@@ -495,19 +495,24 @@ defmodule Quanta.Actor.ServerTest do
     end
   end
 
-  describe "init failure tracking" do
-    test "3 consecutive init failures stops with :normal" do
+  describe "init failure propagation (MEDIUM-1)" do
+    test "init failure propagates real crash reason — no bespoke :normal stop" do
       Process.flag(:trap_exit, true)
       :ok = ManifestRegistry.put(build_manifest(type: "failer"))
 
-      actor_id = %ActorId{namespace: "test", type: "failer", id: "fail-3x"}
+      actor_id = %ActorId{namespace: "test", type: "failer", id: "fail-propagate"}
       opts = [actor_id: actor_id, module: Quanta.Test.Actors.Failer]
 
-      for i <- 1..3 do
+      # Each start should stop with the real exception reason, never :normal.
+      # The supervisor (`:transient` + max_restarts) is the single source of
+      # restart bounds; the server must not mask the crash reason itself.
+      for _ <- 1..3 do
         {:ok, pid} = Server.start_link(opts)
-        assert_receive {:EXIT, ^pid, reason}, 1000
+        assert_receive {:EXIT, ^pid, reason}, 1_000
 
-        if i == 3, do: assert(reason == :normal)
+        refute reason == :normal,
+               "Server.activate/2 must not swallow init failures as :normal — " <>
+                 "got reason=#{inspect(reason)}"
 
         Process.sleep(50)
       end

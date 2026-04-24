@@ -18,7 +18,6 @@ defmodule Quanta.Actor.Server do
   @mailbox_warn_threshold 1_000
   @mailbox_shed_threshold 5_000
   @mailbox_critical_threshold 10_000
-  @init_attempts_table :quanta_actor_init_attempts
   @ephemeral_ttl_ms 30_000
   @message_event [:quanta, :actor, :message, :stop]
   @activate_event [:quanta, :actor, :activate, :stop]
@@ -508,26 +507,19 @@ defmodule Quanta.Actor.Server do
     state = %{state | manifest: manifest, rate_limit: manifest.rate_limits.messages_per_second}
     t0 = System.monotonic_time()
 
-    try do
-      state =
-        case manifest.state.kind do
-          {:crdt, _type} -> activate_crdt(state)
-          _ -> activate_standard(state)
-        end
+    state =
+      case manifest.state.kind do
+        {:crdt, _type} -> activate_crdt(state)
+        _ -> activate_standard(state)
+      end
 
-      state = schedule_idle_timer(state)
-      clear_init_failures(state.actor_id)
+    state = schedule_idle_timer(state)
 
-      :telemetry.execute(@activate_event,
-        %{duration: System.monotonic_time() - t0},
-        %{actor_id: state.actor_id})
+    :telemetry.execute(@activate_event,
+      %{duration: System.monotonic_time() - t0},
+      %{actor_id: state.actor_id})
 
-      {:noreply, state}
-    rescue
-      e ->
-        stacktrace = __STACKTRACE__
-        handle_init_failure(state, e, stacktrace)
-    end
+    {:noreply, state}
   end
 
   defp activate_standard(state) do
@@ -877,49 +869,6 @@ defmodule Quanta.Actor.Server do
     end
   end
 
-
-  defp handle_init_failure(state, error, stacktrace) do
-    actor_id = state.actor_id
-
-    :telemetry.execute(
-      [:quanta, :actor, :crash],
-      %{},
-      %{actor_id: actor_id, reason: error, stacktrace: stacktrace}
-    )
-
-    if :ets.whereis(@init_attempts_table) != :undefined do
-      count =
-        try do
-          :ets.update_counter(@init_attempts_table, actor_id, {2, 1})
-        rescue
-          ArgumentError ->
-            :ets.insert(@init_attempts_table, {actor_id, 1})
-            1
-        end
-
-      if count >= 3 do
-        Logger.error("Actor #{inspect(actor_id)} failed init 3 times, giving up")
-        :ets.delete(@init_attempts_table, actor_id)
-        {:stop, :normal, state}
-      else
-        Logger.error("Actor #{inspect(actor_id)} init failure ##{count}: #{Exception.message(error)}")
-        {:stop, {error, stacktrace}, state}
-      end
-    else
-      Logger.error("Actor #{inspect(actor_id)} init failure: #{Exception.message(error)}")
-      {:stop, {error, stacktrace}, state}
-    end
-  end
-
-  defp clear_init_failures(actor_id) do
-    if :ets.whereis(@init_attempts_table) != :undefined do
-      :ets.delete(@init_attempts_table, actor_id)
-    end
-
-    :ok
-  rescue
-    ArgumentError -> :ok
-  end
 
   defp check_mailbox(state) do
     {:message_queue_len, len} = Process.info(self(), :message_queue_len)
