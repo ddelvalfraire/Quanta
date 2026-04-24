@@ -4,7 +4,7 @@ use futures_util::FutureExt;
 use rustler::{Binary, Encoder, Env, LocalPid, NewBinary, OwnedEnv, Resource, ResourceArc, Term};
 
 use super::{atoms, encode_task_panic, NatsConnectionResource, NifError};
-use crate::macros::nif_safe;
+use crate::safety::nif_safe;
 
 pub struct ConsumerResource {
     pub consumer: async_nats::jetstream::consumer::Consumer<

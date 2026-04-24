@@ -8,7 +8,7 @@ use std::sync::Arc;
 use rustler::{Encoder, Env, Resource, ResourceArc, Term};
 use tokio::sync::Semaphore;
 
-use crate::macros::nif_safe;
+use crate::safety::nif_safe;
 
 pub(crate) mod atoms {
     rustler::atoms! {

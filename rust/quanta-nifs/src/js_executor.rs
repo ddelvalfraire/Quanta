@@ -106,7 +106,7 @@ pub fn execute_js<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match execute_js_inner(
             wasm_bytes.as_slice(),
             js_source.as_slice(),

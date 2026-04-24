@@ -1,4 +1,3 @@
-mod macros;
 mod safety;
 mod resources;
 mod bridge_codec;
@@ -16,7 +15,7 @@ use rustler::Env;
 
 #[rustler::nif]
 fn ping<'a>(env: rustler::Env<'a>) -> rustler::Term<'a> {
-    macros::nif_safe!(env, {
+    safety::nif_safe!(env, {
         use rustler::Encoder;
         true.encode(env)
     })

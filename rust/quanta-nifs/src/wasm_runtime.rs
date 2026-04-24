@@ -318,7 +318,7 @@ struct WitEnvelope {
 
 #[rustler::nif]
 fn engine_new(env: Env) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match engine_new_inner() {
             Ok(arc) => (atoms::ok(), arc).encode(env),
             Err(e) => err_term(env, e),
@@ -340,7 +340,7 @@ fn component_compile<'a>(
     engine_arc: ResourceArc<EngineResource>,
     wasm_bytes: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match Component::new(&engine_arc.0, wasm_bytes.as_slice()) {
             Ok(c) => (atoms::ok(), ResourceArc::new(ComponentResource(c))).encode(env),
             Err(e) => err_term(env, e),
@@ -350,7 +350,7 @@ fn component_compile<'a>(
 
 #[rustler::nif]
 fn linker_new(env: Env, engine_arc: ResourceArc<EngineResource>) -> Term {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match linker_new_inner(&engine_arc.0) {
             Ok(arc) => (atoms::ok(), arc).encode(env),
             Err(e) => err_term(env, e),
@@ -370,7 +370,7 @@ fn component_serialize<'a>(
     component_arc: ResourceArc<ComponentResource>,
     hmac_key: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let key = hmac_key.as_slice();
         if key.len() < HMAC_MIN_KEY_LEN {
             return err_term(env, format!("HMAC key must be at least {} bytes, got {}", HMAC_MIN_KEY_LEN, key.len()));
@@ -396,7 +396,7 @@ fn component_deserialize<'a>(
     bytes: Binary<'a>,
     hmac_key: Binary<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let key = hmac_key.as_slice();
         if key.len() < HMAC_MIN_KEY_LEN {
             return err_term(env, format!("HMAC key must be at least {} bytes, got {}", HMAC_MIN_KEY_LEN, key.len()));
@@ -427,7 +427,7 @@ fn call_init<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match call_init_inner(&engine_arc.0, &component_arc.0, &linker_arc.0, init_payload.as_slice(), fuel, memory_limit as usize) {
             Ok(result) => encode_handle_result(env, &result),
             Err(e) => classify_wasm_error(env, e),
@@ -459,7 +459,7 @@ fn call_handle_message<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let envelope = match decode_envelope(envelope_term) {
             Ok(e) => e,
             Err(msg) => return err_term(env, msg),
@@ -495,7 +495,7 @@ fn call_handle_timer<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         match call_handle_timer_inner(&engine_arc.0, &component_arc.0, &linker_arc.0, state.as_slice(), &timer_name, fuel, memory_limit as usize) {
             Ok(result) => encode_handle_result(env, &result),
             Err(e) => classify_wasm_error(env, e),
@@ -527,7 +527,7 @@ fn call_migrate<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         if get_actor_func_index(&component_arc.0, "migrate").is_err() {
             return (atoms::error(), atoms::not_exported()).encode(env);
         }
@@ -561,7 +561,7 @@ fn call_on_passivate<'a>(
     fuel: u64,
     memory_limit: u64,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         if get_actor_func_index(&component_arc.0, "on-passivate").is_err() {
             return (atoms::error(), atoms::not_exported()).encode(env);
         }

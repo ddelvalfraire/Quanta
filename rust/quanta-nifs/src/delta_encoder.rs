@@ -32,7 +32,7 @@ fn delta_compute<'a>(
     new_binary: Binary,
     group_mask_or_nil: Term<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let schema = &schema_arc.0;
         let old = old_binary.as_slice();
         let new = new_binary.as_slice();
@@ -74,7 +74,7 @@ fn delta_apply<'a>(
     current_binary: Binary,
     delta_binary: Binary,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let schema = &schema_arc.0;
         let current = current_binary.as_slice();
         let delta = delta_binary.as_slice();
@@ -102,7 +102,7 @@ fn delta_decode_state<'a>(
     schema_arc: ResourceArc<CompiledSchemaResource>,
     state_binary: Binary,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let schema = &schema_arc.0;
         let state = state_binary.as_slice();
 
@@ -134,7 +134,7 @@ fn delta_encode_state<'a>(
     schema_arc: ResourceArc<CompiledSchemaResource>,
     values_list: Term<'a>,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let schema = &schema_arc.0;
 
         let elixir_values: Vec<Term> = match values_list.decode() {
@@ -224,7 +224,7 @@ fn delta_changed_fields<'a>(
     schema_arc: ResourceArc<CompiledSchemaResource>,
     delta_binary: Binary,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let schema = &schema_arc.0;
         let delta = delta_binary.as_slice();
 
@@ -274,7 +274,7 @@ fn delta_quantize_state<'a>(
     schema_arc: ResourceArc<CompiledSchemaResource>,
     state_binary: Binary,
 ) -> Term<'a> {
-    crate::macros::nif_safe!(env, {
+    crate::safety::nif_safe!(env, {
         let schema = &schema_arc.0;
         let raw_state = state_binary.as_slice();
 
