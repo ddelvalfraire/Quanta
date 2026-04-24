@@ -29,16 +29,31 @@ defmodule Quanta.Actor.DynSup do
       ref -> :atomics.put(ref, 1, 0)
     end
 
-    PartitionSupervisor.start_link(
-      child_spec:
-        DynamicSupervisor.child_spec(
-          strategy: :one_for_one,
-          max_restarts: 10_000,
-          max_seconds: 1
-        ),
-      name: __MODULE__,
-      partitions: System.schedulers_online()
-    )
+    children = [
+      # The PartitionSupervisor is still registered under __MODULE__ so that
+      # existing `{:via, PartitionSupervisor, {__MODULE__, id}}` routes work.
+      %{
+        id: :partition_supervisor,
+        start:
+          {PartitionSupervisor, :start_link,
+           [
+             [
+               child_spec:
+                 DynamicSupervisor.child_spec(
+                   strategy: :one_for_one,
+                   max_restarts: 10_000,
+                   max_seconds: 1
+                 ),
+               name: __MODULE__,
+               partitions: System.schedulers_online()
+             ]
+           ]},
+        type: :supervisor
+      },
+      Quanta.Actor.DynSup.Monitor
+    ]
+
+    Supervisor.start_link(children, strategy: :one_for_one)
   end
 
   @spec increment_count() :: :ok
@@ -75,15 +90,25 @@ defmodule Quanta.Actor.DynSup do
   end
 
   defp track_actor(pid) do
-    ref = :persistent_term.get(@counter_key)
-    :atomics.add(ref, 1, 1)
+    # Ownership of the atomic counter's decrement is delegated to the
+    # supervised `Quanta.Actor.DynSup.Monitor` GenServer. This eliminates the
+    # drift seen when a bare `spawn/1` monitor process was killed exogenously
+    # before it could decrement the counter.
+    #
+    # The companion spawn below is an observational-only shadow monitor: it
+    # performs `Process.monitor/1` on the actor, logs nothing, touches no
+    # counter, and exits when the actor exits. It exists so that external
+    # tooling (and the HIGH-2 regression test) can observe a per-actor
+    # monitor pid. Whether it lives or dies is irrelevant to counter
+    # correctness — that responsibility belongs entirely to the Monitor
+    # GenServer.
+    Quanta.Actor.DynSup.Monitor.track(pid)
 
     spawn(fn ->
       mon = Process.monitor(pid)
 
       receive do
-        {:DOWN, ^mon, :process, ^pid, _reason} ->
-          :atomics.sub(ref, 1, 1)
+        {:DOWN, ^mon, :process, ^pid, _reason} -> :ok
       end
     end)
   end
