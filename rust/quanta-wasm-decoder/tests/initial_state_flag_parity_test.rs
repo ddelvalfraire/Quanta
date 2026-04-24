@@ -148,3 +148,34 @@ fn m1_decoder_rejects_truncated_header_when_flag_cleared() {
         "decoder must reject a 10-byte payload that omits entity_count"
     );
 }
+
+/// H-2 regression: when `FLAG_INCLUDES_SCHEMA` is set, the minimum wire size is
+/// 14 (flag-cleared header) + 4 (schema_len) + N (schema bytes) + 4
+/// (entity_count). An input that is exactly 14 bytes with the flag set is
+/// structurally truncated — there is no room for even the schema_len field —
+/// and the decoder must reject it with an error that clearly identifies the
+/// header as the site of truncation.
+///
+/// Today the decoder's single 14-byte guard at the top passes for this input
+/// regardless of the flag. It then reads a zero schema_len, advances `pos` to
+/// 14, and fails deeper in the function with `"truncated entity count"` —
+/// which points operators at the wrong field. The fix is to bound-check the
+/// header against the flag state before touching schema_len.
+#[test]
+fn h2_decoder_rejects_truncated_header_when_flag_set() {
+    let mut bytes = vec![0u8; 14];
+    bytes[8] = FLAG_INCLUDES_SCHEMA; // flag SET, but no schema_len/schema/entity_count follow.
+
+    let result = decode_initial_state_native(&bytes);
+    assert!(
+        result.is_err(),
+        "flag-set 14-byte input must be rejected — there is no room for \
+         schema_len, schema bytes, or entity_count"
+    );
+    let err = result.unwrap_err();
+    assert!(
+        err.contains("header"),
+        "error must identify the header as truncated so operators don't \
+         chase the wrong field. Got: {err}"
+    );
+}
