@@ -24,8 +24,13 @@ use crate::safety::nif_safe;
 ///
 ///    - `{:ok, ref, %{stream: stream_name, seq: sequence}}` on publish + ack success
 ///    - `{:error, ref, :wrong_last_sequence}` when JetStream rejects the expected-sequence header
-///    - `{:error, ref, {:publish_failed, reason}}` on any other JetStream failure
-///    - `{:error, ref, {:task_panic, reason}}` if the spawned task panics
+///    - `{:error, ref, reason}` on any other JetStream failure, where `reason` is
+///      a human-readable string formatted from the underlying async-nats error
+///      (e.g. `"io error: connection reset by peer"`). The string is the raw
+///      `Display` output of the error; do not try to pattern-match on its
+///      contents beyond logging.
+///    - `{:error, ref, reason}` if the spawned task panics, where `reason` is a
+///      `"task_panic: ..."`-prefixed string from the panic payload.
 ///
 ///    The `ref` in the reply is the `caller_ref` passed in by the caller, used
 ///    to correlate replies when multiple publishes are in flight concurrently.
@@ -50,11 +55,11 @@ use crate::safety::nif_safe;
 ///       {:error, ^ref, :wrong_last_sequence} ->
 ///         {:error, :wrong_last_sequence}
 ///
-///       {:error, ^ref, {:publish_failed, reason}} ->
-///         {:error, {:publish_failed, reason}}
-///
-///       {:error, ^ref, {:task_panic, reason}} ->
-///         {:error, {:task_panic, reason}}
+///       {:error, ^ref, reason} when is_binary(reason) ->
+///         # Catch-all for publish failures and task panics. `reason` is a
+///         # human-readable string; a `"task_panic: "` prefix identifies a
+///         # panic from the spawned tokio task.
+///         {:error, reason}
 ///     after
 ///       5_000 -> {:error, :timeout}
 ///     end
