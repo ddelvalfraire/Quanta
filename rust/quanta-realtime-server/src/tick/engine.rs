@@ -31,6 +31,14 @@ const MAX_SNAPSHOT_ENTITY_STATE: usize = 1_024 * 1_024;
 /// misbehaving caller that registers senders in a loop (review finding H-3).
 pub const MAX_SNAPSHOT_SUBSCRIBERS: usize = 16;
 
+/// Maximum number of client inputs `phase1_drain_inputs` will pull from the
+/// input channel in a single tick. The channel itself holds up to 4096
+/// messages, so without this cap a burst from one session could allocate
+/// and process thousands of `TickMessage::Input`s in a single tick — a
+/// denial-of-service amplification vector (review finding M-2). Excess
+/// inputs stay queued in the channel and are picked up on subsequent ticks.
+pub const MAX_INPUTS_PER_TICK: usize = 512;
+
 /// Below this threshold, busy-wait is cheaper than the OS scheduler overhead.
 const MIN_SLEEP_DURATION: Duration = Duration::from_micros(500);
 
@@ -673,8 +681,16 @@ impl TickEngine {
     }
 
     fn phase1_drain_inputs(&mut self) -> Vec<ClientInput> {
-        let mut inputs = Vec::new();
-        while let Ok(input) = self.input_rx.try_recv() {
+        // Bounded drain: cap iterations at `MAX_INPUTS_PER_TICK` so a burst
+        // from a single session can't allocate thousands of TickMessages in
+        // one tick (review finding M-2). Unconsumed inputs remain in the
+        // channel and are drained on subsequent ticks.
+        let mut inputs = Vec::with_capacity(MAX_INPUTS_PER_TICK.min(64));
+        for _ in 0..MAX_INPUTS_PER_TICK {
+            let input = match self.input_rx.try_recv() {
+                Ok(input) => input,
+                Err(_) => break,
+            };
             let last_seq = self
                 .last_input_seq
                 .entry(input.session_id.clone())
