@@ -42,30 +42,14 @@ export interface QuantaDecoder {
   encodeBaselineAck(baselineTick: bigint): Uint8Array;
 }
 
-// Schema field names produced by quanta-wasm-decoder use snake_case or
-// kebab-case identifiers (lowercase ASCII letters, digits, `_`, `-`).
-// CamelCase / arbitrary keys indicate a malformed WASM return.
-const DECODED_STATE_KEY_RE = /^[a-z0-9_-]+$/;
-
-/**
- * Narrow an unknown value returned by WASM `decode_state` to `DecodedState`.
- * Throws a typed `Error` if the shape does not match. The wasm-bindgen layer
- * types these returns as `any`, so we must validate at the boundary.
- */
-function assertDecodedState(
-  x: unknown,
-): asserts x is DecodedState {
-  if (x === null || typeof x !== "object") {
+// wasm-bindgen types the decoder returns as `any`; validate at the boundary.
+function assertDecodedState(x: unknown): asserts x is DecodedState {
+  if (x === null || typeof x !== "object" || Array.isArray(x)) {
     throw new Error(
-      `decode_state returned non-object value: ${typeof x}`,
+      `decode_state returned non-object value: ${x === null ? "null" : Array.isArray(x) ? "array" : typeof x}`,
     );
   }
   for (const [key, value] of Object.entries(x as Record<string, unknown>)) {
-    if (!DECODED_STATE_KEY_RE.test(key)) {
-      throw new Error(
-        `decode_state returned unexpected field name "${key}"; expected snake_case or kebab-case identifier`,
-      );
-    }
     if (typeof value !== "number" && typeof value !== "boolean") {
       throw new Error(
         `decode_state field "${key}" has invalid type ${typeof value}; expected number or boolean`,
@@ -74,13 +58,7 @@ function assertDecodedState(
   }
 }
 
-/**
- * Narrow an unknown value returned by WASM `decode_auth_response` to
- * `AuthResponseData`. Throws a typed `Error` if the shape does not match.
- */
-function assertAuthResponse(
-  x: unknown,
-): asserts x is AuthResponseData {
+function assertAuthResponse(x: unknown): asserts x is AuthResponseData {
   if (x === null || typeof x !== "object") {
     throw new Error(
       `decode_auth_response returned non-object value: ${typeof x}`,

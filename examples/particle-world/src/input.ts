@@ -9,13 +9,11 @@
 
 import { encode_client_input } from "../wasm-decoder/quanta_wasm_decoder";
 import { SelfPredictor } from "./predictor";
-import { TICK_PERIOD_MS } from "./state";
+import { TICK_PERIOD_MS as STATE_TICK_PERIOD_MS } from "./state";
 
-// `TICK_PERIOD_MS` is the precise 1000 / 30 Hz period (33.333…ms), shared
-// with state.ts and predictor.ts so all three agree on tick duration. The
-// Rust `encode_client_input` accepts `dt_ms: u16`, so we round only at the
-// call site — the constant itself must stay exact for setInterval cadence
-// and cross-module math.
+// Keep the constant exact (33.333…ms) for setInterval cadence; round only
+// at the encode call site where the Rust wire format wants `dt_ms: u16`.
+export const TICK_PERIOD_MS = STATE_TICK_PERIOD_MS;
 const TICK_PERIOD_DT_MS_U16 = Math.round(TICK_PERIOD_MS);
 
 export function startInputLoop(
