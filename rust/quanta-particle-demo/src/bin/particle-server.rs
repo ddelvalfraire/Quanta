@@ -42,8 +42,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
+    // Default to loopback so the C-3 startup guard accepts the hardcoded
+    // dev token. Set QUANTA_QUIC_ADDR and QUANTA_DEV_TOKEN together to
+    // bind publicly.
     let quic_addr: SocketAddr = std::env::var("QUANTA_QUIC_ADDR")
-        .unwrap_or_else(|_| "0.0.0.0:4443".into())
+        .unwrap_or_else(|_| "127.0.0.1:4443".into())
         .parse()?;
 
     // Prometheus /metrics endpoint. Unset → default 127.0.0.1:9090; set
