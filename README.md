@@ -1,11 +1,9 @@
 # Quanta
 
-A distributed multiplayer platform for browser-based realtime applications. Quanta provides the actor runtime, networking, and state-replication primitives so applications can focus on game/feature logic, not on the systems plumbing that makes 300+ concurrent clients feel snappy from a laptop.
+Distributed multiplayer platform for browser-based realtime apps. The repo holds the platform plus two reference apps built on it:
 
-The repository contains the platform itself plus two reference applications built on top of it:
-
-- **particle-world** — a 30 Hz authoritative simulation streaming up to thousands of entities to a WebTransport (QUIC) browser client with client-side prediction.
-- **quanta-code** — a real-time collaborative code editor with sub-document CRDTs, presence, and a sandboxed JS execution surface, served over Phoenix WebSockets.
+- **particle-world** — 30 Hz authoritative simulation streaming a few thousand entities to a WebTransport (QUIC) browser client with client-side prediction.
+- **quanta-code** — realtime collaborative code editor with CRDTs, presence, and a sandboxed JS executor, served over Phoenix WebSockets.
 
 Both apps share the same actor runtime, schema-driven binary wire format, and supervision strategy.
 
@@ -13,37 +11,45 @@ Both apps share the same actor runtime, schema-driven binary wire format, and su
 
 ## Project goals
 
-1. **Show that a heterogeneous system can still be coherent.** Quanta deliberately uses three runtimes — Elixir (BEAM), Rust (native + WebAssembly), and TypeScript — and bridges them with one wire protocol and one schema definition. The goal is to prove that the right tool per layer beats forcing one language across the stack.
-2. **Take "soft realtime" seriously.** Sub-100 ms perceived latency is a systems problem, not a frontend problem. The platform commits to fixed-timestep server simulation, client-side prediction with server reconciliation, and snapshot interpolation — all the pieces fast-paced multiplayer games have used for decades but rarely see in browser apps.
-3. **Make failure boring.** Supervision trees, drain hooks, mailbox-shed thresholds, hybrid logical clocks, and idempotent reconnect tokens are not afterthoughts — they are first-class architectural decisions baked into the supervision graph.
+This is a course project but also the platform I'd actually want to use. Three things drove the design:
+
+1. Polyglot can be coherent. Quanta uses three runtimes (Elixir/BEAM, Rust native + wasm, TypeScript) bridged by one wire protocol and one schema. The point is to show that picking the right tool per layer beats forcing one language across the whole stack.
+2. Soft realtime is a systems problem. Sub-100 ms perceived latency in the browser needs fixed-timestep server simulation, client-side prediction with reconciliation, and snapshot interpolation. None of those are frontend tricks; they're the same techniques fast-paced multiplayer games have shipped for 20+ years.
+3. Failure should be boring. Supervisors, drain endpoints, mailbox shedding, hybrid logical clocks, idempotent reconnect tokens. All baked into the supervision graph from day one rather than retrofitted later.
 
 ---
 
 ## Course themes
 
-The project is built around four systems-programming themes, integrated rather than bolted on:
+Four systems-programming themes drive the architecture:
 
 ### 1. Concurrency and the process model
 
-The actor runtime in `apps/quanta_distributed/lib/quanta/actor/` is a classical share-nothing concurrent system: every actor is a BEAM process with a private mailbox, and the runtime hosts thousands of them under a partitioned `DynamicSupervisor` (`Quanta.Actor.DynSup`). Each actor's `Server` GenServer enforces mailbox-shed thresholds (1k warn / 5k shed / 10k critical) so a slow consumer cannot starve the scheduler. On the Rust side, the realtime server in `rust/quanta-realtime-server/` runs an island-per-tick loop over the Tokio multi-threaded async runtime; per-island state is owned by a single task to avoid lock contention on the hot path.
+The actor runtime in `apps/quanta_distributed/lib/quanta/actor/` is a share-nothing concurrent system. Each actor is a BEAM process with a private mailbox, and the runtime hosts thousands of them under a partitioned `DynamicSupervisor` (`Quanta.Actor.DynSup`). The `Server` GenServer enforces mailbox-shed thresholds (1k warn, 5k shed, 10k critical) so a slow actor can't starve the scheduler.
 
-### 2. Inter-process communication and networking
+On the Rust side, `rust/quanta-realtime-server/` runs a per-island tick loop on the Tokio multi-threaded async runtime. Per-island state is owned by a single task to avoid lock contention on the hot path.
+
+### 2. IPC and networking
 
 Three transports coexist:
 
-- **WebTransport (QUIC)** — primary realtime transport for unreliable-but-fast datagrams to the browser. The `delta_envelope` module defines a compact framed wire format with flags for full-state vs. delta vs. welcome vs. seq-ack heartbeats.
-- **WebSocket** — fallback transport (browsers/networks without WebTransport) and the primary path for the Phoenix-channel-based collaborative editor.
-- **NATS** — cluster-internal pub/sub between Elixir nodes for command routing and bridge subscriptions, ingested through Broadway pipelines for backpressure.
+- WebTransport (QUIC) is the primary realtime transport. The `delta_envelope` module defines a compact framed format with flags for full-state, delta, welcome, and seq-ack heartbeats.
+- WebSocket is the fallback for browsers without WebTransport, and the primary path for the collaborative editor (Phoenix Channels).
+- NATS handles cluster-internal pub/sub between Elixir nodes, ingested through Broadway pipelines for backpressure.
 
-The wire protocol is schema-driven: the same Rust crate (`quanta-core-rs::delta::encoder`) that encodes deltas on the server is compiled to WebAssembly and runs unchanged in the browser, eliminating the JS-port-drift class of bug.
+The wire protocol is schema-driven. The same Rust crate (`quanta-core-rs::delta::encoder`) that encodes deltas on the server runs in the browser too, compiled to wasm.
 
-### 3. Synchronization, fault tolerance, and distributed coordination
+### 3. Synchronization, fault tolerance, distributed coordination
 
-The top-level supervisor uses `:rest_for_one` so an infrastructure failure (e.g., catastrophic NATS loss) restarts the actor runtime, but an actor-layer crash cannot recycle cluster-critical services — an asymmetry the codebase comments on explicitly. Cross-node coordination uses `syn` for distributed process registration and a hybrid logical clock (`Quanta.Hlc`) for total event ordering across nodes without a wall-clock dependency. Rate limiting is per-actor and tracked in a sliding window. Drain controllers expose `/api/internal/drain` so an operator can pause incoming work before terminating a node.
+The top-level supervisor uses `:rest_for_one`. A catastrophic NATS loss restarts the actor runtime, but actor-layer crashes can't recycle cluster-critical infrastructure. That asymmetry is intentional and the codebase comments on it.
+
+Cross-node coordination uses `syn` for distributed process registration and a hybrid logical clock (`Quanta.Hlc`) for total event ordering across nodes without depending on wall-clock time. Rate limiting is per-actor over a sliding window. There's a drain endpoint (`/api/internal/drain`) so an operator can pause incoming work before terminating a node.
 
 ### 4. Systems integration and performance
 
-Hot paths that are not viable in pure BEAM cross into Rust through Rustler NIFs (`apps/quanta_nifs/` ↔ `rust/quanta-nifs/`): the Loro CRDT engine, schema compilation, the delta encoder, an ephemeral KV store, and a Wasmtime runtime that sandbox-executes user code. The same Rust crate is reused on the realtime server and compiled to wasm for the browser client, so a state delta produced by the server can be applied byte-identically by the predictor in the browser. Delta encoding ships only changed fields with quantization; full-state snapshots are reserved for new clients or schema-version mismatches.
+Hot paths that don't fit pure BEAM cross into Rust through Rustler NIFs (`apps/quanta_nifs/` ↔ `rust/quanta-nifs/`): the Loro CRDT engine, schema compilation, the delta encoder, an ephemeral KV store, and a Wasmtime runtime that sandbox-executes user code.
+
+The same Rust crate is shared between the realtime server and the browser client (compiled to wasm). A delta produced on the server is applied bit-for-bit by the predictor in the browser. Delta encoding ships only the fields that changed, with per-field quantization. Full-state snapshots are reserved for new clients and schema-version mismatches.
 
 ---
 
@@ -85,7 +91,7 @@ Repository layout:
 | `apps/quanta_distributed` | Distributed actor runtime: supervisors, registry, NATS, Broadway, drain |
 | `apps/quanta_nifs` | Rustler-NIF Elixir wrappers for Rust hot-path code |
 | `apps/quanta_web` | Phoenix endpoint, channels, REST control plane |
-| `rust/quanta-core-rs` | Schema, delta encoder, bridge codec — used by both NIFs and wasm |
+| `rust/quanta-core-rs` | Schema, delta encoder, bridge codec — used by NIFs and wasm |
 | `rust/quanta-nifs` | Native Rust implementations behind the NIF boundary |
 | `rust/quanta-realtime-server` | Standalone QUIC + WS realtime server (tick engine, fanout, pacing) |
 | `rust/quanta-particle-demo` | Particle-world product code (executor + fanout factories) |
@@ -101,11 +107,11 @@ Repository layout:
 
 ### Prerequisites
 
-- **Erlang/OTP 26+**, **Elixir 1.16+**
-- **Rust 1.75+** with the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
-- **Node.js 20+** and **npm**
-- **wasm-pack** (`cargo install wasm-pack`) — installed automatically by `make setup`
-- Optional: **Docker** (for the optional NATS node)
+- Erlang/OTP 26+, Elixir 1.16+
+- Rust 1.75+ with the `wasm32-unknown-unknown` target (`rustup target add wasm32-unknown-unknown`)
+- Node.js 20+ and npm
+- wasm-pack (`cargo install wasm-pack`) — installed automatically by `make setup`
+- Optional: Docker, for the optional NATS node
 
 ### One-time setup
 
@@ -133,7 +139,7 @@ make particle-wasm             # rebuild the wasm decoder after wire-format chan
 make nats-up / nats-down       # optional single-node NATS via docker compose
 ```
 
-Once the server is running, open `http://127.0.0.1:5173/` in a Chromium-based browser (WebTransport requires Chrome/Edge/Opera; Firefox will fall back to WebSocket where supported).
+Once the server is running, open `http://127.0.0.1:5173/` in a Chromium-based browser. WebTransport requires Chrome/Edge/Opera; Firefox falls back to WebSocket where supported.
 
 ### Run the tests
 
@@ -150,30 +156,30 @@ cd examples/particle-world && npm test         # client-side prediction + state 
 
 ### Why three runtimes?
 
-- **BEAM (Elixir/OTP)** for the actor runtime — preemptive scheduling and battle-tested supervision are exactly what an actor system needs, and writing a million-process scheduler from scratch in Rust is not a course-project budget.
-- **Rust** for the realtime path and CRDT/delta hot paths — predictable latency, no GC pauses, and the option to ship the same code to the browser as wasm.
-- **TypeScript** for the browser — the only realistic option, but kept thin: rendering, input, and predictor only. All decoding happens in wasm.
+- BEAM (Elixir/OTP) for the actor runtime. Preemptive scheduling and OTP supervision are what an actor system actually needs, and reimplementing a million-process scheduler from scratch in Rust is not a course-project budget.
+- Rust for the realtime server and CRDT/delta hot paths. Predictable latency, no GC pauses, and the same code can ship to the browser as wasm.
+- TypeScript for the browser. Realistically the only option, but kept thin: rendering, input, predictor. All decoding happens in wasm.
 
-The cost is a polyglot toolchain. The benefit is that no layer is fighting its language: BEAM does what BEAM is for, Rust does what Rust is for, and the browser only renders.
+The cost is a polyglot toolchain. The benefit is that no layer is doing something it's bad at.
 
-### Why a custom binary wire format instead of JSON or Protobuf?
+### Why a custom binary wire format?
 
-For 300 entities at 30 Hz, the wire is the bottleneck — JSON would ~10× the bytes per tick and protobuf would not let us share encoder code with the browser. The current schema-driven encoder quantizes per-field, sends only changed fields, and supports rolling schema versions. It is built once in Rust and consumed natively (server) and via wasm (browser) so the wire format has exactly one implementation.
+For 300 entities at 30 Hz, the wire is the bottleneck. JSON would roughly 10× the bytes per tick. Protobuf would mean two implementations of the encoder, which is exactly what we wanted to avoid. The current format is schema-driven, quantizes per-field, ships only changed fields, and supports rolling schema versions. It's defined once in Rust and consumed natively (server) and via wasm (browser).
 
-### Why fixed-timestep server simulation with client-side prediction?
+### Why fixed-timestep simulation with client-side prediction?
 
-The two non-negotiables for fast-paced multiplayer are determinism (server replays match predictor replays byte-for-byte) and decoupled rendering (60 fps render over 30 Hz physics). The predictor uses Gambetta's input-buffer/replay scheme and Fiedler's fixed-timestep + interpolation pattern — these are decades-old techniques because they work, and rolling something simpler always ends in jitter.
+Fast-paced multiplayer needs determinism — server replays match predictor replays bit-for-bit — and decoupled rendering at 60 fps over 30 Hz physics. The predictor uses Gambetta's input-buffer/replay scheme and Fiedler's fixed-timestep + interpolation pattern. These are 20-year-old techniques that work; rolling something simpler ends in jitter every time.
 
 ### Why `:rest_for_one` at the top of the supervision tree?
 
-Infrastructure (NATS, syn, HLC) starting before the actor runtime, with `:rest_for_one`, guarantees that an actor-layer bug cannot recycle cluster-critical services. The asymmetry is intentional: bad app code should never look like a node failure to the rest of the cluster.
+Infrastructure (NATS, syn, HLC) starts before the actor runtime. With `:rest_for_one`, an actor-layer bug can't recycle cluster-critical services. Bad app code shouldn't look like a node failure to the rest of the cluster.
 
-### Trade-offs we accepted
+### Trade-offs accepted
 
-- **No persistent durable storage yet** — actors are in-memory CRDTs; persistence is on the roadmap but out of scope for the course project.
-- **Self-signed certs for WebTransport in dev** — the cert hash is published via `/server-info.json` rather than going through a real CA. Production would integrate Let's Encrypt or equivalent.
-- **NATS is single-node in dev** — the cluster topology code exists but is exercised against one node locally; full multi-node replication testing needs more time than the project window.
-- **Thin written README at submission time** — the codebase is heavily commented at decision points, so much of the rationale lives next to the code rather than in standalone docs. This README is the consolidated version.
+- No persistent durable storage yet. Actors are in-memory CRDTs. Persistence is on the roadmap, out of scope here.
+- Self-signed certs for WebTransport in dev. The cert hash is published via `/server-info.json` rather than going through a CA. Production would integrate Let's Encrypt or similar.
+- NATS is single-node in dev. The cluster topology code exists but is only exercised against one node locally.
+- Most of the design rationale lives in comments next to the code; this README is the consolidated version.
 
 ---
 
@@ -181,26 +187,22 @@ Infrastructure (NATS, syn, HLC) starting before the actor runtime, with `:rest_f
 
 ### Snapshot interpolation jitter
 
-The first version of the client interpolated snapshots using local arrival timestamps. Motion looked terrible — frequent micro-stutters even though the server was sending smooth state at 30 Hz. The fix (in `examples/particle-world/src/state.ts`) was to interpolate against the *server tick* timeline rather than local arrival time, then nudge a virtual server clock toward each new snapshot's `(tick, arrival)` pair. Lesson: jitter is almost always a clock-domain mismatch problem, not a sample-rate problem.
+The first version of the client interpolated snapshots using local arrival timestamps. Motion looked terrible — micro-stutters everywhere even though the server was sending smooth state at 30 Hz. The fix (`examples/particle-world/src/state.ts`) was to interpolate against the server tick timeline instead of local arrival time, then nudge a virtual server clock toward each new snapshot's `(tick, arrival)` pair. Most jitter problems in this kind of system turn out to be clock-domain mismatches, not sample-rate problems.
 
 ### Predictor / server divergence
 
-Early versions of the client predictor used continuous-time integration while the server used fixed-timestep integration. Even at 30 Hz the two diverged enough during velocity ramps that reconciliation produced visible rubber-banding. Switching the predictor to the *exact* same fixed-timestep discrete physics as the server (same `tick_dt_secs`, same damping math, same constants) made the replay byte-identical against the server, eliminating reconciliation snaps for normal play. Lesson: client and server must be byte-equivalent for prediction to work — "close enough" is not close enough.
+Early versions of the predictor used continuous-time integration while the server used fixed-timestep. Even at 30 Hz they diverged enough during velocity ramps that reconciliation produced visible rubber-banding. Switching the predictor to use the exact same fixed-timestep discrete physics as the server (same `tick_dt_secs`, same damping math, same constants) made the replay bit-identical against the server, and reconciliation snaps disappeared for normal play. Close-enough is not close enough for prediction.
 
 ### Supervision-tree boot ordering
 
-Originally `Syn.add_node_to_scope/2` was called from the `Application` callback. On a scope conflict (e.g., two applications fighting for the same scope), the call would raise inside the OTP boot path and the node would refuse to start. Pushing syn setup *under* `Quanta.Supervisor` instead of into the Application callback keeps boot resilient. Lesson: never put unbounded-can-fail work in the Application callback — its only job is to start the top supervisor.
+Originally `Syn.add_node_to_scope/2` was called from the `Application` callback. On a scope conflict (two apps fighting for the same scope), the call would raise inside the OTP boot path and the node would refuse to start. Moving syn setup under `Quanta.Supervisor` instead of into the Application callback keeps boot resilient. The Application callback's only job should be to start the top supervisor.
 
 ### Mailbox shedding
 
-Under load, a single slow actor would back up its mailbox, which back-pressured every NATS subscription pinned to that actor, which made the entire pipeline appear to stall. The actor server now has tiered mailbox thresholds (1k warn, 5k shed non-essential messages, 10k critical) and emits telemetry at each tier. Lesson: in any system with unbounded queues, one of the first things to add is a bounded-queue policy with explicit drop semantics.
-
-### Cross-language schema drift
-
-When the wire format was edited on the server side, the wasm decoder in the browser kept compiling fine and silently misinterpreting bytes. We now ship a single Rust encoder/decoder crate (`quanta-core-rs::delta::encoder`) that is compiled to both native and wasm — a wire-format edit becomes a compile error in both consumers simultaneously. Lesson: in a polyglot system, the only honest contract is shared *code*, not a shared *spec*.
+Under load, a single slow actor would back up its mailbox, which back-pressured every NATS subscription pinned to that actor, which made the whole pipeline appear stalled. The actor server now has tiered mailbox thresholds (1k warn, 5k shed non-essential, 10k critical) and emits telemetry at each tier. In any system with unbounded queues, a bounded-queue policy with explicit drop semantics has to be there from the start.
 
 ---
 
 ## License
 
-Source-available for evaluation in the context of CPT_S 360. All rights reserved beyond that scope.
+Source-available for evaluation in the context of CPT_S 360. All rights reserved beyond that.
